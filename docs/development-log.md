@@ -1,5 +1,7 @@
 # gitcrawl Development Log
 
+> **Frozen 2026-10-11.** This log is the durable record of provisioning (2026-10-01) through the quota/limiter session (2026-10-09), kept exactly as written at the time. Its successor is the living, consolidated history — run register, hypothesis and failure ledgers, operating-point trail, and errata against primary data — in [`../design/methodology.md`](../design/methodology.md). New session records go there; this file stays as the reference for rulings R1–R58 and per-task commits.
+
 **Purpose**: durable, committed record of what has been done, decided, and is next — so nothing is lost when a session, tool, or the temporary SDD workspace disappears. Environment details live in `environment.md`.
 
 **Updated**: 2026-10-09 (quota utilization and limiter correctness) · **Branch**: `perf/runtime-adaptive-control` · **HEAD**: `439b35c`
