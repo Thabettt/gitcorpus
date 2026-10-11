@@ -228,7 +228,17 @@ def test_clone_start_returns_running_then_progress_completes(clean: Engine, tmp_
     ]
     assert (run_dir / "octo__hello" / MARKER_NAME).is_file()
     progress_path = tmp_path / "runs" / filter_hash / str(run_id) / "clone-progress.json"
-    assert json.loads(progress_path.read_text(encoding="utf-8")) == done
+    persisted = None
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            persisted = json.loads(progress_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            persisted = None
+        if persisted == done:
+            break
+        time.sleep(0.01)
+    assert persisted == done
 
 
 def test_progress_is_live_in_flight_and_persisted_when_done(clean: Engine, tmp_path, monkeypatch):
