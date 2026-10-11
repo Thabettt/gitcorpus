@@ -8,12 +8,12 @@
 
 **Tech Stack:** Python 3.12, httpx, SQLAlchemy 2 + Postgres, Redis bucket limiter, pytest, ruff, black.
 
-**Spec:** `design/corpus-building-efficient-engineering.md` §9–§10 (the agreed design), `design/landscape-comparison.md` (why), `gitcrawl-vs-seart.md` §4.3 (file channel → detection bridge).
+**Spec:** `design/corpus-building-efficient-engineering.md` §9–§10 (the agreed design), `design/landscape-comparison.md` (why), `gitcorpus-vs-seart.md` §4.3 (file channel → detection bridge).
 
 ## Global Constraints
 
 - Python `>=3.12`; line length 100; ruff (`E,F,I,UP,B`) + black clean; coverage floor `fail_under = 93` (`pyproject.toml`).
-- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCRAWL_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures (`clean_db` is a factory).
+- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCORPUS_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures (`clean_db` is a factory).
 - Run tests with: `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest <path> -q` (Windows PowerShell).
 - GraphQL batches are capped at **20 aliases per query** (resource limits; spec FR-007 says ≤10–20).
 - Batch requests are **sequential**; no concurrent GraphQL calls (GitHub best practice, and the point budget is the binding limit).
@@ -2383,7 +2383,7 @@ git commit -m "feat: enforce min/max commits from batched commit counts"
 
 - [ ] **Step 1: Full suite with coverage**
 
-Run: `$env:PYTHONPATH='src'; $env:GITCRAWL_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
+Run: `$env:PYTHONPATH='src'; $env:GITCORPUS_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
 Expected: all tests pass; coverage `>= 93%`. If coverage dips below the floor, add assertions for uncovered branches in `src/lib/graphql_batch.py` (the `batch_errors`/`requeue`/`deadline` paths), never by removing tests.
 
 - [ ] **Step 2: Lint and format**

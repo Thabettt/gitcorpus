@@ -1,4 +1,4 @@
-# gitcrawl Legal Gates Checklist
+# gitcorpus Legal Gates Checklist
 
 Spec: `design/spec.md` FR-011. Findings: `findings/05-research-gaps.md` A10.
 Review cadence: re-verify quarterly (robots.txt, API version pin, token owners, trademark naming) before any crawl/serve/scrape step.
@@ -56,7 +56,7 @@ Rules:
 
 - [ ] Product name, UI copy, and metadata imply no GitHub endorsement or affiliation.
 - [ ] No Invertocat/Octocat marks or GitHub logos (respect `GITHUB®`/`OCTOCAT®` per the Logo Policy and Brand Toolkit).
-- [ ] `User-Agent` identifies the tool (`gitcrawl/…`) and links no GitHub branding.
+- [ ] `User-Agent` identifies the tool (`gitcorpus/…`) and links no GitHub branding.
 - [ ] Naming/branding review gates any public UI ship.
 
 ## 7. Researcher/archivist carve-outs

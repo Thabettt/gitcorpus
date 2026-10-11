@@ -7,7 +7,7 @@
 
 - Tree clean at start; the queued plans were already committed (no `docs: add execution plans` commit needed).
 - No competing OpenCode/pytest process; the local uvicorn console on port 8000 was ignored.
-- Postgres reachable via `TEST_DATABASE_URL` (`gitcrawl_test` on `localhost:5433`); Redis reachable via `REDIS_URL` (`localhost:6379`).
+- Postgres reachable via `TEST_DATABASE_URL` (`gitcorpus_test` on `localhost:5433`); Redis reachable via `REDIS_URL` (`localhost:6379`).
 - `.superpowers/sdd/queue-stop.md`: **not written** — no stop condition occurred.
 
 ## Phase status

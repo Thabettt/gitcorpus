@@ -16,7 +16,7 @@ from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 from serve.filter_spec import parse_filter_spec, spec_to_dict
 from serve.runs import export_bundle, latest_run_for_hash, run_bundle_dir
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 UNKNOWN_HASH = "0" * 64
 
 
@@ -167,11 +167,11 @@ def test_export_json_is_byte_identical_to_the_on_disk_bundle(clean: Engine, tmp_
     assert response.status_code == 200
     assert response.content == disk
     assert response.headers["content-type"] == "application/json"
-    assert "x-gitcrawl-regenerated" not in response.headers
+    assert "x-gitcorpus-regenerated" not in response.headers
     assert "regenerated" not in json.loads(disk.decode("utf-8"))
     assert (
         response.headers["content-disposition"]
-        == f'attachment; filename="gitcrawl-{filter_hash}-{run_id}.json"'
+        == f'attachment; filename="gitcorpus-{filter_hash}-{run_id}.json"'
     )
 
 
@@ -186,10 +186,10 @@ def test_export_csv_is_byte_identical_to_the_on_disk_corpus(clean: Engine, tmp_p
     assert response.status_code == 200
     assert response.content == disk
     assert response.headers["content-type"].startswith("text/csv")
-    assert "x-gitcrawl-regenerated" not in response.headers
+    assert "x-gitcorpus-regenerated" not in response.headers
     assert (
         response.headers["content-disposition"]
-        == f'attachment; filename="gitcrawl-{filter_hash}-{run_id}.csv"'
+        == f'attachment; filename="gitcorpus-{filter_hash}-{run_id}.csv"'
     )
 
 
@@ -205,7 +205,7 @@ def test_export_uses_the_latest_run_for_the_hash(clean: Engine, tmp_path):
 
     assert response.status_code == 200
     assert response.content == disk
-    assert f"gitcrawl-{filter_hash}-{second_id}.json" in response.headers["content-disposition"]
+    assert f"gitcorpus-{filter_hash}-{second_id}.json" in response.headers["content-disposition"]
 
 
 def test_export_uses_the_latest_completed_run_when_the_newest_run_failed(clean: Engine, tmp_path):
@@ -220,7 +220,7 @@ def test_export_uses_the_latest_completed_run_when_the_newest_run_failed(clean: 
 
     assert response.status_code == 200
     assert response.content == disk
-    assert f"gitcrawl-{filter_hash}-{done_id}.json" in response.headers["content-disposition"]
+    assert f"gitcorpus-{filter_hash}-{done_id}.json" in response.headers["content-disposition"]
 
 
 def test_export_is_404_when_only_non_terminal_runs_exist(clean: Engine, tmp_path):
@@ -272,8 +272,8 @@ def test_export_regenerates_json_and_csv_when_bundle_files_are_absent(clean: Eng
 
     assert json_response.status_code == 200
     assert csv_response.status_code == 200
-    assert json_response.headers["x-gitcrawl-regenerated"] == "true"
-    assert csv_response.headers["x-gitcrawl-regenerated"] == "true"
+    assert json_response.headers["x-gitcorpus-regenerated"] == "true"
+    assert csv_response.headers["x-gitcorpus-regenerated"] == "true"
     document = json.loads(json_response.content.decode("utf-8"))
     assert set(document) == {
         "filter",

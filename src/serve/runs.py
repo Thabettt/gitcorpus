@@ -194,10 +194,10 @@ def export_run(
     run_row = _row_for_run(engine, run_id)
     regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
     chunks, media_type = export_bundle(engine, run_id, format=format, runs_root=runs_root)
-    filename = f"gitcrawl-{run_row['filter_hash']}-{run_id}.{format}"
+    filename = f"gitcorpus-{run_row['filter_hash']}-{run_id}.{format}"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if regenerated:
-        headers["X-Gitcrawl-Regenerated"] = "true"
+        headers["X-Gitcorpus-Regenerated"] = "true"
     return StreamingResponse(chunks, media_type=media_type, headers=headers)
 
 

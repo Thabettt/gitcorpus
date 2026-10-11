@@ -10,7 +10,7 @@
 
 **Spec:** none — design captured in this plan (relates to FR-010 audit/SLO and the operator console's trust requirements).
 
-**Depends on:** current `001-gitcrawl` head. No migrations, no schema changes.
+**Depends on:** current `001-gitcorpus` head. No migrations, no schema changes.
 
 ## Global Constraints
 

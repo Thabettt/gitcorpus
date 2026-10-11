@@ -20,7 +20,7 @@
 - Python 3.12; `ruff` line length 100 is the linter only; `black` line length 100 is the single formatter; `ruff format` is never run (`pyproject.toml:10-21`).
 - `src/skeleton.py` stays excluded from black and ruff via `pyproject.toml:13,21`; it is not deleted.
 - Integration tests require `TEST_DATABASE_URL` whose database name ends in `_test` (`tests/conftest.py:19-26`); CI sets it, local runs may skip.
-- `GITCRAWL_REQUIRE_TEST_DB=1` (set only by CI) must make a missing `TEST_DATABASE_URL` fail, never skip.
+- `GITCORPUS_REQUIRE_TEST_DB=1` (set only by CI) must make a missing `TEST_DATABASE_URL` fail, never skip.
 - Golden JSON bodies are compared byte-exact; HTML is compared after deterministic normalization; snapshot updates happen only through `UPDATE_GOLDEN=1` plus an explicit diff review.
 - One commit per task; commit only the files named in that task's `Files:` block.
 
@@ -31,7 +31,7 @@
 | File | Action | Responsibility |
 |---|---|---|
 | `.github/workflows/ci.yml` | Create | Two-OS test jobs (services on Linux, native PG17/Memurai on Windows), lint/format/test steps, missing-URL fail proof, advisory `pip-audit` job |
-| `tests/conftest.py` | Modify | Fail-not-skip database guard driven by `GITCRAWL_REQUIRE_TEST_DB`; local skip behavior preserved |
+| `tests/conftest.py` | Modify | Fail-not-skip database guard driven by `GITCORPUS_REQUIRE_TEST_DB`; local skip behavior preserved |
 | `tests/unit/test_database_guard.py` | Create | End-to-end proof that a required-but-missing `TEST_DATABASE_URL` produces a non-zero pytest exit with no skip |
 | `tests/golden/conftest.py` | Create | Fixed-corpus seed SQL, deterministic golden app factory, HTML normalizer, GET route enumeration, session capture fixture |
 | `tests/golden/test_golden_endpoints.py` | Create | Snapshot comparison and stale-snapshot detection |
@@ -103,7 +103,7 @@ git commit -m "style: apply black formatting to drifted files"
 **Interfaces:**
 - Consumes: existing session fixtures `test_database_url`, `alembic_config`, `alembic_engine` (`tests/conftest.py:36-56`); `pytest.fail`/`pytest.skip` semantics.
 - Produces:
-  - `tests/conftest.REQUIRE_TEST_DB_ENV = "GITCRAWL_REQUIRE_TEST_DB"`
+  - `tests/conftest.REQUIRE_TEST_DB_ENV = "GITCORPUS_REQUIRE_TEST_DB"`
   - `tests/conftest.MissingTestDatabase(RuntimeError)`
   - `tests/conftest.require_test_database() -> bool`
   - `tests/conftest.resolve_test_database_url() -> str | None` (raises `MissingTestDatabase` when required and absent)
@@ -131,7 +131,7 @@ def test_missing_test_database_url_fails_when_required():
         for key, value in os.environ.items()
         if key not in {"TEST_DATABASE_URL", "DATABASE_URL"}
     }
-    env["GITCRAWL_REQUIRE_TEST_DB"] = "1"
+    env["GITCORPUS_REQUIRE_TEST_DB"] = "1"
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-rs", TARGET],
         cwd=ROOT,
@@ -155,7 +155,7 @@ Expected: FAIL — today the fixture calls `pytest.skip("TEST_DATABASE_URL is no
 In `tests/conftest.py`, replace lines 29-41 (the current `resolve_test_database_url` and `test_database_url` fixture) with:
 
 ```python
-REQUIRE_TEST_DB_ENV = "GITCRAWL_REQUIRE_TEST_DB"
+REQUIRE_TEST_DB_ENV = "GITCORPUS_REQUIRE_TEST_DB"
 
 
 class MissingTestDatabase(RuntimeError):
@@ -171,7 +171,7 @@ def resolve_test_database_url() -> str | None:
     if not url:
         if require_test_database():
             raise MissingTestDatabase(
-                "TEST_DATABASE_URL is required when GITCRAWL_REQUIRE_TEST_DB=1; "
+                "TEST_DATABASE_URL is required when GITCORPUS_REQUIRE_TEST_DB=1; "
                 "refusing to skip database tests"
             )
         return None
@@ -192,7 +192,7 @@ def test_database_url() -> str:
 - [ ] **Step 4: Run the guard test and the suite**
 
 Run: `pytest tests/unit/test_database_guard.py -v`
-Expected: PASS — the nested run errors with `TEST_DATABASE_URL is required when GITCRAWL_REQUIRE_TEST_DB=1; refusing to skip database tests` and exits non-zero.
+Expected: PASS — the nested run errors with `TEST_DATABASE_URL is required when GITCORPUS_REQUIRE_TEST_DB=1; refusing to skip database tests` and exits non-zero.
 
 Run: `pytest -q`
 Expected: PASS with `TEST_DATABASE_URL` set (no behavior change for normal local runs).
@@ -215,8 +215,8 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  TEST_DATABASE_URL: postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl_test
-  GITCRAWL_REQUIRE_TEST_DB: "1"
+  TEST_DATABASE_URL: postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus_test
+  GITCORPUS_REQUIRE_TEST_DB: "1"
 
 jobs:
   tests-linux:
@@ -225,13 +225,13 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: gitcrawl
-          POSTGRES_PASSWORD: gitcrawl
-          POSTGRES_DB: gitcrawl_test
+          POSTGRES_USER: gitcorpus
+          POSTGRES_PASSWORD: gitcorpus
+          POSTGRES_DB: gitcorpus_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U gitcrawl -d gitcrawl_test"
+          --health-cmd "pg_isready -U gitcorpus -d gitcorpus_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -286,8 +286,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PostgreSQL did not accept connections" }
           $env:PGPASSWORD = "root"
           $psql = "C:\Program Files\PostgreSQL\17\bin\psql.exe"
-          & $psql -U postgres -h localhost -c "CREATE ROLE gitcrawl LOGIN PASSWORD 'gitcrawl'"
-          & $psql -U postgres -h localhost -c "CREATE DATABASE gitcrawl_test OWNER gitcrawl"
+          & $psql -U postgres -h localhost -c "CREATE ROLE gitcorpus LOGIN PASSWORD 'gitcorpus'"
+          & $psql -U postgres -h localhost -c "CREATE DATABASE gitcorpus_test OWNER gitcorpus"
       - name: Start Redis 7-compatible server (Memurai)
         shell: pwsh
         run: |
@@ -390,7 +390,7 @@ CAPTURED_HEADERS = (
     "content-type",
     "cache-control",
     "content-disposition",
-    "x-gitcrawl-regenerated",
+    "x-gitcorpus-regenerated",
     "location",
 )
 RELATIVE_TIME = re.compile(r"\b(?:just now|\d+m ago|\d+h ago|\d+d ago|\d+mo ago)\b")
@@ -400,14 +400,14 @@ DISK_WARNING = re.compile(
     r"low disk: estimated [0-9.]+ MB with [0-9.]+ MB free \(reserve [0-9.]+ MB\)"
 )
 
-FILTER_SPEC_JSON = '{"gitcrawl_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}'
+FILTER_SPEC_JSON = '{"gitcorpus_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}'
 
 GOLDEN_SEED_SQL = (
     "TRUNCATE TABLE run_items, runs, saved_filters, audit_log, shards, geo_cache, "
     "owners, repos, full_name_history RESTART IDENTITY CASCADE",
     """
     INSERT INTO owners (id, login, type, location_raw, country_iso, geo_confidence, company)
-    VALUES (901, 'octo', 'User', 'Berlin, Germany', 'DE', 'name', 'GitCrawl Labs')
+    VALUES (901, 'octo', 'User', 'Berlin, Germany', 'DE', 'name', 'GitCorpus Labs')
     """,
     """
     INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility, description,
@@ -877,7 +877,7 @@ Append to `docs/development-log.md` (replace the baseline numbers with the measu
 | Floor | `fail_under = 93` in `pyproject.toml` |
 | Ratchet policy | Raise `fail_under` by 1 whenever a phase's measured total exceeds the floor by at least 2 points; never lower it; record each change here |
 | Untested at baseline | `src/skeleton.py` 0% (excluded from black/ruff; quarantined in Phase 1b); `static/app.js` has no pytest coverage (`tests/js/rownav.test.mjs` covers one helper via Node); real-Redis client paths run against `fakeredis` only |
-| CI | `.github/workflows/ci.yml`: ubuntu-latest `postgres:17` + `redis:7` services; windows-latest native PostgreSQL 17 + Memurai 4.1.8; `GITCRAWL_REQUIRE_TEST_DB=1` |
+| CI | `.github/workflows/ci.yml`: ubuntu-latest `postgres:17` + `redis:7` services; windows-latest native PostgreSQL 17 + Memurai 4.1.8; `GITCORPUS_REQUIRE_TEST_DB=1` |
 | Golden harness | `tests/golden/` snapshots 23 GET-route cases; JSON byte-exact, HTML normalized (CSRF, relative time, disk warning); regenerate with `UPDATE_GOLDEN=1 pytest tests/golden -q` |
 | OpenAPI pin | `tests/golden/snapshots/openapi.sha256` pins canonical `app.openapi()`; a schema change fails CI |
 ```
@@ -976,7 +976,7 @@ Spec §4.6: blocking after the first clean run.
 |---|---|
 | §4.1 GitHub Actions on `ubuntu-latest` with `postgres:17` + `redis:7` services | T2 |
 | §4.1 CI on `windows-latest` with PostgreSQL 17 + Redis 7 (platform adaptation) | T2 |
-| §4.1 Create database `gitcrawl_test`, set `TEST_DATABASE_URL` | T2 |
+| §4.1 Create database `gitcorpus_test`, set `TEST_DATABASE_URL` | T2 |
 | §4.1 Steps: pip install, `ruff check`, `black --check`, `pytest` | T2 |
 | §4.1 Missing `TEST_DATABASE_URL` fails in CI, not skip | T2 (guard + workflow proof step + `tests/unit/test_database_guard.py`) |
 | §4.2 Session fixture seeds a fixed corpus into the migrated real DB | T3 |
@@ -1005,7 +1005,7 @@ Spec §4.6: blocking after the first clean run.
 5. **Coverage across OSes may differ slightly.** The 93.23% floor leaves roughly 11 statements of headroom. There are no `sys.platform` branches in `src/`, so Linux should match; if the Linux job measures below 93, set `fail_under = 92` in the same commit and record why in `docs/development-log.md` (the floor must stay honest, not aspirational).
 6. **Two explicit skips remain in CI.** `tests/integration/test_delta_probe.py:19` and `tests/integration/test_golden_org.py:25` skip without `GITHUB_TOKEN`, which CI does not provide. They are reason-visible skips printed by `pytest -rs`, not silent DB skips. `tests/unit/test_rownav_js.py:9` skips only if Node is absent; CI runners include Node. Reaching literal zero skips requires a token policy outside Phase 0.
 7. **OpenAPI digest is dependency-bound.** `7d29b8a0...` holds for FastAPI 0.142.2 / pydantic 2.13.5 from `requirements.txt`. A deliberate framework bump requires updating the pin in a reviewable commit.
-8. **The fail-not-skip guard is test-only by design.** Locally without a database the suite still skips; only `GITCRAWL_REQUIRE_TEST_DB=1` (CI) turns absence into failure. This preserves developer ergonomics and satisfies INV-4.
+8. **The fail-not-skip guard is test-only by design.** Locally without a database the suite still skips; only `GITCORPUS_REQUIRE_TEST_DB=1` (CI) turns absence into failure. This preserves developer ergonomics and satisfies INV-4.
 9. **Spec drift found while planning:** the audit says 10 formatting-drift files; the measured set is 7. The spec's §4.4 untested-module list names `cloner.free_disk_mb` / `cloner._default_git_runner`, but measured `cloner.py` is 99% with one missed statement; T5 Step 3 records the actual missing lines instead of copying the stale list. The plan cites measured facts over the spec where they conflict.
 10. **CI workflow behavior is only parse-validated locally.** The YAML is syntax-checked with PyYAML; green/red status can only be observed after the first push. The `audit` job is advisory until its first green run by design.
 11. **No behavior change intended.** `src/` changes are black-only reformatting plus no runtime edits; the guard lives in `tests/conftest.py`. If any task finds it must touch runtime code, stop and route the change to Phase 1 with the spec's §11 exception register.

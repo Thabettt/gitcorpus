@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextvars import ContextVar, Token
 
-_current: ContextVar[Callable[[], bool] | None] = ContextVar("gitcrawl_cancel", default=None)
+_current: ContextVar[Callable[[], bool] | None] = ContextVar("gitcorpus_cancel", default=None)
 
 
 class RunCancelled(Exception):

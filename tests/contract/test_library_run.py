@@ -16,9 +16,9 @@ from serve.filter_spec import describe_spec, parse_filter_spec, spec_hash, spec_
 from serve.pages import CSRF_COOKIE
 
 HTML = {"Accept": "text/html"}
-SPEC = {"gitcrawl_filter": 1, "q": "language:rust"}
+SPEC = {"gitcorpus_filter": 1, "q": "language:rust"}
 RICH_SPEC = {
-    "gitcrawl_filter": 1,
+    "gitcorpus_filter": 1,
     "q": "language:rust",
     "virtual": {"min_stars": 50},
 }
@@ -178,7 +178,7 @@ def test_library_run_now_bad_stored_spec_renders_a_hint(clean: Engine, tmp_path)
                 "INSERT INTO saved_filters (name, filter_spec) "
                 "VALUES ('broken', CAST(:spec AS jsonb)) RETURNING id"
             ),
-            {"spec": '{"gitcrawl_filter": 1, "bogus": true}'},
+            {"spec": '{"gitcorpus_filter": 1, "bogus": true}'},
         ).scalar_one()
 
     response = client.post(f"/filters/{filter_id}/run", headers={"x-csrf-token": token})

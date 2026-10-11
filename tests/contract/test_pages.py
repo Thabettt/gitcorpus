@@ -124,7 +124,7 @@ def healthy_client(engine: Engine, tmp_path, monkeypatch, **overrides) -> TestCl
 
 
 def seed_run(engine: Engine, tmp_path) -> tuple[int, str]:
-    filter_spec = {"gitcrawl_filter": 1, "q": "language:rust"}
+    filter_spec = {"gitcorpus_filter": 1, "q": "language:rust"}
     run_id = create_run(engine, filter_spec, api_version=API_VERSION)
     payload = RunPayload(total_count=1, fetched=1, items=[payload_item()])
     execute_run(engine, run_id, runner=lambda _rid, _spec: payload, runs_root=str(tmp_path))
@@ -374,8 +374,8 @@ def test_main_module_reads_env_overrides_without_starting_a_server(monkeypatch):
         captured.update(app=app_path, host=host, port=port)
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    monkeypatch.setenv("GITCRAWL_HOST", "0.0.0.0")
-    monkeypatch.setenv("GITCRAWL_PORT", "9123")
+    monkeypatch.setenv("GITCORPUS_HOST", "0.0.0.0")
+    monkeypatch.setenv("GITCORPUS_PORT", "9123")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
     entry.main()
@@ -391,8 +391,8 @@ def test_main_module_defaults_to_localhost_8000(monkeypatch):
         captured.update(app=app_path, host=host, port=port)
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    monkeypatch.delenv("GITCRAWL_HOST", raising=False)
-    monkeypatch.delenv("GITCRAWL_PORT", raising=False)
+    monkeypatch.delenv("GITCORPUS_HOST", raising=False)
+    monkeypatch.delenv("GITCORPUS_PORT", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
     entry.main()

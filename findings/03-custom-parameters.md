@@ -2,7 +2,7 @@
 
 **Read this after `01–02`.** Companions: `06 §6` (per-param workarounds), `06 §7` (typo/validation).
 
-**The one-paragraph version**: gitcrawl wants filters GitHub never built — `has_dockerfile`, coverage, team, owner country. Every team that wants this tries the same two things first: add `&myfilter=x` to the URL, or put `myfield:value` inside `q`. Both appear to work, and that is the trap: GitHub returns `200 OK` and simply ignores what it doesn't know, so you get unfiltered results while your logs say success. This file settles the question with plain YES/NO verdicts, then gives the sanctioned workarounds — `props.*` (single-org only), `topic:` conventions, and client/proxy/own-database post-filtering — with working code.
+**The one-paragraph version**: gitcorpus wants filters GitHub never built — `has_dockerfile`, coverage, team, owner country. Every team that wants this tries the same two things first: add `&myfilter=x` to the URL, or put `myfield:value` inside `q`. Both appear to work, and that is the trap: GitHub returns `200 OK` and simply ignores what it doesn't know, so you get unfiltered results while your logs say success. This file settles the question with plain YES/NO verdicts, then gives the sanctioned workarounds — `props.*` (single-org only), `topic:` conventions, and client/proxy/own-database post-filtering — with working code.
 
 > **Date**: 2026-09-29; live API re-verification 2026-10-06/07 (items marked "live-verified"). **Scope**: `GET /search/repositories` REST + `search(type:REPOSITORY)` GraphQL + `gh search repos`.
 

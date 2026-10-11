@@ -1,6 +1,6 @@
 # Corpus Building: Efficient Engineering
 
-**Date**: 2026-10-02. Companion to `how-the-data-flows.md`, `gitcrawl-vs-seart.md`, `spec.md`, and `research.md`. You need no prior GitHub API knowledge — every term is introduced where it is first used. All GitHub numbers were verified against GitHub's official documentation on 2026-10-02.
+**Date**: 2026-10-02. Companion to `how-the-data-flows.md`, `gitcorpus-vs-seart.md`, `spec.md`, and `research.md`. You need no prior GitHub API knowledge — every term is introduced where it is first used. All GitHub numbers were verified against GitHub's official documentation on 2026-10-02.
 
 **Purpose of this document**: explain, from scratch, how we can build the largest and freshest repository corpus possible with **one GitHub account**, as fast as GitHub's rules permit, without ever losing work and without breaking a single term of service. It records the math, the strategies, the legal boundaries, and the design decisions we reached — including the GraphQL batching engine, now built, that changes the speed by roughly 25x.
 
@@ -402,6 +402,6 @@ A `graphql_batch` module existed before and was deleted as unused (R58). It had 
 - GitHub Acceptable Use Policies (§4 spam/inauthentic activity, §5 site access, §7 information usage) — `https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies`
 - Project legal gates — `docs/legal-gates.md`
 - Data flow and stages — `design/how-the-data-flows.md`
-- Catalog-tool contrast (SEART) and why this pipeline exists — `design/gitcrawl-vs-seart.md`
+- Catalog-tool contrast (SEART) and why this pipeline exists — `design/gitcorpus-vs-seart.md`
 - Market landscape and build justification — `design/landscape-comparison.md`
 - Batching design discussion and prior-art analysis — this document, §9–§10

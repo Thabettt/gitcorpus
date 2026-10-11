@@ -187,7 +187,7 @@ def test_record_from_response_caches_parsed_body():
     response = _response(200, json={"total_count": 7, "incomplete_results": False})
     body = response.json()
     # emulate the hook having cached it
-    response.extensions["gitcrawl.json"] = body
+    response.extensions["gitcorpus.json"] = body
     assert cached_json(response) is body
 
 

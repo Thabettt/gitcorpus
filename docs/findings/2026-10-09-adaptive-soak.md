@@ -1,6 +1,6 @@
 # Adaptive rate controller soak validation (Task 4, plan 2026-10-09)
 
-Live soak of the env-gated adaptive rate controller (`GITCRAWL_ADAPTIVE=1`) on the profiled
+Live soak of the env-gated adaptive rate controller (`GITCORPUS_ADAPTIVE=1`) on the profiled
 corpus filter, measured **2026-10-10** on branch `perf/runtime-adaptive-control` at `65d0b4c`
 (Tasks 1-3 complete; full suite 1,555 passed at this commit, not re-run per the task brief).
 The run used one personal token (`GITHUB_TOKEN`) against `api.github.com`, local PostgreSQL
@@ -14,7 +14,7 @@ in the existing audit columns).
   `serve.runner.run_filter`** from a scratch script at
   `C:\Users\Abdul\AppData\Local\Temp\opencode\soak\soak_run.py` (not committed), not through the
   console/server. The code path is identical (`run_filter` -> `_hydrate` ->
-  `refresh_repos_batched` -> `fetch_batch(..., adaptive=...)`); `os.environ["GITCRAWL_ADAPTIVE"]`
+  `refresh_repos_batched` -> `fetch_batch(..., adaptive=...)`); `os.environ["GITCORPUS_ADAPTIVE"]`
   was set to `"1"` inside the script before the run, so no server restart was needed.
 - Corpus preset applied via `update_run_settings(engine, parse_settings_form({"preset": "corpus"}))`
   and recorded: `limiter_max_concurrent` changed 17 -> 32; `max_shards=1000`,
@@ -110,7 +110,7 @@ second run; the token sat at 4,156 remaining (reset 17:10:57Z) after run A.
 
 ## Assessment and decision
 
-**Decision: keep `GITCRAWL_ADAPTIVE` off (default unchanged).** Do not propose flipping the
+**Decision: keep `GITCORPUS_ADAPTIVE` off (default unchanged).** Do not propose flipping the
 default yet.
 
 The controller did what it is designed to do in the presence of upstream failures: it halved W

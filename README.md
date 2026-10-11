@@ -1,15 +1,13 @@
-# gitcrawl
+# gitcorpus
 
 **Live-only GitHub repository discovery for evidence-backed research corpora.**
 
-[![CI](https://github.com/Thabettt/gitcrawl/actions/workflows/ci.yml/badge.svg)](https://github.com/Thabettt/gitcrawl/actions/workflows/ci.yml)
+[![CI](https://github.com/Thabettt/gitcorpus/actions/workflows/ci.yml/badge.svg)](https://github.com/Thabettt/gitcorpus/actions/workflows/ci.yml)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![PostgreSQL 17+](https://img.shields.io/badge/PostgreSQL-17%2B-336791?logo=postgresql&logoColor=white)
 ![Status: research prototype](https://img.shields.io/badge/status-research%20prototype-orange)
 
 > This is a research prototype, not production software. CI runs on pushes to `main` and on pull requests.
->
-> **Name note:** this project is unrelated to [`openclaw/gitcrawl`](https://github.com/openclaw/gitcrawl), a Go issue/PR triage tool. Same name, different domain — see [Name note](#name-note) at the bottom.
 
 **New here?** Read [The one-paragraph version](#the-one-paragraph-version), then [Why this exists](#why-this-exists) and [Why not just script the GitHub API?](#why-not-just-script-the-github-api). Those three answer "what is this and do I need it." Everything after that is reference.
 
@@ -25,20 +23,19 @@
 - [How it's built](#how-its-built)
 - [Data model and run artifacts](#data-model-and-run-artifacts)
 - [Getting it running](#getting-it-running)
-- [Using gitcrawl](#using-gitcrawl)
+- [Using gitcorpus](#using-gitcorpus)
 - [Testing, linting, and type checking](#testing-linting-and-type-checking)
 - [Being a good citizen](#being-a-good-citizen)
 - [Where the project is today](#where-the-project-is-today)
 - [Glossary](#glossary)
 - [Documentation map](#documentation-map)
-- [Name note](#name-note)
 - [License](#license)
 
 ---
 
 ## The one-paragraph version
 
-You describe what you want in a filter — an ordinary GitHub search query plus the filters GitHub never built, like "has a Dockerfile" or "owner is in Germany." gitcrawl checks that filter for mistakes *before spending a single API call*, asks GitHub's live search for matching repositories, follows that search past the 1,000-result wall by slicing the query until every slice fits, saves each candidate's full current details, drops the ones that fail your own filters, resolves owner countries, merges everything by immutable repo `id`, shows it to you with its provenance, and freezes the whole run into a bundle you can replay, compare, export, and cite. Every stage exists because of a specific GitHub limitation, and this README explains each one where it comes up.
+You describe what you want in a filter — an ordinary GitHub search query plus the filters GitHub never built, like "has a Dockerfile" or "owner is in Germany." gitcorpus checks that filter for mistakes *before spending a single API call*, asks GitHub's live search for matching repositories, follows that search past the 1,000-result wall by slicing the query until every slice fits, saves each candidate's full current details, drops the ones that fail your own filters, resolves owner countries, merges everything by immutable repo `id`, shows it to you with its provenance, and freezes the whole run into a bundle you can replay, compare, export, and cite. Every stage exists because of a specific GitHub limitation, and this README explains each one where it comes up.
 
 The design principle behind all of it: **live-only**. A run measures GitHub as it is at that moment (`ran_at`). There are no background pollers, no stale indexes, no watermarks, and nothing to keep alive between measurements. When you want a corpus, you take a fresh measurement and you keep the evidence.
 
@@ -46,12 +43,12 @@ The design principle behind all of it: **live-only**. A run measures GitHub as i
 
 GitHub's repository search looks like a friendly little API call. It is actually a front door with a very small lobby, and most crawlers find that out the hard way:
 
-- **The lobby holds 1,000 people.** No single query can return more than 1,000 results, no matter how many pages you ask for. Past result 1,000, GitHub's REST search returns an error (`422`), not more pages, and gitcrawl's GraphQL discovery is kept under the same ceiling rather than pushed past it. Ranking also considers at most ~4,000 matching repos, so a very broad query can't even *see* the whole crowd. The only way through is to slice the query into smaller pieces (by creation date, usually) until each piece fits — a technique called **sharding**.
+- **The lobby holds 1,000 people.** No single query can return more than 1,000 results, no matter how many pages you ask for. Past result 1,000, GitHub's REST search returns an error (`422`), not more pages, and gitcorpus's GraphQL discovery is kept under the same ceiling rather than pushed past it. Ranking also considers at most ~4,000 matching repos, so a very broad query can't even *see* the whole crowd. The only way through is to slice the query into smaller pieces (by creation date, usually) until each piece fits — a technique called **sharding**.
 - **There are two prepaid meters, and they are small.** Visiting a repo for its full details spends the *main* meter (5,000 requests/hour) — or the *GraphQL points* meter (5,000 points/hour) when details are fetched in batches, which is the default. Discovery spends that same points meter now: shard-planning count probes are batched (up to 20 windows per query, 1 point per query) and result pages are one GraphQL search connection per request, so the REST search meter (30 requests/minute) is not touched at all — the `since` cursor scan and org/user enumeration run on the core REST meter (5,000/hr) instead. On top of those sit GitHub's anti-abuse ("secondary") limits, which punish bursting but never punish steady pacing. Details and the arithmetic live in [`design/corpus-building-efficient-engineering.md`](design/corpus-building-efficient-engineering.md); the measured 67.9-second, 38,969-repo discovery ledger is §9.4.
 - **All filtering lives inside one text string.** GitHub supports a closed set of `qualifier:value` filters inside `q`, and nothing else. There is no server-side "has a Dockerfile," no "owner located in Germany," no "at least 100 commits." Those questions have to be answered locally, one repo at a time — after you've paid to fetch the repo.
 - **Typos fail silently.** Type `updated:>2024` (the real qualifier is `pushed:`) and GitHub answers `200 OK` with your filter treated as *plain search text*. You get wrong data and no error. This is why validation is the very first stage of a run.
-- **The search index lags pushes, and `total_count` is an estimate.** GitHub says so in its docs, and search pagination carries no stability guarantee at all — identical paginated requests can shift or skip items between runs. That's why gitcrawl labels incompleteness instead of hiding it, and why the same filter can return a slightly different set hours later.
-- **Repos change underneath you.** They rename, transfer, get deleted, or go private. Search never tells you which. gitcrawl keys everything on the immutable `id`, follows renames, and records deletions as tombstones.
+- **The search index lags pushes, and `total_count` is an estimate.** GitHub says so in its docs, and search pagination carries no stability guarantee at all — identical paginated requests can shift or skip items between runs. That's why gitcorpus labels incompleteness instead of hiding it, and why the same filter can return a slightly different set hours later.
+- **Repos change underneath you.** They rename, transfer, get deleted, or go private. Search never tells you which. gitcorpus keys everything on the immutable `id`, follows renames, and records deletions as tombstones.
 
 A one-off script can answer "show me some Rust repos." It cannot answer *"give me the complete set of Rust repos matching this frame as of today, with the Dockerfile, owner-country, and commit-count filters applied, plus the evidence to defend every row."* That second question is the one this project exists for.
 
@@ -59,9 +56,9 @@ A one-off script can answer "show me some Rust repos." It cannot answer *"give m
 
 These five concepts recur everywhere, so here they are once, in plain words. No prior GitHub API knowledge is assumed.
 
-- **GitHub search** (`GET /search/repositories`, or the GraphQL `search` connection gitcrawl uses) — the front door. You send one text string (`q`) with filters inside it (e.g. `language:rust stars:>100`) and get back *thin* records: name, description, stars, language, dates, plus a `score`. It returns at most 100 per page and 1,000 per query, allows ~30 requests/minute per token on REST, silently treats typos as words, and excludes forks unless you ask (`fork:true` to include them, `fork:only` for forks alone). gitcrawl reaches it through GraphQL (points meter); the `since` scan and org/user enumeration use the core REST meter (5,000/hr) — no 1,000-result cap on those endpoints — so the 30/minute search endpoint is no longer used. Reference: [`findings/01-search-repos-parameters.md`](findings/01-search-repos-parameters.md).
+- **GitHub search** (`GET /search/repositories`, or the GraphQL `search` connection gitcorpus uses) — the front door. You send one text string (`q`) with filters inside it (e.g. `language:rust stars:>100`) and get back *thin* records: name, description, stars, language, dates, plus a `score`. It returns at most 100 per page and 1,000 per query, allows ~30 requests/minute per token on REST, silently treats typos as words, and excludes forks unless you ask (`fork:true` to include them, `fork:only` for forks alone). gitcorpus reaches it through GraphQL (points meter); the `since` scan and org/user enumeration use the core REST meter (5,000/hr) — no 1,000-result cap on those endpoints — so the 30/minute search endpoint is no longer used. Reference: [`findings/01-search-repos-parameters.md`](findings/01-search-repos-parameters.md).
 - **Hydration** (`GET /repos/{owner}/{repo}`) — asking for one repo's *full* current record: topics, license, exact counts, flags, dates, language bytes. Costs one call per repo from the separate 5,000/hour main meter — or, by default, one batched GraphQL request per 20 repos on the points meter. Unchanged repos can be re-fetched almost free via caching headers (ETag). **This is not cloning** — no files are downloaded.
-- **Virtual filters** — the filters GitHub never built (`has_dockerfile`, `min_commits`, `owner_country`, …). gitcrawl computes them itself, per repo, after hydration, cheapest first.
+- **Virtual filters** — the filters GitHub never built (`has_dockerfile`, `min_commits`, `owner_country`, …). gitcorpus computes them itself, per repo, after hydration, cheapest first.
 - **Enrichment** — extra detail fetched per repo beyond the full record: file trees, language byte breakdowns, releases, funding links, discussions. Each answer costs calls, so enrichment is spent only on repos that survived your filters.
 - **Run bundle** — the saved artifact of one search: your filters, when it ran, what GitHub said, what survived, and the raw upstream responses behind it. It is how a second device replays your search and how a study proves what was measured.
 
@@ -74,7 +71,7 @@ filters.json → Validate → Live search → Thin matches → Hydrate → Virtu
 → Enrich → Geo resolve → Merge + cache → Display → Bundle/export
 ```
 
-**Stage 0 — Your filters (a file, not just a form).** Everything starts as a `filter-spec v1` JSON document: the `q` string GitHub understands, sort/order/page options, and `virtual` filters only gitcrawl understands. Because it's a file, it travels between devices; because it holds no tokens, it's safe to share. The console's "Download as JSON" produces exactly this document, and "Upload and run" accepts it.
+**Stage 0 — Your filters (a file, not just a form).** Everything starts as a `filter-spec v1` JSON document: the `q` string GitHub understands, sort/order/page options, and `virtual` filters only gitcorpus understands. Because it's a file, it travels between devices; because it holds no tokens, it's safe to share. The console's "Download as JSON" produces exactly this document, and "Upload and run" accepts it.
 
 **Stage 1 — Validation (mistakes die here, free).** Before any network call, every qualifier is checked against the documented allowlist. `updated:>2024-01-01` (doesn't exist — the real qualifier is `pushed:`) or `is:archive` (the real one is `archived:true`) is rejected with a hint, because GitHub would have returned `200 OK` with *unfiltered* results and no error at all. A passing filter set gets a `filter_hash` fingerprint used for caching and replay. *Why this stage exists:* GitHub's silent-`200` behavior makes typos the most expensive kind of bug — paid in wrong data, not errors.
 
@@ -82,7 +79,7 @@ filters.json → Validate → Live search → Thin matches → Hydrate → Virtu
 
 **Stage 3 — Hydration (thin → full, candidates only).** Each surviving match gets its full current record — batched by default (up to 20 aliased repos per GraphQL request, with per-repo REST fallback when one node fails). This is the most expensive stage per repo, so two economies apply: unchanged repos revalidate almost free (ETag → `304`, which GitHub documents as not counting against the primary limit), and nothing downstream starts for repos that will fail a later filter. A repo renamed since discovery is followed (`301`); a deleted or privatized one becomes a recorded tombstone, not a crash.
 
-**Stage 4 — Virtual filters (gitcrawl's own screening room).** Now the filters GitHub can't express run, cheapest first: counts already in the hydrated record (`min_stars`, `team_topic`, `min_language_bytes`/`max_language_bytes`), then commit counts (`min_commits`/`max_commits`), then file checks (`has_dockerfile` via one recursive file-tree call covering every path question — never one call per file), then `owner_country` via the geo pipeline. Failures drop with a recorded reason and are counted in the run metadata, so "47 repos matched search, 31 survived filters" is always explainable.
+**Stage 4 — Virtual filters (gitcorpus's own screening room).** Now the filters GitHub can't express run, cheapest first: counts already in the hydrated record (`min_stars`, `team_topic`, `min_language_bytes`/`max_language_bytes`), then commit counts (`min_commits`/`max_commits`), then file checks (`has_dockerfile` via one recursive file-tree call covering every path question — never one call per file), then `owner_country` via the geo pipeline. Failures drop with a recorded reason and are counted in the run metadata, so "47 repos matched search, 31 survived filters" is always explainable.
 
 **Stage 5 — Enrichment (detail only for survivors).** Only repos that pass every filter get enriched: language byte breakdowns, releases, funding links, discussions. The rules that keep this cheap: one file-tree call answers all path questions; GraphQL batches are used only where one query replaces three or more REST calls; identical files across repos are fetched once by content hash; package data comes from zero-token mirrors (ecosyste.ms, deps.dev) before any GitHub call is spent. Nothing is fetched for a display you won't show.
 
@@ -106,7 +103,7 @@ gh search repos 'language:rust stars:>100' --limit 100 --json fullName,stargazer
 
 Here is what quietly changes when the output has to be a complete, defensible corpus:
 
-| The script | What happens at scale | What gitcrawl adds |
+| The script | What happens at scale | What gitcorpus adds |
 |---|---|---|
 | One query, first page(s) | Result 1,001 returns `422`; `total_count` is approximate | Recursive `created:` bisection inside your own date window (the date token is replaced, never appended — GitHub unions duplicate same-type qualifiers), batched GraphQL count probes, parallel page fetching with inline retry, coverage counters |
 | A straight request loop | 30 search req/min; 403/429/422 mean three different things | Per-bucket Redis pacing from response headers; a classifier for retry-after / reset-wait / backoff / fix / fail-loud; multi-token support |
@@ -116,7 +113,7 @@ Here is what quietly changes when the output has to be a complete, defensible co
 | Crash = start over | A long run fails at hour three | Orphan recovery, Stop/resume (failed, partial, and stopped runs; re-fetches from the start, safely), live phase progress with ETA, a quality report per run |
 | No telemetry | You cannot show what you spent or when | Per-request audit log (rate-limit headers, status, latency, token fingerprint) and SLO dashboards |
 
-The honest summary: **a script answers a query; gitcrawl produces a corpus you can defend.** If you only need the query, stay with the script — genuinely.
+The honest summary: **a script answers a query; gitcorpus produces a corpus you can defend.** If you only need the query, stay with the script — genuinely.
 
 ## How this relates to existing tools
 
@@ -129,13 +126,13 @@ The same question has another form: *"why not use the tool that already exists?"
 | Analytics dashboards | OSS Insight, DevStats | Aggregated trends and rankings | Aggregate answers, not frozen per-repo corpora |
 | Thin API wrappers | `gh search repos`, MCP/assistant connectors | Ergonomic pass-through with JSON output | The same 1,000-result cap, no virtual filters, no persistence, no evidence bundle |
 
-gitcrawl targets the intersection none of them covers: **live measurement at a chosen `ran_at`, arbitrary filters including file presence and owner location, coverage below the 10-star floor, frozen per-run evidence with raw upstream responses, audited pacing, and a path to coding-agent detection.** For a standard off-the-shelf sample, SEART is genuinely the better choice; for ecosystem-scale history, use World of Code. The full honest comparison, including a capability matrix and the case for building rather than adopting, lives in [`design/landscape-comparison.md`](design/landscape-comparison.md) and [`design/gitcrawl-vs-seart.md`](design/gitcrawl-vs-seart.md).
+gitcorpus targets the intersection none of them covers: **live measurement at a chosen `ran_at`, arbitrary filters including file presence and owner location, coverage below the 10-star floor, frozen per-run evidence with raw upstream responses, audited pacing, and a path to coding-agent detection.** For a standard off-the-shelf sample, SEART is genuinely the better choice; for ecosystem-scale history, use World of Code. The full honest comparison, including a capability matrix and the case for building rather than adopting, lives in [`design/landscape-comparison.md`](design/landscape-comparison.md) and [`design/gitcorpus-vs-seart.md`](design/gitcorpus-vs-seart.md).
 
 ## What's in the box
 
 ### Discovery
 
-- **Sharded live search.** gitcrawl slices your query by `created:` date ranges until every shard is under GitHub's 1,000-result cap, then fetches each shard with one GraphQL search connection per page (`first: 100`, up to `max_pages` pages) from a pool of `discovery_concurrency` workers (32 by default). Planning counts are batched GraphQL probes — up to 20 windows per query, 1 point per query — so the whole engine rides the GraphQL points meter (5,000 points/hr) and the REST search meter is not touched. The plan lives inside your own `created:` window (only a dateless query falls back to 2008→today), and every child replaces the date token rather than appending a second one — GitHub unions duplicate same-type qualifiers, so appending would never let a plan converge. A window that can't be narrowed below the cap even at one day is still fetched and flagged incomplete rather than dropped; a failed page retries inline with backoff, and a shard that still can't finish is marked `incomplete` instead of aborting the run; a run deadline stops discovery gracefully so the work stays resumable. Every shard records its `total_count`, fetched count, and state (`pending/active/done/incomplete`). One accepted cost: discovery upserts rewrite the full row from the lean fields, so a run with `max_hydrate < max_candidates` can replace previously hydrated detail for repos outside the hydrate window — the bounds of that overwrite are recorded in the [discovery spec](docs/superpowers/specs/2026-10-08-graphql-discovery-design.md) §3.
+- **Sharded live search.** gitcorpus slices your query by `created:` date ranges until every shard is under GitHub's 1,000-result cap, then fetches each shard with one GraphQL search connection per page (`first: 100`, up to `max_pages` pages) from a pool of `discovery_concurrency` workers (32 by default). Planning counts are batched GraphQL probes — up to 20 windows per query, 1 point per query — so the whole engine rides the GraphQL points meter (5,000 points/hr) and the REST search meter is not touched. The plan lives inside your own `created:` window (only a dateless query falls back to 2008→today), and every child replaces the date token rather than appending a second one — GitHub unions duplicate same-type qualifiers, so appending would never let a plan converge. A window that can't be narrowed below the cap even at one day is still fetched and flagged incomplete rather than dropped; a failed page retries inline with backoff, and a shard that still can't finish is marked `incomplete` instead of aborting the run; a run deadline stops discovery gracefully so the work stays resumable. Every shard records its `total_count`, fetched count, and state (`pending/active/done/incomplete`). One accepted cost: discovery upserts rewrite the full row from the lean fields, so a run with `max_hydrate < max_candidates` can replace previously hydrated detail for repos outside the hydrate window — the bounds of that overwrite are recorded in the [discovery spec](docs/superpowers/specs/2026-10-08-graphql-discovery-design.md) §3.
 - **A validation gate with teeth.** Every qualifier is checked against the documented allowlist with typo hints; a "delta test" in the test suite proves filtering actually narrows results, so a silent `200` can never masquerade as filtering.
 - **Org and user enumeration** (`GET /orgs/{org}/repos`, `GET /users/{u}/repos`) is implemented and tested for single-scope jobs; `GET /repositories?since=` cursor scanning exists too. Both are currently quarantined from the console (see [Where the project is today](#where-the-project-is-today)).
 
@@ -214,7 +211,7 @@ Pacing is a first-class subsystem here, not a retry loop bolted on:
 - Four Redis token buckets — `search` (30/min; retained, but the shipped paths no longer use it), `core` (5,000/hr), `code_search` (10/min), `graphql` (5,000 pts/hr; one request costs `round(connections ÷ 100)` points, minimum 1, which is why batching 20 repos at once is far cheaper than 20 requests) — keyed by resource and token fingerprint.
 - Response headers are authoritative. `X-RateLimit-*` values are reconciled into the buckets, and `remaining == 0` pauses only the exhausted bucket until its reset.
 - Every failure maps to exactly one action: `retry_after`, `wait_reset`, `backoff` (jittered and bounded by the run deadline), `shard` (the cap-`422`; the GraphQL planner keeps every shard under the cap, so discovery no longer provokes it), `fix` (a validation-`422`), or `fail_loud` (bad credentials). SSO partial results — a `200` that quietly withholds some orgs — degrade to per-repo fallback instead of aborting the run. No loop without a limit; no silent degradation. Credentialed requests refuse non-GitHub hosts, so a redirect can never leak a token.
-- Without Redis the runner falls back to `fakeredis` with a warning (`GITCRAWL_REDIS_STRICT=1` forbids that fallback). Unit tests are hermetic via `fakeredis[lua]`.
+- Without Redis the runner falls back to `fakeredis` with a warning (`GITCORPUS_REDIS_STRICT=1` forbids that fallback). Unit tests are hermetic via `fakeredis[lua]`.
 
 ## Data model and run artifacts
 
@@ -263,8 +260,8 @@ clones/<filter_hash>/<run_id>/<owner__repo>/   # one dir per clone, with a done 
 ### Quickstart (Docker Compose)
 
 ```bash
-git clone https://github.com/Thabettt/gitcrawl.git
-cd gitcrawl
+git clone https://github.com/Thabettt/gitcorpus.git
+cd gitcorpus
 docker compose up -d          # PostgreSQL 17 on 5432, Redis 7 on 6379
 ```
 
@@ -292,14 +289,14 @@ Set the environment (swap in your own token):
 
 ```bash
 # macOS / Linux
-export DATABASE_URL='postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl'
+export DATABASE_URL='postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus'
 export REDIS_URL='redis://localhost:6379/0'
 export GITHUB_TOKEN='ghp_your_token_here'
 ```
 
 ```powershell
 # Windows (PowerShell) — session only
-$env:DATABASE_URL = 'postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl'
+$env:DATABASE_URL = 'postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus'
 $env:REDIS_URL = 'redis://localhost:6379/0'
 $env:GITHUB_TOKEN = 'ghp_your_token_here'
 ```
@@ -332,7 +329,7 @@ Open <http://127.0.0.1:8000/>. The dashboard greets you, and `/health` tells you
 Already run PostgreSQL and Redis, or prefer not to use Docker? Skip Compose and point the environment at your instances:
 
 - `DATABASE_URL` — any PostgreSQL 17+ database; `alembic upgrade head` creates everything.
-- `REDIS_URL` — any Redis 7 instance. If it's omitted or unreachable, the app logs a warning and falls back to `fakeredis`; set `GITCRAWL_REDIS_STRICT=1` to make an unreachable Redis a hard failure instead.
+- `REDIS_URL` — any Redis 7 instance. If it's omitted or unreachable, the app logs a warning and falls back to `fakeredis`; set `GITCORPUS_REDIS_STRICT=1` to make an unreachable Redis a hard failure instead.
 
 Everything else is identical to the quickstart.
 
@@ -340,10 +337,10 @@ Everything else is identical to the quickstart.
 
 The development environment ran from a non-elevated Windows shell, so it deliberately avoids Windows services and Docker Desktop:
 
-- A **project-local PostgreSQL cluster** (created with the same PG binaries, port `5433`, data under `%LOCALAPPDATA%\gitcrawl\pgdata`) started by `pg_ctl`, with databases `gitcrawl` and `gitcrawl_test`.
+- A **project-local PostgreSQL cluster** (created with the same PG binaries, port `5433`, data under `%LOCALAPPDATA%\gitcorpus\pgdata`) started by `pg_ctl`, with databases `gitcorpus` and `gitcorpus_test`.
 - **Redis 7 from WSL2 Ubuntu** via `wsl -u root -- service redis-server start`.
 - User-level environment variables (`DATABASE_URL`, `TEST_DATABASE_URL`, `REDIS_URL`, `GITHUB_TOKEN`). One gotcha worth internalising: a process that is already running does not see newly set variables, so restart your terminal or editor after changing them.
-- Per-user logon scheduled tasks (`gitcrawl-postgres`, `gitcrawl-redis`) start both services automatically.
+- Per-user logon scheduled tasks (`gitcorpus-postgres`, `gitcorpus-redis`) start both services automatically.
 
 Every command — creation, start/stop/status, password rotation, troubleshooting — is documented in [`docs/environment.md`](docs/environment.md). That document also records the deliberate deviation from Compose: `docker-compose.yml` stays in the repo for environments that do have Docker.
 
@@ -353,25 +350,25 @@ Everything is read from the environment only. Secrets are never stored in the re
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | — (required) | SQLAlchemy DSN, e.g. `postgresql+psycopg://user:pw@host:5432/gitcrawl`. The app refuses to start without it. |
+| `DATABASE_URL` | — (required) | SQLAlchemy DSN, e.g. `postgresql+psycopg://user:pw@host:5432/gitcorpus`. The app refuses to start without it. |
 | `GITHUB_TOKEN` | — (required to crawl) | Single GitHub token. Audit logs store only its SHA-256 fingerprint. |
 | `GITHUB_TOKENS` | — | Comma-separated token list; takes precedence over `GITHUB_TOKEN` when it parses to ≥ 1 token. |
 | `REDIS_URL` | fakeredis fallback | Redis DSN for limiter buckets and metrics. |
-| `GITCRAWL_REDIS_STRICT` | unset | `1` disables the fakeredis fallback; an unreachable Redis fails loudly. |
-| `GITCRAWL_HOST` / `GITCRAWL_PORT` | `127.0.0.1` / `8000` | Bind address for `python -m serve`. |
-| `GITCRAWL_ALLOWED_HOSTS` | loopback only | Extra comma-separated hosts for TrustedHost (behind a proxy, set the public hostname and run uvicorn with `--proxy-headers`). |
-| `GITCRAWL_REQUEST_DEADLINE_SECONDS` | `3600` | Deadline for a synchronous API/run request; pins the `/settings` field. |
-| `GITCRAWL_CLONE_TIMEOUT_SECONDS` | `1800` | Per-clone timeout. |
-| `GITCRAWL_MAX_SHARDS` | `10` | Shard cap per run (pins `/settings`). |
-| `GITCRAWL_MAX_CANDIDATES` | `500` | Candidate cap per run. |
-| `GITCRAWL_MAX_HYDRATE` | `200` | Hydration cap per run (must be ≤ candidates). |
-| `GITCRAWL_MAX_ENRICH` | `100` | Enrichment-check cap per run. |
-| `GITCRAWL_GRAPHQL_BATCH` | `true` | Toggle batched GraphQL (falls back to per-repo REST when off). |
-| `GITCRAWL_GRAPHQL_BATCH_SIZE` | `20` | Aliases per GraphQL request (1–50); env overrides are clamped into range at load. |
-| `GITCRAWL_MAX_CONCURRENT` | `10` | Max in-flight requests per endpoint/token. |
-| `GITCRAWL_DISCOVERY_CONCURRENCY` | `32` | Discovery worker pool size (1–64); one GraphQL search connection per page. |
+| `GITCORPUS_REDIS_STRICT` | unset | `1` disables the fakeredis fallback; an unreachable Redis fails loudly. |
+| `GITCORPUS_HOST` / `GITCORPUS_PORT` | `127.0.0.1` / `8000` | Bind address for `python -m serve`. |
+| `GITCORPUS_ALLOWED_HOSTS` | loopback only | Extra comma-separated hosts for TrustedHost (behind a proxy, set the public hostname and run uvicorn with `--proxy-headers`). |
+| `GITCORPUS_REQUEST_DEADLINE_SECONDS` | `3600` | Deadline for a synchronous API/run request; pins the `/settings` field. |
+| `GITCORPUS_CLONE_TIMEOUT_SECONDS` | `1800` | Per-clone timeout. |
+| `GITCORPUS_MAX_SHARDS` | `10` | Shard cap per run (pins `/settings`). |
+| `GITCORPUS_MAX_CANDIDATES` | `500` | Candidate cap per run. |
+| `GITCORPUS_MAX_HYDRATE` | `200` | Hydration cap per run (must be ≤ candidates). |
+| `GITCORPUS_MAX_ENRICH` | `100` | Enrichment-check cap per run. |
+| `GITCORPUS_GRAPHQL_BATCH` | `true` | Toggle batched GraphQL (falls back to per-repo REST when off). |
+| `GITCORPUS_GRAPHQL_BATCH_SIZE` | `20` | Aliases per GraphQL request (1–50); env overrides are clamped into range at load. |
+| `GITCORPUS_MAX_CONCURRENT` | `10` | Max in-flight requests per endpoint/token. |
+| `GITCORPUS_DISCOVERY_CONCURRENCY` | `32` | Discovery worker pool size (1–64); one GraphQL search connection per page. |
 | `TEST_DATABASE_URL` | — | Test database; its name must end in `_test` (destructive-safe). Suites skip without it. |
-| `GITCRAWL_REQUIRE_TEST_DB` | unset | `1` turns a missing test database into a failure instead of a skip (used in CI). |
+| `GITCORPUS_REQUIRE_TEST_DB` | unset | `1` turns a missing test database into a failure instead of a skip (used in CI). |
 | `UPDATE_GOLDEN` | unset | `1` regenerates the golden snapshots. |
 
 The default run caps are intentionally small — laptop-friendly, interactive. Raise them at **System → Limits** (`/settings`) for corpus builds — the **Set to corpus-build limits** button applies 1,000 shards; 100,000 candidates/hydrate/enrich; a 24 h deadline; batch 20; concurrency 10; discovery workers 32 — or pin them from the environment; the settings page renders env-pinned fields as read-only.
@@ -384,7 +381,7 @@ alembic upgrade head        # run from the repo root, with DATABASE_URL set
 
 One warning worth reading before you point this at a large database: migrations `0005`–`0007` rewrite constraints and indexes on live tables and take write-blocking locks. On a big database, run them in a maintenance window or convert them to `CONCURRENTLY` builds as described in [`docs/environment.md`](docs/environment.md#migration-locking). A downgrade of `0004` can also be lossy for rows with a `NULL` `repo_id`; see the migration's docstring.
 
-## Using gitcrawl
+## Using gitcorpus
 
 ### A first search
 
@@ -400,7 +397,7 @@ A first run on default limits will intentionally stop after a few hundred candid
 
 ```json
 {
-  "gitcrawl_filter": 1,
+  "gitcorpus_filter": 1,
   "q": "language:rust stars:>100",
   "sort": "stars",
   "order": "desc",
@@ -437,7 +434,7 @@ Run a full filter spec and get the frozen result body:
 curl -X POST http://127.0.0.1:8000/vsearch/run \
   -H 'Content-Type: application/json' \
   -d '{
-    "gitcrawl_filter": 1,
+    "gitcorpus_filter": 1,
     "q": "language:rust stars:>100",
     "sort": "stars",
     "order": "desc",
@@ -518,13 +515,13 @@ UPDATE_GOLDEN=1 pytest tests/golden      # regenerate snapshots after intended c
 With a test database (its name must end in `_test`):
 
 ```bash
-TEST_DATABASE_URL='postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl_test' \
-GITCRAWL_REQUIRE_TEST_DB=1 pytest
+TEST_DATABASE_URL='postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus_test' \
+GITCORPUS_REQUIRE_TEST_DB=1 pytest
 ```
 
 ```powershell
-$env:TEST_DATABASE_URL = 'postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl_test'
-$env:GITCRAWL_REQUIRE_TEST_DB = '1'
+$env:TEST_DATABASE_URL = 'postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus_test'
+$env:GITCORPUS_REQUIRE_TEST_DB = '1'
 pytest
 ```
 
@@ -540,12 +537,12 @@ Two pieces of test furniture deserve a sentence each. The `golden/` suite snapsh
 
 ## Being a good citizen
 
-- **Localhost by default, no authentication.** The console is a single-operator tool. It binds `127.0.0.1` and enforces a TrustedHost allowlist; do not expose it to a network without putting real auth in front and setting `GITCRAWL_ALLOWED_HOSTS` plus proxy headers.
+- **Localhost by default, no authentication.** The console is a single-operator tool. It binds `127.0.0.1` and enforces a TrustedHost allowlist; do not expose it to a network without putting real auth in front and setting `GITCORPUS_ALLOWED_HOSTS` plus proxy headers.
 - **CSRF** protection via an Origin/Referer check and a per-request token; state-changing bodies are size-capped.
 - **Tokens** are read from the environment only. They are never written to the database, never rendered in the console, and never logged raw — audit records store a SHA-256 fingerprint. Filter-spec files explicitly reject token-like fields.
 - **Upstream responses stay upstream.** API errors are mapped to defined local responses (`400`/`502`/`503`) instead of leaking raw GitHub bodies.
 - **API-first and ToS-aware.** The default path is the official REST/GraphQL API. HTML scraping is off by default and gated on a `robots.txt` check and legal review. Do not share tokens across accounts to evade rate limits. Deletion/privatization handling and data-retention expectations are documented in [`docs/legal-gates.md`](docs/legal-gates.md) and [`findings/05-research-gaps.md`](findings/05-research-gaps.md) §A10.
-- **Attribution and trademark.** This project is not affiliated with or endorsed by GitHub. Use a descriptive `User-Agent` (already set: `gitcrawl/0.0.1`) and avoid GitHub marks or logos in any published surface.
+- **Attribution and trademark.** This project is not affiliated with or endorsed by GitHub. Use a descriptive `User-Agent` (already set: `gitcorpus/0.0.1`) and avoid GitHub marks or logos in any published surface.
 
 ## Where the project is today
 
@@ -590,7 +587,7 @@ Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests
 | [`design/how-the-data-flows.md`](design/how-the-data-flows.md) | The beginner-friendly narrative this README borrows its voice from |
 | [`design/corpus-building-efficient-engineering.md`](design/corpus-building-efficient-engineering.md) | The meters, the math of what is findable vs. savable, the legal limits, and the batching engine |
 | [`design/landscape-comparison.md`](design/landscape-comparison.md) | Honest tool-by-tool comparison and capability matrix |
-| [`design/gitcrawl-vs-seart.md`](design/gitcrawl-vs-seart.md) | The closest-prior-art comparison, in depth |
+| [`design/gitcorpus-vs-seart.md`](design/gitcorpus-vs-seart.md) | The closest-prior-art comparison, in depth |
 | [`design/plan.md`](design/plan.md), [`design/tasks.md`](design/tasks.md) | Stack decisions and task breakdown |
 | [`design/data-model.md`](design/data-model.md) | Schema rationale and indexing notes |
 | [`design/loc-dilemma.md`](design/loc-dilemma.md) | How to filter by lines of code without cloning — the LOC dilemma, measured |
@@ -601,10 +598,6 @@ Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests
 | [`docs/environment.md`](docs/environment.md) | Windows/local environment: services, credentials, commands, troubleshooting, console manual pass |
 | [`docs/legal-gates.md`](docs/legal-gates.md) | Compliance checklist for crawling, storing, and serving |
 | [`docs/superpowers/`](docs/superpowers/) | Design specs, implementation plans, and execution reports for the hardening phases |
-
-## Name note
-
-There is an unrelated open-source project also called `gitcrawl` ([`openclaw/gitcrawl`](https://github.com/openclaw/gitcrawl), Go) that mirrors GitHub issues and pull requests into SQLite for maintainer triage. This project is a Python repository-corpus discovery engine for research; it shares only the name. If you cite this tool, cite it by repository URL to avoid ambiguity.
 
 ## License
 

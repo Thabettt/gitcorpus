@@ -1,10 +1,10 @@
-# Findings — GitHub Search Repos API Research for gitcrawl
+# Findings — GitHub Search Repos API Research for gitcorpus
 
-**Project**: gitcrawl — a planned continuous, large-scale GitHub repository discovery crawler. **Date**: 2026-09-29. **Live re-verification**: 2026-10-06/07 against the live API — probe-confirmed facts are marked with that date. **Method**: parallel research agents + live docs verification (dispatching-parallel-agents + last30days-style online reading; all sources accessed 2026-09-29 unless noted).
+**Project**: gitcorpus — a planned continuous, large-scale GitHub repository discovery crawler. **Date**: 2026-09-29. **Live re-verification**: 2026-10-06/07 against the live API — probe-confirmed facts are marked with that date. **Method**: parallel research agents + live docs verification (dispatching-parallel-agents + last30days-style online reading; all sources accessed 2026-09-29 unless noted).
 
 ## The one-paragraph version
 
-Finding *every* repository that matches your criteria — language, stars, topics, activity, license, custom tags — and keeping that list fresh sounds like one API call. It isn't. GitHub's search has a small lobby (only the first 1,000 results of any query are reachable), two prepaid meters (search is 30 requests a minute; visiting repos is 5,000 an hour), a closed set of filters where a typo quietly becomes plain search text instead of an error, an index that lags real pushes, and no server-side way to ask for "has a Dockerfile" or "owner in Germany" at all. This bundle is the research that makes gitcrawl's design match reality instead of assumptions — every constraint, every workaround, and every source, verified against live docs.
+Finding *every* repository that matches your criteria — language, stars, topics, activity, license, custom tags — and keeping that list fresh sounds like one API call. It isn't. GitHub's search has a small lobby (only the first 1,000 results of any query are reachable), two prepaid meters (search is 30 requests a minute; visiting repos is 5,000 an hour), a closed set of filters where a typo quietly becomes plain search text instead of an error, an index that lags real pushes, and no server-side way to ask for "has a Dockerfile" or "owner in Germany" at all. This bundle is the research that makes gitcorpus's design match reality instead of assumptions — every constraint, every workaround, and every source, verified against live docs.
 
 ## Why this exists
 

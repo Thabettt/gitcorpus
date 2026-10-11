@@ -81,7 +81,7 @@ def _has_next_link(link: str | None) -> bool:
     return False
 
 
-_PARSED_BODY_KEY = "gitcrawl.json"
+_PARSED_BODY_KEY = "gitcorpus.json"
 
 
 def cached_json(response: httpx.Response) -> object | None:
@@ -203,7 +203,7 @@ class AuditBuffer:
             if self._writer is not None and self._writer.is_alive():
                 return
             self._writer = threading.Thread(
-                target=self._write_loop, name="gitcrawl-audit", daemon=True
+                target=self._write_loop, name="gitcorpus-audit", daemon=True
             )
             self._writer.start()
 

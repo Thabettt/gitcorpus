@@ -17,8 +17,8 @@ from serve.library import (
     rename_filter,
 )
 
-SPEC = {"gitcrawl_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}
-OTHER_SPEC = {"gitcrawl_filter": 1, "q": "topic:cli", "virtual": {"min_stars": 5}}
+SPEC = {"gitcorpus_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}
+OTHER_SPEC = {"gitcorpus_filter": 1, "q": "topic:cli", "virtual": {"min_stars": 5}}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -32,9 +32,9 @@ def clean(clean_db):
 
 
 def test_create_filter_normalizes_spec_and_matches_library_hash(clean: Engine):
-    view = create_filter(clean, "  rusty  ", {"gitcrawl_filter": 1, "q": "  language:rust   "})
+    view = create_filter(clean, "  rusty  ", {"gitcorpus_filter": 1, "q": "  language:rust   "})
 
-    parsed = parse_filter_spec({"gitcrawl_filter": 1, "q": "language:rust"})
+    parsed = parse_filter_spec({"gitcorpus_filter": 1, "q": "language:rust"})
     assert isinstance(view, SavedFilterView)
     assert view.name == "rusty"
     assert view.filter_spec == spec_to_dict(parsed)
@@ -78,7 +78,7 @@ def test_create_filter_rejects_non_string_names(clean: Engine):
 
 def test_create_filter_rejects_bad_spec_with_hints(clean: Engine):
     with pytest.raises(LibraryError) as excinfo:
-        create_filter(clean, "bad", {"gitcrawl_filter": 1, "q": "x", "bogus": True})
+        create_filter(clean, "bad", {"gitcorpus_filter": 1, "q": "x", "bogus": True})
 
     error = excinfo.value
     assert error.code == "invalid_spec"

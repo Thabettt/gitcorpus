@@ -1,4 +1,4 @@
-# gitcrawl Quality-Hardening Execution Report
+# gitcorpus Quality-Hardening Execution Report
 
 **Date:** 2026-10-02
 **Branch:** `quality-hardening` (off `main`; `main` untouched at `c6cb2df`)
@@ -76,7 +76,7 @@ All 40 planned tasks are complete and reviewed (spec + quality) with fix loops w
 | T4 deadlines + limiter | `1366979` | `Deadline`, 3600/1800 env policy; no-deadline sleeps identical |
 | T5 bounded waits + 503 | `61afc42` | cache/executor waits → 503 `{"error":"timeout","retry_after":N}` |
 | T6 clone lifecycle | `841e7a8` | env timeout, terminal-safe git, cancel event, `DELETE /runs/{id}/clone`; **merged with Phase 1a registry**; OpenAPI pin/snapshot updated |
-| T7 Redis fail-loud | `3396637` | warning + `redis_degraded` + `GITCRAWL_REDIS_STRICT` |
+| T7 Redis fail-loud | `3396637` | warning + `redis_degraded` + `GITCORPUS_REDIS_STRICT` |
 | T8 single-flight health probe | `739788e` | `_Probe`; statement timeout; thread leak gone; T7 key preserved |
 | T9 malformed input + freshness | `321cee4` | tolerant progress JSON; ASCII digits; `updated_at` refreshed |
 

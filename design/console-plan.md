@@ -1,10 +1,10 @@
-# gitcrawl Console Implementation Plan (overnight run)
+# gitcorpus Console Implementation Plan (overnight run)
 
 > **Status: executed 2026-10-01 → 2026-10-03** (batches B1–B10 + one fix wave). This file is the plan of record; outcomes, rulings R32–R58, and verification numbers live in `../docs/development-log.md`. Two plan details were superseded during execution and are corrected inline: the console migration is `0003` (R38) and the CSS is hand-rolled (R46). Later console work (2026-10-06/07) added a sixth run status (`cancelled`, shown as Stopped and resumable), live progress columns, and the run-page Stop and Save-filter actions; `console-spec.md` is authoritative for those.
 >
 > **For the executor (me):** execute the batch queue below with subagent-driven development — fresh implementer per batch, task review, fix loop, commit, ledger. Briefs quote exact task text/interfaces. Do not stop between batches; the operator is asleep and instructed a continuous run.
 
-**Goal:** Complete US2 + US3 (backend) and add the US4 console (run persistence, operator extras, server-rendered UI) so gitcrawl is a startable local application.
+**Goal:** Complete US2 + US3 (backend) and add the US4 console (run persistence, operator extras, server-rendered UI) so gitcorpus is a startable local application.
 
 **Architecture:** Live-only engine (already built through US1) + hydration/enrichment/geo layers + FastAPI serve layer (JSON contract + server-rendered Jinja2/htmx pages) + single-worker run executor with Postgres persistence.
 

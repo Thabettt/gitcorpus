@@ -1,10 +1,10 @@
 # 00 — Overview: What This Research Is and How to Read It
 
-**Project**: gitcrawl. **Date**: 2026-09-29; live API re-verification 2026-10-06/07 (probe-confirmed facts marked with that date). **Method**: parallel research agents + live docs verification (all sources accessed 2026-09-29 unless noted).
+**Project**: gitcorpus. **Date**: 2026-09-29; live API re-verification 2026-10-06/07 (probe-confirmed facts marked with that date). **Method**: parallel research agents + live docs verification (all sources accessed 2026-09-29 unless noted).
 
 ## The one-paragraph version
 
-gitcrawl is a planned continuous, large-scale GitHub repository discovery crawler. Given criteria — language, stars, topics, activity, license, custom tags — it must find *every* matching public repository, not just the first page, and keep that list fresh without burning rate limits or violating GitHub's terms. GitHub's search looks simple (`GET /search/repositories?q=...`) but hides hard constraints that break naive crawlers: only 5 top-level params, all filtering packed into a single `q` string with a closed qualifier set, a 1,000-result ceiling per query, a ~4,000-repo scan scope, silent ignoring of unknown params and typos (still `200 OK`), separate `search` vs `core` rate buckets (30/min vs 5,000/hr), an async search index that lags real pushes, and no server-side custom fields except single-org `props.*`. Around that sit GraphQL, list-enumeration endpoints, GH Archive/BigQuery/World of Code/Software Heritage mirrors, ecosyste.ms/deps.dev enrichment, Sourcegraph code search, and paid scrape wrappers — each with different freshness, cost, and legal trade-offs. This bundle documents all of it so the design is built against reality, not assumptions.
+gitcorpus is a planned continuous, large-scale GitHub repository discovery crawler. Given criteria — language, stars, topics, activity, license, custom tags — it must find *every* matching public repository, not just the first page, and keep that list fresh without burning rate limits or violating GitHub's terms. GitHub's search looks simple (`GET /search/repositories?q=...`) but hides hard constraints that break naive crawlers: only 5 top-level params, all filtering packed into a single `q` string with a closed qualifier set, a 1,000-result ceiling per query, a ~4,000-repo scan scope, silent ignoring of unknown params and typos (still `200 OK`), separate `search` vs `core` rate buckets (30/min vs 5,000/hr), an async search index that lags real pushes, and no server-side custom fields except single-org `props.*`. Around that sit GraphQL, list-enumeration endpoints, GH Archive/BigQuery/World of Code/Software Heritage mirrors, ecosyste.ms/deps.dev enrichment, Sourcegraph code search, and paid scrape wrappers — each with different freshness, cost, and legal trade-offs. This bundle documents all of it so the design is built against reality, not assumptions.
 
 ## Goals — the six questions, in order
 
@@ -19,7 +19,7 @@ gitcrawl is a planned continuous, large-scale GitHub repository discovery crawle
 
 ## Who this is for (and what it assumes)
 
-The reader is a developer about to design or build gitcrawl. You should be comfortable with REST/JSON, URL encoding, pagination, and rate-limit backoff; no prior GitHub Search knowledge is assumed. Keep the glossary below nearby — `q`, the 1000-cap, watermark, and the `S/R/G/L/C/E/M/X` codes recur everywhere.
+The reader is a developer about to design or build gitcorpus. You should be comfortable with REST/JSON, URL encoding, pagination, and rate-limit backoff; no prior GitHub Search knowledge is assumed. Keep the glossary below nearby — `q`, the 1000-cap, watermark, and the `S/R/G/L/C/E/M/X` codes recur everywhere.
 
 ## Reading paths
 

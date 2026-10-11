@@ -14,7 +14,7 @@ RESOURCE_SPECS: dict[str, tuple[int, float]] = {
     "graphql": (5000, 3600.0),
 }
 
-_KEY_PREFIX = "gitcrawl:rl"
+_KEY_PREFIX = "gitcorpus:rl"
 _CONCURRENCY_RETRY_AFTER = 0.5
 _MIN_KEY_TTL = 3600.0
 

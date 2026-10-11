@@ -128,7 +128,7 @@ def test_severity_thresholds():
 def test_metrics_payload_reads_paused_buckets_and_pel(clean_db, monkeypatch):
     engine = clean_db()
     redis = fakeredis.FakeRedis()
-    redis.hset("gitcrawl:rl:search:abcdef123456", mapping={"paused_until": 10_000})
+    redis.hset("gitcorpus:rl:search:abcdef123456", mapping={"paused_until": 10_000})
     monkeypatch.setattr("serve.metrics.time", lambda: 9_000.0)
     payload = metrics_payload(engine, redis_client=redis)
     paused = payload["limiter"]["paused"]
@@ -155,7 +155,7 @@ from sqlalchemy.engine import Engine
 from serve.audit import slo_snapshot
 from store.models import Runs
 
-_PREFIX = "gitcrawl:rl:"
+_PREFIX = "gitcorpus:rl:"
 
 THRESHOLDS = {
     "search_remaining": ("lt", 100, 10),
@@ -403,7 +403,7 @@ def test_queue_pel_reflects_delivered_unacked(clean_db):
     redis = fakeredis.FakeRedis()
     queue = ShardQueue(redis)
     queue.enqueue(1)
-    queue.claim("gitcrawl-dead", count=1)  # delivered, never acked
+    queue.claim("gitcorpus-dead", count=1)  # delivered, never acked
     payload = metrics_payload(engine, redis_client=redis)
     assert payload["queue"]["pel"] == 1
 ```

@@ -2,7 +2,7 @@
 
 **Status:** all four enabled phases completed. No stop condition fired; no `queue-stop.md` was written.
 **Branch:** `quality-hardening` (never switched, rebased, or pushed). **Range:** `9f32d58` → `e21143e` (24 commits).
-**Environment:** Postgres and Redis reachable; `TEST_DATABASE_URL` ends `_test`; tests run with `GITCRAWL_REQUIRE_TEST_DB=1` so DB tests cannot silently skip.
+**Environment:** Postgres and Redis reachable; `TEST_DATABASE_URL` ends `_test`; tests run with `GITCORPUS_REQUIRE_TEST_DB=1` so DB tests cannot silently skip.
 
 ## Per-phase results
 
@@ -95,7 +95,7 @@ Plan: `docs/superpowers/plans/2026-10-02-slo-dashboard.md`
 6. **Metrics**: only `socket_connect_timeout=0.5` is set (no read timeout); `pel_size` can create missing Redis stream groups on a fresh Redis (documented, pre-existing triage behavior); the SLO key-set consistency test now guards `THRESHOLDS`/`LABELS` drift.
 7. **Test coverage gaps**: partial-route unknown-run 404, `main()` recovery invocation, recovered-row `finished_at`, and the raising-accessor metrics branch are not directly asserted.
 8. **Ratchet policy not applied**: the dev log says raise `fail_under` by 1 whenever coverage exceeds the floor by ≥2 points; the queue prompt fixed the floor at 93 for this run, so it was left at 93. 95.72% would support raising it to 94.
-9. **External process note**: a non-session pytest process briefly ran against the shared `gitcrawl_test` DB at 12:03–12:06 during Phase 1 Task 2 and exited; no CLI `opencode.exe` or pytest process was present at every subsequent precondition check. Its interference was diagnosed and the affected runs were repeated clean.
+9. **External process note**: a non-session pytest process briefly ran against the shared `gitcorpus_test` DB at 12:03–12:06 during Phase 1 Task 2 and exited; no CLI `opencode.exe` or pytest process was present at every subsequent precondition check. Its interference was diagnosed and the affected runs were repeated clean.
 10. **Manual browser/keyboard checklist** was recorded in `docs/environment.md` but not executed (no browser pass in this run).
 
 Remaining final-review minors deliberately deferred: retry-path asymmetry test, quality partial-route 404 test, resume poll-loop style, `pages._templates` private access, metrics read timeout, duplicate-import cleanup (fixed), recovered-row `finished_at` assertion.

@@ -10,7 +10,7 @@ from serve.app import create_app
 from serve.executor import create_run
 from serve.pages import CSRF_COOKIE
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)

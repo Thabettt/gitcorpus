@@ -149,8 +149,8 @@ def main() -> None:
                 print(f"recovered {recovered} orphaned run(s)")
         finally:
             engine.dispose()
-    host = os.environ.get("GITCRAWL_HOST", "127.0.0.1")
-    port = int(os.environ.get("GITCRAWL_PORT", "8000"))
+    host = os.environ.get("GITCORPUS_HOST", "127.0.0.1")
+    port = int(os.environ.get("GITCORPUS_PORT", "8000"))
     uvicorn.run("serve.app:app", host=host, port=port)
 ```
 

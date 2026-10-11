@@ -5,7 +5,7 @@ from contextvars import ContextVar, Token
 
 Reporter = Callable[[str, int, int | None, Mapping[str, int]], None]
 
-_current: ContextVar[Reporter | None] = ContextVar("gitcrawl_progress", default=None)
+_current: ContextVar[Reporter | None] = ContextVar("gitcorpus_progress", default=None)
 
 
 def bind(reporter: Reporter | None) -> Token:

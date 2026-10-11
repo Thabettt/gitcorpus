@@ -38,31 +38,31 @@ def test_update_persists_adaptive_and_reverts(clean):
 
 def test_env_adaptive_force_enables(clean, monkeypatch):
     assert load_run_settings(clean).adaptive is False
-    monkeypatch.setenv("GITCRAWL_ADAPTIVE", "1")
+    monkeypatch.setenv("GITCORPUS_ADAPTIVE", "1")
     assert load_run_settings(clean).adaptive is True
 
 
 def test_env_overrides_the_row(clean, monkeypatch):
     update_run_settings(clean, {"max_shards": 25})
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "3")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "3")
     settings = load_run_settings(clean)
     assert settings.max_shards == 3
 
 
 def test_env_overrides_discovery_concurrency(clean, monkeypatch):
     update_run_settings(clean, {"discovery_concurrency": 16})
-    monkeypatch.setenv("GITCRAWL_DISCOVERY_CONCURRENCY", "8")
+    monkeypatch.setenv("GITCORPUS_DISCOVERY_CONCURRENCY", "8")
     assert load_run_settings(clean).discovery_concurrency == 8
 
 
 def test_invalid_env_value_falls_back_to_the_row(clean, monkeypatch):
     update_run_settings(clean, {"max_shards": 25})
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "not-a-number")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "not-a-number")
     assert load_run_settings(clean).max_shards == 25
 
 
 def test_env_graphql_batch_size_is_clamped_to_the_api_cap(clean, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_GRAPHQL_BATCH_SIZE", "51")
+    monkeypatch.setenv("GITCORPUS_GRAPHQL_BATCH_SIZE", "51")
     assert load_run_settings(clean).graphql_batch_size == 50
 
 

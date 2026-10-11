@@ -41,7 +41,7 @@
 | `src/serve/pages.py` | `DELETE /runs/{id}/clone`; `redis_degraded`; `_Probe` single-flight health |
 | `src/serve/forms.py` | `_int_or_raw` rejects non-ASCII digits |
 | `src/scheduler/state_machine.py` | `set_state` refreshes `updated_at` |
-| `tests/conftest.py` | autouse `GITCRAWL_ALLOWED_HOSTS=testserver` for TestClient |
+| `tests/conftest.py` | autouse `GITCORPUS_ALLOWED_HOSTS=testserver` for TestClient |
 | `tests/contract/test_adversarial_hardening.py` | **new** — origin/host/body/deadline/redis/health contract tests |
 | `tests/unit/test_body_limit.py` | **new** — ASGI-level cap tests |
 | `tests/unit/test_deadlines.py` | **new** — clock-injected deadline tests |
@@ -61,7 +61,7 @@
 
 **Files:**
 - Create: `src/serve/middleware.py`
-- Modify: `src/serve/app.py:286` (immediately after `application = FastAPI(title="gitcrawl", version="0.0.1")`)
+- Modify: `src/serve/app.py:286` (immediately after `application = FastAPI(title="gitcorpus", version="0.0.1")`)
 - Test: `tests/contract/test_adversarial_hardening.py` (new)
 
 **Interfaces:**
@@ -92,7 +92,7 @@ from sqlalchemy.engine import Engine
 from serve.app import create_app
 from serve.executor import RunPayload, RunPayloadItem
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -300,7 +300,7 @@ In `src/serve/app.py`, add the import next to the other `serve` imports:
 from serve.middleware import OriginCsrfMiddleware
 ```
 
-and insert immediately after `application = FastAPI(title="gitcrawl", version="0.0.1")` (`src/serve/app.py:286`):
+and insert immediately after `application = FastAPI(title="gitcorpus", version="0.0.1")` (`src/serve/app.py:286`):
 
 ```python
     application.add_middleware(OriginCsrfMiddleware)
@@ -332,10 +332,10 @@ git commit -m "hardening: reject cross-origin state-changing requests"
 
 **Interfaces:**
 - Consumes: Task 1's middleware registration site.
-- Produces: `_allowed_hosts() -> list[str]` returning `["localhost", "127.0.0.1", "[::1]"]` plus comma-separated `GITCRAWL_ALLOWED_HOSTS` entries.
-- No public Python signature changes; the bind default stays `GITCRAWL_HOST`/`127.0.0.1` in `src/serve/__main__.py:9`.
+- Produces: `_allowed_hosts() -> list[str]` returning `["localhost", "127.0.0.1", "[::1]"]` plus comma-separated `GITCORPUS_ALLOWED_HOSTS` entries.
+- No public Python signature changes; the bind default stays `GITCORPUS_HOST`/`127.0.0.1` in `src/serve/__main__.py:9`.
 
-**Normal-use invariance:** INV-3 category 1 (non-local `Host`). Browsers on loopback send `Host: localhost` / `127.0.0.1` / `[::1]`, which are all allowed; `GITCRAWL_ALLOWED_HOSTS` keeps proxy deployments working. TestClient sends `Host: testserver`, so the test suite gets it via the conftest env extension — production behavior for real hosts is unchanged. Regression: the same three contract suites as Task 1 plus `pytest tests/contract/test_pages.py -q`.
+**Normal-use invariance:** INV-3 category 1 (non-local `Host`). Browsers on loopback send `Host: localhost` / `127.0.0.1` / `[::1]`, which are all allowed; `GITCORPUS_ALLOWED_HOSTS` keeps proxy deployments working. TestClient sends `Host: testserver`, so the test suite gets it via the conftest env extension — production behavior for real hosts is unchanged. Regression: the same three contract suites as Task 1 plus `pytest tests/contract/test_pages.py -q`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -344,7 +344,7 @@ Append to `tests/contract/test_adversarial_hardening.py`:
 ```python
 @pytest.fixture(autouse=True)
 def _allow_testclient_host(monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "testserver")
 
 
 @pytest.mark.parametrize(
@@ -371,11 +371,11 @@ def test_non_local_host_is_rejected(clean: Engine, tmp_path):
 
 
 def test_allowed_hosts_env_extends_the_allowlist(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "gitcrawl.internal")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "gitcorpus.internal")
     application = create_app(engine=clean, runs_root=str(tmp_path / "runs"))
 
     allowed = TestClient(
-        application, base_url="http://gitcrawl.internal", raise_server_exceptions=False
+        application, base_url="http://gitcorpus.internal", raise_server_exceptions=False
     )
     replaced = TestClient(application, base_url="http://testserver", raise_server_exceptions=False)
 
@@ -403,7 +403,7 @@ Add the helper near the other module constants (after `_GET_PARAM_SET`, `src/ser
 ```python
 def _allowed_hosts() -> list[str]:
     hosts = ["localhost", "127.0.0.1", "[::1]"]
-    extra = os.environ.get("GITCRAWL_ALLOWED_HOSTS", "")
+    extra = os.environ.get("GITCORPUS_ALLOWED_HOSTS", "")
     hosts.extend(host.strip() for host in extra.split(",") if host.strip())
     return hosts
 ```
@@ -423,7 +423,7 @@ Append to `tests/conftest.py` (after the `alembic_engine` fixture):
 ```python
 @pytest.fixture(autouse=True)
 def allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "testserver")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -737,8 +737,8 @@ git commit -m "hardening: cap JSON and upload request bodies"
 - Produces:
   - `DeadlineExceededError(TimeoutError)` with `.retry_after: float`
   - `Deadline(seconds: float, *, clock: Callable[[], float] = time.monotonic)`, `.remaining: float`, `.bound_wait(seconds: float) -> None` (raises when `seconds > remaining`)
-  - `request_deadline_seconds() -> float` (`GITCRAWL_REQUEST_DEADLINE_SECONDS`, default 3600.0)
-  - `clone_timeout_seconds() -> float` (`GITCRAWL_CLONE_TIMEOUT_SECONDS`, default 1800.0)
+  - `request_deadline_seconds() -> float` (`GITCORPUS_REQUEST_DEADLINE_SECONDS`, default 3600.0)
+  - `clone_timeout_seconds() -> float` (`GITCORPUS_CLONE_TIMEOUT_SECONDS`, default 1800.0)
   - `BucketLimiter(..., deadline: Deadline | None = None)`, `.bind_deadline(deadline)`, `.deadline` property
   - `run_filter` binds a fresh `Deadline` to `deps.limiter` for the run and clears it in `finally`.
 
@@ -788,15 +788,15 @@ def test_defaults_are_generous():
 
 
 def test_env_overrides_are_read(monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "120")
-    monkeypatch.setenv("GITCRAWL_CLONE_TIMEOUT_SECONDS", "60")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "120")
+    monkeypatch.setenv("GITCORPUS_CLONE_TIMEOUT_SECONDS", "60")
     assert request_deadline_seconds() == 120.0
     assert clone_timeout_seconds() == 60.0
 
 
 @pytest.mark.parametrize("raw", ["", "abc", "0", "-5"])
 def test_invalid_env_values_fall_back_to_defaults(monkeypatch, raw):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", raw)
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", raw)
     assert request_deadline_seconds() == DEFAULT_REQUEST_DEADLINE_SECONDS
 
 
@@ -935,11 +935,11 @@ def _env_seconds(name: str, default: float) -> float:
 
 
 def request_deadline_seconds() -> float:
-    return _env_seconds("GITCRAWL_REQUEST_DEADLINE_SECONDS", DEFAULT_REQUEST_DEADLINE_SECONDS)
+    return _env_seconds("GITCORPUS_REQUEST_DEADLINE_SECONDS", DEFAULT_REQUEST_DEADLINE_SECONDS)
 
 
 def clone_timeout_seconds() -> float:
-    return _env_seconds("GITCRAWL_CLONE_TIMEOUT_SECONDS", DEFAULT_CLONE_TIMEOUT_SECONDS)
+    return _env_seconds("GITCORPUS_CLONE_TIMEOUT_SECONDS", DEFAULT_CLONE_TIMEOUT_SECONDS)
 
 
 class Deadline:
@@ -1083,7 +1083,7 @@ Append to `tests/contract/test_adversarial_hardening.py`:
 
 ```python
 def test_get_repos_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "0.05")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "0.05")
     release = threading.Event()
     started = threading.Event()
 
@@ -1103,7 +1103,7 @@ def test_get_repos_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
 
 
 def test_post_run_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "0.05")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "0.05")
     release = threading.Event()
 
     def blocking(run_id: int, filter_spec: dict) -> RunPayload:
@@ -1396,7 +1396,7 @@ def test_clone_wires_env_timeout_and_cancel_event(clean: Engine, tmp_path, monke
         return cloner.CloneStats(requested=0, completed=0, skipped=0, failed=0, dest_root="clones")
 
     monkeypatch.setattr("serve.runs.clone_repos", fake_clone_repos)
-    monkeypatch.setenv("GITCRAWL_CLONE_TIMEOUT_SECONDS", "42")
+    monkeypatch.setenv("GITCORPUS_CLONE_TIMEOUT_SECONDS", "42")
     client = make_client(clean, tmp_path)
 
     response = client.post(f"/runs/{run_id}/clone", json={"limit": 1, "mode": "shallow"})
@@ -1824,10 +1824,10 @@ git commit -m "hardening: clone timeout, terminal-safe git, cancellation"
 - Test: `tests/unit/test_redis_fallback.py` (new), `tests/contract/test_adversarial_hardening.py`, `tests/contract/test_pages.py:263-279`
 
 **Interfaces:**
-- Consumes: `REDIS_URL`, `GITCRAWL_REDIS_STRICT`.
+- Consumes: `REDIS_URL`, `GITCORPUS_REDIS_STRICT`.
 - Produces:
   - `RedisUnavailable(RuntimeError)` in `serve.runner`
-  - `_redis_or_fake()` logs `logging.getLogger("gitcrawl.serve").warning(...)` with the exception reason when `REDIS_URL` is set but unreachable, then falls back to fakeredis; with `GITCRAWL_REDIS_STRICT=1` it raises `RedisUnavailable` instead
+  - `_redis_or_fake()` logs `logging.getLogger("gitcorpus.serve").warning(...)` with the exception reason when `REDIS_URL` is set but unreachable, then falls back to fakeredis; with `GITCORPUS_REDIS_STRICT=1` it raises `RedisUnavailable` instead
   - `/health` adds `"redis_degraded": true` **only** when `REDIS_URL` is set and the redis check is false; otherwise the body is byte-identical to today
 
 **Normal-use invariance:** INV-3 category 4 (outage visibility). With no `REDIS_URL`, behavior is unchanged (fake fallback, no warning); with a reachable Redis, no warning and no extra health key; strict mode is opt-in. Regression: `pytest tests/contract/test_pages.py tests/integration/test_runner.py -q`.
@@ -1855,9 +1855,9 @@ def _unreachable(monkeypatch):
 def test_unreachable_redis_logs_the_reason_and_falls_back(monkeypatch, caplog):
     _unreachable(monkeypatch)
     monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6390/0")
-    monkeypatch.delenv("GITCRAWL_REDIS_STRICT", raising=False)
+    monkeypatch.delenv("GITCORPUS_REDIS_STRICT", raising=False)
 
-    with caplog.at_level("WARNING", logger="gitcrawl.serve"):
+    with caplog.at_level("WARNING", logger="gitcorpus.serve"):
         client = runner._redis_or_fake()
 
     assert isinstance(client, fakeredis.FakeRedis)
@@ -1867,7 +1867,7 @@ def test_unreachable_redis_logs_the_reason_and_falls_back(monkeypatch, caplog):
 def test_strict_mode_refuses_the_fake_fallback(monkeypatch):
     _unreachable(monkeypatch)
     monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6390/0")
-    monkeypatch.setenv("GITCRAWL_REDIS_STRICT", "1")
+    monkeypatch.setenv("GITCORPUS_REDIS_STRICT", "1")
 
     with pytest.raises(runner.RedisUnavailable):
         runner._redis_or_fake()
@@ -1875,9 +1875,9 @@ def test_strict_mode_refuses_the_fake_fallback(monkeypatch):
 
 def test_no_redis_url_uses_the_fake_without_a_warning(monkeypatch, caplog):
     monkeypatch.delenv("REDIS_URL", raising=False)
-    monkeypatch.delenv("GITCRAWL_REDIS_STRICT", raising=False)
+    monkeypatch.delenv("GITCORPUS_REDIS_STRICT", raising=False)
 
-    with caplog.at_level("WARNING", logger="gitcrawl.serve"):
+    with caplog.at_level("WARNING", logger="gitcorpus.serve"):
         client = runner._redis_or_fake()
 
     assert isinstance(client, fakeredis.FakeRedis)
@@ -1936,7 +1936,7 @@ Expected: FAIL — `redis_degraded` key absent.
 In `src/serve/runner.py`, add `import logging` and near the top-level constants:
 
 ```python
-logger = logging.getLogger("gitcrawl.serve")
+logger = logging.getLogger("gitcorpus.serve")
 
 
 class RedisUnavailable(RuntimeError):
@@ -1957,7 +1957,7 @@ def _redis_or_fake():
             return client
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
-            if os.environ.get("GITCRAWL_REDIS_STRICT") == "1":
+            if os.environ.get("GITCORPUS_REDIS_STRICT") == "1":
                 raise RedisUnavailable(reason) from exc
             logger.warning(
                 "REDIS_URL is set but unreachable (%s); falling back to fakeredis", reason
@@ -1975,7 +1975,7 @@ In `src/serve/pages.py`, add a logger import/instance and log in `_default_redis
 ```python
 import logging
 ...
-logger = logging.getLogger("gitcrawl.serve")
+logger = logging.getLogger("gitcorpus.serve")
 ```
 
 ```python
@@ -2419,12 +2419,12 @@ git commit -m "hardening: tolerate malformed progress, digits, and shard timesta
 | Spec item | Task |
 |---|---|
 | §6.1 Origin-aware CSRF (Origin/Referer, absent passes, per-route CSRF stays) | Task 1 |
-| §6.2 Host allowlist (`localhost`, `127.0.0.1`, `[::1]`, `GITCRAWL_ALLOWED_HOSTS`; bind default unchanged) | Task 2 |
-| §6.3 Deadlines: single module + env overrides (`GITCRAWL_REQUEST_DEADLINE_SECONDS`, `GITCRAWL_CLONE_TIMEOUT_SECONDS`) | Task 4 |
+| §6.2 Host allowlist (`localhost`, `127.0.0.1`, `[::1]`, `GITCORPUS_ALLOWED_HOSTS`; bind default unchanged) | Task 2 |
+| §6.3 Deadlines: single module + env overrides (`GITCORPUS_REQUEST_DEADLINE_SECONDS`, `GITCORPUS_CLONE_TIMEOUT_SECONDS`) | Task 4 |
 | §6.3 Deadlines: RunExecutor waits, payload-cache waiters, 503 `{"error":"timeout","retry_after":...}` | Task 5 |
 | §6.3 Deadlines: bounded limiter sleep raising typed `TimeoutError` | Task 4 |
 | §6.4 Body caps: 1 MiB JSON, 10 MiB `/find`, 413, chunked streams | Task 3 |
-| §6.5 Redis fail-loud: warning + `/health` degraded + `GITCRAWL_REDIS_STRICT=1` | Task 7 |
+| §6.5 Redis fail-loud: warning + `/health` degraded + `GITCORPUS_REDIS_STRICT=1` | Task 7 |
 | §6.6 Clone lifecycle: `clone_timeout`, terminal env, cancel event, `DELETE /runs/{id}/clone` | Task 6 |
 | §6.7 Malformed input: `read_clone_progress`, `_int_or_raw` | Task 9 |
 | §6.8 Health probe: cached single-flight with statement timeout | Task 8 |
@@ -2437,7 +2437,7 @@ git commit -m "hardening: tolerate malformed progress, digits, and shard timesta
 
 | Risk | Mitigation |
 |---|---|
-| TestClient sends `Host: testserver`, which would fail the new allowlist and break every contract test | Root `conftest.py` autouse fixture extends `GITCRAWL_ALLOWED_HOSTS=testserver`; Task 2 test overrides it to prove the env extension and the reject path |
+| TestClient sends `Host: testserver`, which would fail the new allowlist and break every contract test | Root `conftest.py` autouse fixture extends `GITCORPUS_ALLOWED_HOSTS=testserver`; Task 2 test overrides it to prove the env extension and the reject path |
 | Phase 1 (`CloneRegistry.claim`, uvloop guards, import boundary) is not in this checkout; this plan must run on current `main` | Task 6 adds `set_cancel`/`clear_cancel`/`cancel` alongside the existing `get`/`set`; no Phase 1 API is assumed. Re-verify `runs.py` line anchors if Phase 1 lands first |
 | Body cap buffers up to 10 MiB per `/find` request | Bounded by design; normal filter uploads are KB; the alternative (streaming tee) adds complexity without changing the cap |
 | `asyncio.wait_for` cancels the asyncio wrapper on timeout while the executor job keeps running | Accepted: INV-3 category 2; the run row still completes/fails normally and the client receives a 503 hint |

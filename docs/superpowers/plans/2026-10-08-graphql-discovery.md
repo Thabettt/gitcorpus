@@ -16,7 +16,7 @@
 - Every GraphQL call goes through `request_with_retry` (limiter, classifier, audit, SSRF guard).
 - Planner target math is unchanged: `min(1000, per_page × max_pages)` with the 1000 fallback when `total_count > max_shards × target`; `max_pages` semantics are kept exactly.
 - Shard rows and `ShardStore` states (`pending/active/done/incomplete`) stay; Stop/deadline leave in-flight shards `PENDING`; no row may be stranded `ACTIVE`.
-- New setting: `discovery_concurrency`, default 32, bounds 1–64, env `GITCRAWL_DISCOVERY_CONCURRENCY`, corpus preset 32, migration `0012`.
+- New setting: `discovery_concurrency`, default 32, bounds 1–64, env `GITCORPUS_DISCOVERY_CONCURRENCY`, corpus preset 32, migration `0012`.
 - Error copy rules unchanged: partial runs are declared, never silent.
 - Windows: PowerShell 5.1; run tests with `.venv\Scripts\python.exe -m pytest`; lint `.venv\Scripts\python.exe -m ruff check src tests`; format `.venv\Scripts\python.exe -m black --check src tests`; types `.venv\Scripts\python.exe -m mypy`; set `$env:PYTHONPATH = 'src'` for ad-hoc runs.
 - Do not commit secrets; no raw token in logs or tests.
@@ -467,7 +467,7 @@ git commit -m "feat(scheduler): level-batched graphql shard planner"
 - Test: `tests/unit/test_run_settings.py`, `tests/unit/test_settings_spec.py`, `tests/contract/test_settings.py`, `tests/integration/test_models_migrations.py`
 
 **Interfaces:**
-- Produces: `RunSettings.discovery_concurrency: int = 32`; `RunnerConfig.discovery_concurrency: int = 32`; env `GITCRAWL_DISCOVERY_CONCURRENCY`; bounds (1, 64).
+- Produces: `RunSettings.discovery_concurrency: int = 32`; `RunnerConfig.discovery_concurrency: int = 32`; env `GITCORPUS_DISCOVERY_CONCURRENCY`; bounds (1, 64).
 
 - [ ] **Step 1: Write failing tests** — follow the existing patterns exactly (look at the current `test_run_settings.py`, `test_settings_spec.py`, `test_settings.py` for the `max_shards` cases and clone them for `discovery_concurrency`): defaults 32; env override; bounds reject 0 and 65; form round-trips; corpus preset applies 32; migration head `0012` and downgrade chain passes.
 

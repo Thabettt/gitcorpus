@@ -165,7 +165,7 @@ def test_unchecked_adaptive_checkbox_saves_false(clean, tmp_path, monkeypatch):
 
 
 def test_pinned_fields_render_read_only_and_are_not_written(clean, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "3")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "3")
     client = healthy_client(clean, tmp_path, monkeypatch)
     response = client.get("/settings")
     assert response.status_code == 200
@@ -281,7 +281,7 @@ def test_reset_restores_defaults(clean, tmp_path, monkeypatch):
 def test_pinned_candidates_conflict_with_submitted_hydrate_is_rejected(
     clean, tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("GITCRAWL_MAX_CANDIDATES", "100")
+    monkeypatch.setenv("GITCORPUS_MAX_CANDIDATES", "100")
     client = healthy_client(clean, tmp_path, monkeypatch)
     token = csrf_token(client)
     response = client.post(
@@ -341,7 +341,7 @@ def test_set_to_corpus_build_limits_saves_the_profile(clean, tmp_path, monkeypat
 
 
 def test_corpus_preset_respects_pinned_fields(clean, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "3")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "3")
     client = healthy_client(clean, tmp_path, monkeypatch)
     token = csrf_token(client)
     response = client.post(
@@ -358,7 +358,7 @@ def test_corpus_preset_respects_pinned_fields(clean, tmp_path, monkeypatch):
 
 
 def test_corpus_preset_with_pinned_candidates_conflict_is_rejected(clean, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_MAX_CANDIDATES", "100")
+    monkeypatch.setenv("GITCORPUS_MAX_CANDIDATES", "100")
     client = healthy_client(clean, tmp_path, monkeypatch)
     token = csrf_token(client)
     response = client.post(
@@ -372,7 +372,7 @@ def test_corpus_preset_with_pinned_candidates_conflict_is_rejected(clean, tmp_pa
 
 
 def test_reset_with_pinned_candidates_conflict_is_rejected(clean, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_MAX_CANDIDATES", "100")
+    monkeypatch.setenv("GITCORPUS_MAX_CANDIDATES", "100")
     client = healthy_client(clean, tmp_path, monkeypatch)
     token = csrf_token(client)
     response = client.post(

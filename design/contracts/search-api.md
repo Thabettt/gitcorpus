@@ -1,8 +1,8 @@
-# Contract: `GET /vsearch/repos` (gitcrawl serve API)
+# Contract: `GET /vsearch/repos` (gitcorpus serve API)
 
 **Date**: 2026-09-29 (updated 2026-10-07). Upstream: `GET /search/repositories` (allowlist enforced — unknown params never forwarded). Versioned with `X-GitHub-Api-Version` pinned server-side. Narrative version of this contract: `../how-the-data-flows.md` (Stages 0–1, 8–9).
 
-**The one-paragraph version**: this is the promise gitcrawl makes to anyone calling its serve API. You may send the upstream search parameters plus gitcrawl's own "virtual" filters; anything unknown is rejected locally with a helpful `400` instead of being forwarded to GitHub (where it would be silently ignored). Responses look like GitHub's shape — `total_count` + `items[]` — but the counts are exact, each owner carries a country with a confidence tier, and any incompleteness is labeled. The rest of this file is the precise table of what's accepted, what it translates to, and what comes back.
+**The one-paragraph version**: this is the promise gitcorpus makes to anyone calling its serve API. You may send the upstream search parameters plus gitcorpus's own "virtual" filters; anything unknown is rejected locally with a helpful `400` instead of being forwarded to GitHub (where it would be silently ignored). Responses look like GitHub's shape — `total_count` + `items[]` — but the counts are exact, each owner carries a country with a confidence tier, and any incompleteness is labeled. The rest of this file is the precise table of what's accepted, what it translates to, and what comes back.
 
 ## Request
 
@@ -106,7 +106,7 @@ No built-in preset pack in v1. Instead, any search is fully described by a versi
 
 ```json
 {
-  "gitcrawl_filter": 1,
+  "gitcorpus_filter": 1,
   "q": "language:rust fork:false pushed:>2024-09-29",
   "sort": "stars", "order": "desc",
   "virtual": { "min_commits": 100, "min_loc": 5000, "has_dockerfile": false, "owner_country": null },
@@ -132,7 +132,7 @@ Fetching never clones. After results display, a **Clone** control offers a slide
 
 ```json
 {
-  "gitcrawl_filter": 1,
+  "gitcorpus_filter": 1,
   "q": "language:rust fork:false pushed:>2024-09-29",
   "virtual": { "min_commits": 100, "min_loc": 5000 },
   "frame": {

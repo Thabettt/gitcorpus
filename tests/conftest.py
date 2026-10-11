@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(autouse=True)
 def reset_process_globals(monkeypatch: pytest.MonkeyPatch) -> None:
     secondary.reset()
-    monkeypatch.delenv("GITCRAWL_ADAPTIVE", raising=False)
+    monkeypatch.delenv("GITCORPUS_ADAPTIVE", raising=False)
 
 
 class UnsafeTestDatabase(RuntimeError):
@@ -35,7 +35,7 @@ def assert_test_database(url: str) -> str:
     return url
 
 
-REQUIRE_TEST_DB_ENV = "GITCRAWL_REQUIRE_TEST_DB"
+REQUIRE_TEST_DB_ENV = "GITCORPUS_REQUIRE_TEST_DB"
 
 
 class MissingTestDatabase(RuntimeError):
@@ -51,7 +51,7 @@ def resolve_test_database_url() -> str | None:
     if not url:
         if require_test_database():
             raise MissingTestDatabase(
-                "TEST_DATABASE_URL is required when GITCRAWL_REQUIRE_TEST_DB=1; "
+                "TEST_DATABASE_URL is required when GITCORPUS_REQUIRE_TEST_DB=1; "
                 "refusing to skip database tests"
             )
         return None
@@ -86,18 +86,18 @@ def alembic_engine(test_database_url: str) -> Iterator[Engine]:
 
 @pytest.fixture(scope="session", autouse=True)
 def allow_testclient_host_session() -> Iterator[None]:
-    previous = os.environ.get("GITCRAWL_ALLOWED_HOSTS")
-    os.environ["GITCRAWL_ALLOWED_HOSTS"] = "testserver"
+    previous = os.environ.get("GITCORPUS_ALLOWED_HOSTS")
+    os.environ["GITCORPUS_ALLOWED_HOSTS"] = "testserver"
     yield
     if previous is None:
-        os.environ.pop("GITCRAWL_ALLOWED_HOSTS", None)
+        os.environ.pop("GITCORPUS_ALLOWED_HOSTS", None)
     else:
-        os.environ["GITCRAWL_ALLOWED_HOSTS"] = previous
+        os.environ["GITCORPUS_ALLOWED_HOSTS"] = previous
 
 
 @pytest.fixture(autouse=True)
 def allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "testserver")
 
 
 CleanDbFactory = Callable[..., Engine]

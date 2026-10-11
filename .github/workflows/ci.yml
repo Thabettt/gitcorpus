@@ -11,8 +11,8 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  TEST_DATABASE_URL: postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl_test
-  GITCRAWL_REQUIRE_TEST_DB: "1"
+  TEST_DATABASE_URL: postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus_test
+  GITCORPUS_REQUIRE_TEST_DB: "1"
 
 jobs:
   tests-linux:
@@ -21,13 +21,13 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: gitcrawl
-          POSTGRES_PASSWORD: gitcrawl
-          POSTGRES_DB: gitcrawl_test
+          POSTGRES_USER: gitcorpus
+          POSTGRES_PASSWORD: gitcorpus
+          POSTGRES_DB: gitcorpus_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U gitcrawl -d gitcrawl_test"
+          --health-cmd "pg_isready -U gitcorpus -d gitcorpus_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -82,8 +82,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PostgreSQL did not accept connections" }
           $env:PGPASSWORD = "root"
           $psql = "C:\Program Files\PostgreSQL\17\bin\psql.exe"
-          & $psql -U postgres -h localhost -c "CREATE ROLE gitcrawl LOGIN PASSWORD 'gitcrawl'"
-          & $psql -U postgres -h localhost -c "CREATE DATABASE gitcrawl_test OWNER gitcrawl"
+          & $psql -U postgres -h localhost -c "CREATE ROLE gitcorpus LOGIN PASSWORD 'gitcorpus'"
+          & $psql -U postgres -h localhost -c "CREATE DATABASE gitcorpus_test OWNER gitcorpus"
       - name: Start Redis 7-compatible server (Memurai)
         shell: pwsh
         run: |

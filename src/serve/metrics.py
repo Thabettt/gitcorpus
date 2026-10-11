@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 from lib.audit import slo_snapshot
 from store.models import Runs
 
-_PREFIX = "gitcrawl:rl:"
+_PREFIX = "gitcorpus:rl:"
 
 THRESHOLDS = {
     "graphql_remaining": ("lt", 100, 10),

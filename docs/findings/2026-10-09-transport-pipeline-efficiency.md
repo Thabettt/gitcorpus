@@ -5,7 +5,7 @@ Verification of the transport/pipeline efficiency work on branch `perf/runtime-a
 tests, the full suite with the coverage gate, and the lint/format/type gates below are the
 evidence. Measured 2026-10-10 on Windows, Python 3.12.10, pytest 9.1.1, with `TEST_DATABASE_URL`
 already set in the environment to the documented local cluster (`localhost:5433`, database
-`gitcrawl_test`); the value was used untouched and is not reproduced here.
+`gitcorpus_test`); the value was used untouched and is not reproduced here.
 
 ## 1. What changed
 

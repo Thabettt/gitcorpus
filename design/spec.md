@@ -1,6 +1,6 @@
-# Feature Specification: gitcrawl — Continuous GitHub Repository Discovery Crawler
+# Feature Specification: gitcorpus — Continuous GitHub Repository Discovery Crawler
 
-**Feature Branch**: `001-gitcrawl`
+**Feature Branch**: `001-gitcorpus`
 
 **Created**: 2026-09-29
 
@@ -20,7 +20,7 @@
 
 ### User Story 1 - Discover every matching public repo (Priority: P1)
 
-An operator defines criteria (language, stars, topics, license, pushed range, custom virtual filters) and gitcrawl returns the *complete* matching set — not the first 1000 — stored locally for arbitrary querying.
+An operator defines criteria (language, stars, topics, license, pushed range, custom virtual filters) and gitcorpus returns the *complete* matching set — not the first 1000 — stored locally for arbitrary querying.
 
 **Why this priority**: Without complete discovery nothing downstream (freshness, enrichment, serving) has value. This is the MVP slice: sharded search + `since`-enumeration backfill into Postgres.
 
@@ -54,7 +54,7 @@ Each run reflects GitHub as it is at fetch time (`ran_at`): current matches, ren
 
 ### User Story 3 - Enrich and serve with virtual params incl. owner country (Priority: P3)
 
-Consumers query gitcrawl's own API with filters GitHub never built (`has_dockerfile`, team, `owner_country`, coverage) and get enriched repo records (languages bytes, releases, funding links, discussions, Scorecard linkage, owner country with confidence).
+Consumers query gitcorpus's own API with filters GitHub never built (`has_dockerfile`, team, `owner_country`, coverage) and get enriched repo records (languages bytes, releases, funding links, discussions, Scorecard linkage, owner country with confidence).
 
 **Why this priority**: Turns the raw index into the product: arbitrary offline filtering + the geo resolver + a stable serve contract. Depends on US1/US2 data but serves independently once they have run.
 
@@ -64,7 +64,7 @@ Consumers query gitcrawl's own API with filters GitHub never built (`has_dockerf
 
 1. **Given** `GET /vsearch/repos?q=...&min_stars=100&team_topic=platform&has_dockerfile=true&owner_country=DE`, **When** called, **Then** unknown params are never forwarded to GitHub (allowlist `q,sort,order,per_page,page`, own `400` otherwise), virtual params translate to legal GitHub calls + post-filters, and results carry enrichment + geo confidence tiers.
 2. **Given** owner `location` values `"🇩🇪 Berlin"`, `"Lagos"`, `"🌍 remote"`, **When** the geo resolver runs, **Then** results are `{DE, exact-ISO}`, `{NG, gazetteer-city}`, `{null, unmatched}` respectively — flag decode beats gazetteer beats unmatched-bucket, never a forced guess.
-3. **Given** a filter-spec JSON doc (`gitcrawl_filter: 1` with `q/sort/order/virtual/page`) uploaded via `POST /vsearch/run`, **When** it contains a typo'd qualifier, **Then** validation rejects it with a local `400` + hint before any GitHub call; **When** valid, **Then** the run returns `{filter_hash, ran_at, api_version, total_count, incomplete, items}` and `GET /vsearch/runs/{filter_hash}` replays it identically on another device (tokens per-device, results merging by `id`); rerun drift is reported via recorded metadata, and byte-identical reproduction comes from the exported run bundle (`GET .../export`: filters + metadata + raw upstream JSON).
+3. **Given** a filter-spec JSON doc (`gitcorpus_filter: 1` with `q/sort/order/virtual/page`) uploaded via `POST /vsearch/run`, **When** it contains a typo'd qualifier, **Then** validation rejects it with a local `400` + hint before any GitHub call; **When** valid, **Then** the run returns `{filter_hash, ran_at, api_version, total_count, incomplete, items}` and `GET /vsearch/runs/{filter_hash}` replays it identically on another device (tokens per-device, results merging by `id`); rerun drift is reported via recorded metadata, and byte-identical reproduction comes from the exported run bundle (`GET .../export`: filters + metadata + raw upstream JSON).
 
 4. **Given** per-repo enrichment load, **When** file-existence is needed for 1M repos, **Then** the system uses 1× `trees?recursive=1` (or zero-call ecosyste.ms metafiles) instead of N× `contents` calls (8× budget waste eliminated), and GraphQL is used only where it replaces ≥3 REST calls with `first≤50`.
 
@@ -123,7 +123,7 @@ Consumers query gitcrawl's own API with filters GitHub never built (`has_dockerf
 - **Shard**: dimension (`created:` range / `stars:` slice / org), state (`pending/active/done/incomplete`, within-run), `ran_at` snapshot (`max(pushed_at)` seen), order hint (no cadences), last `total_count`/fetched/`incomplete_results`.
 - **AuditLog**: per-request record per FR-010; drives SLOs and incident forensics.
 - **VirtualFilter**: named server-side filter (`min_stars`, `team_topic`, `has_dockerfile`, `owner_country`, …) with translation rule to legal upstream calls + post-filter.
-- **FilterSpec**: versioned JSON doc (`gitcrawl_filter`, `q/sort/order`, `virtual`, `page`, optional `as_of`) — the portable unit of a search; no tokens/state.
+- **FilterSpec**: versioned JSON doc (`gitcorpus_filter`, `q/sort/order`, `virtual`, `page`, optional `as_of`) — the portable unit of a search; no tokens/state.
 - **RunBundle**: `{filter_hash, ran_at, api_version, total_count, incomplete_flags}` + raw upstream JSON results — the replication artifact; reruns diff against it to explain live drift.
 - **TracePack**: versioned pattern set `{version, authors[], files[], branches[], labels[], bots[], generic_weights, exclusions[]}` — frozen before measurement runs; matches attribute per agent.
 - **CorpusFrame**: `{buckets:{old_list_date, new_cutoff}, attrition_rules, size_splits, study_window, star_floor?}` — declares the sampling frame (e.g. old/new buckets, small/med/large splits) so adoption numbers are comparable across stacks.

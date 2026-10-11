@@ -243,9 +243,9 @@ pre-merge). In Task 2's Edit C, keep Theme 2's `_fold_rate_limit` lines and
 
 **Gate 1 (flag off):** full suite green; a run's
 `field_stats.graphql.hydration.adaptive == {}` and all Theme 1/2 tests unchanged.
-**Gate 2 (soak):** bounded live run with `GITCRAWL_ADAPTIVE=1` against the Task 4 watch
+**Gate 2 (soak):** bounded live run with `GITCORPUS_ADAPTIVE=1` against the Task 4 watch
 table; findings note with keep-off/flip decision.
-**Rollback:** unset `GITCRAWL_ADAPTIVE` — production returns to the Phase 2 baseline with
+**Rollback:** unset `GITCORPUS_ADAPTIVE` — production returns to the Phase 2 baseline with
 zero code revert. Code revert only if Gate 1 regresses.
 
 ### Later lift (optional, after clean soak)

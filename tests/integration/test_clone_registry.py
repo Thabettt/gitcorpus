@@ -11,7 +11,7 @@ from lib.gh_client import API_VERSION
 from serve.executor import create_run
 from serve.runs import CloneRegistry, progress_payload, read_clone_progress, start_clone
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -2,7 +2,7 @@
 
 **Read this last, as the build matrix, after `01–05`.** It implements the `05` patch plan and the `04` dual-path recommendation.
 
-**The one-paragraph version**: gitcrawl needs every repo attribute — but GitHub spreads them across five different worlds. Some are searchable inside `q` (a closed set). Some live on the REST/GraphQL repo object (nullable, sometimes gated by access). Some come from list/enumeration endpoints (no 1000-cap). Some are org custom properties (single-org only). Some need a per-repo enrichment call. Some exist only in mirrors and datasets (stale, but bulk). And roughly thirty of the things you actually want — Dockerfile, coverage, CI status, LOC, Scorecard — are available nowhere natively and need a workaround. This file is the master matrix: every parameter, its availability code, and for each unavailable one the cheapest working way to get it.
+**The one-paragraph version**: gitcorpus needs every repo attribute — but GitHub spreads them across five different worlds. Some are searchable inside `q` (a closed set). Some live on the REST/GraphQL repo object (nullable, sometimes gated by access). Some come from list/enumeration endpoints (no 1000-cap). Some are org custom properties (single-org only). Some need a per-repo enrichment call. Some exist only in mirrors and datasets (stale, but bulk). And roughly thirty of the things you actually want — Dockerfile, coverage, CI status, LOC, Scorecard — are available nowhere natively and need a workaround. This file is the master matrix: every parameter, its availability code, and for each unavailable one the cheapest working way to get it.
 
 > **Date**: 2026-09-29; live API re-verification 2026-10-06/07 (items marked "live-verified" are probe-confirmed). **Method**: 3 parallel agents (A: official REST/Search/GraphQL, B: mirrors, C: unavailable+workarounds) + live docs verification.
 > **Companion**: `01` (canonical ref), `02` (power guide), `03` (custom verdicts), `04` (landscape), `05` (gaps). This file is the master matrix.
@@ -186,7 +186,7 @@ Native availability: `location: string|null` on `GET /users/{login}` / `GET /org
 ALLOWED = {"in","repo","user","org","size","followers","forks","stars","created","pushed","language","topic","topics","license","is","mirror","template","archived","good-first-issues","help-wanted-issues","has","props","fork","deployable","deployed"}
 ```
 
-## 8. Recommended fetch plan for gitcrawl
+## 8. Recommended fetch plan for gitcorpus
 
 1. **Discover:** `GET /repositories?since=` backfill (or sharded `search` `created:` bisect if filtered — **replace** the date clause per child; duplicate same-type qualifiers union, live-verified 2026-10-06/07) → candidate `full_name+id`. Expect ranking drift across runs (no pagination stability guarantee; live-verified 2026-10-06/07) and reconcile by `id`-set diff, never `total_count`.
 2. **Hydrate:** `GET /repos/{o}/{r}` (+`ETag`) → R fields; GQL batch for `fundingLinks/discussions/scorecard-linkage` in one shot — batching N repos per request is far cheaper than N requests (cost `round(connection-requests/100)`, min 1 pt, 5,000 pts/hr; live-verified 2026-10-06/07). Select `owner.databaseId` only via inline fragments on `User`/`Organization`, and treat `x-github-sso: partial-results` on `200` as incomplete data (`403 required;url` → authorize and retry; live-verified 2026-10-06/07).

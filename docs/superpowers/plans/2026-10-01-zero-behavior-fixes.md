@@ -201,7 +201,7 @@ def test_create_app_lazy_factories_are_single_flight(monkeypatch):
     monkeypatch.setattr(
         "serve.app.register_pages", lambda app, **kwargs: captured.update(kwargs)
     )
-    monkeypatch.setenv("DATABASE_URL", "postgresql://gitcrawl@localhost/gitcrawl")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://gitcorpus@localhost/gitcorpus")
     engine_calls: list[str] = []
     monkeypatch.setattr(
         "serve.app.create_engine", lambda url: engine_calls.append(url) or object()
@@ -226,7 +226,7 @@ def test_create_app_lazy_factories_are_single_flight(monkeypatch):
 
     engines = [engine_factory() for _ in range(2)]
     assert engines[0] is engines[1]
-    assert engine_calls == ["postgresql://gitcrawl@localhost/gitcrawl"]
+    assert engine_calls == ["postgresql://gitcorpus@localhost/gitcorpus"]
 
     runner = runner_factory()
     assert runner_factory() is runner
@@ -291,7 +291,7 @@ def create_app(
 ) -> FastAPI:
     loaders = _LazyLoaders()
     payload_cache = RunPayloadCache(ttl_seconds=CACHE_TTL_SECONDS, clock=clock)
-    application = FastAPI(title="gitcrawl", version="0.0.1")
+    application = FastAPI(title="gitcorpus", version="0.0.1")
 
     def build_engine() -> Engine:
         url = os.environ.get("DATABASE_URL")
@@ -456,7 +456,7 @@ from lib.gh_client import API_VERSION
 from serve.executor import create_run
 from serve.runs import CloneRegistry, progress_payload, read_clone_progress, start_clone
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -725,8 +725,8 @@ def test_poison_shard_reaches_the_dlq_after_max_attempts(clean: Engine, redis):
             jitter=lambda: 0.0,
         )
 
-    assert redis.xlen("gitcrawl:shards:dlq") == 1
-    entry = redis.xrange("gitcrawl:shards:dlq")[0]
+    assert redis.xlen("gitcorpus:shards:dlq") == 1
+    entry = redis.xrange("gitcorpus:shards:dlq")[0]
     assert entry[1][b"shard_id"] == b"1"
     assert shard_state(clean, 1) == ("pending", False)
 ```

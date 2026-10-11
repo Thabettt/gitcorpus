@@ -115,7 +115,7 @@ def healthy_client(engine: Engine, tmp_path, monkeypatch, **overrides) -> TestCl
 
 
 def seed_run(engine: Engine, tmp_path) -> tuple[int, str]:
-    filter_spec = {"gitcrawl_filter": 1, "q": "language:rust"}
+    filter_spec = {"gitcorpus_filter": 1, "q": "language:rust"}
     run_id = create_run(engine, filter_spec, api_version=API_VERSION)
     payload = RunPayload(total_count=1, fetched=1, items=[payload_item()])
     execute_run(engine, run_id, runner=lambda _rid, _spec: payload, runs_root=str(tmp_path))

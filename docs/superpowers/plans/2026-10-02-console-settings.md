@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python `>=3.12`; line length 100; ruff (`E,F,I,UP,B`) + black clean; coverage floor `fail_under = 93`.
-- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCRAWL_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures.
+- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCORPUS_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures.
 - Run tests with: `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest <path> -q` (Windows PowerShell).
 - Migration `0008` (down_revision `0007`) is claimed here. Numbers after this plan: the UX redesign's corpora work takes `0009`; the deferred agent-detection plan renumbers to `0010` when/if executed — record this in `docs/development-log.md`.
 - Resolution precedence per field: **environment override → database row → built-in default.** Defaults equal today's values (`10/500/200/100`, deadline `3600`, batching on, batch size `20`, concurrency `10`), so nothing changes until an operator edits.
@@ -131,14 +131,14 @@ def test_update_persists_and_returns_effective_settings(clean):
 
 def test_env_overrides_the_row(clean, monkeypatch):
     update_run_settings(clean, {"max_shards": 25})
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "3")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "3")
     settings = load_run_settings(clean)
     assert settings.max_shards == 3
 
 
 def test_invalid_env_value_falls_back_to_the_row(clean, monkeypatch):
     update_run_settings(clean, {"max_shards": 25})
-    monkeypatch.setenv("GITCRAWL_MAX_SHARDS", "not-a-number")
+    monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "not-a-number")
     assert load_run_settings(clean).max_shards == 25
 
 
@@ -156,15 +156,15 @@ from store.settings import SETTINGS_ENV, RunSettings, env_pinned_fields
 
 
 def test_settings_env_names_are_stable():
-    assert SETTINGS_ENV["max_shards"] == "GITCRAWL_MAX_SHARDS"
-    assert SETTINGS_ENV["request_deadline_seconds"] == "GITCRAWL_REQUEST_DEADLINE_SECONDS"
-    assert SETTINGS_ENV["graphql_batch"] == "GITCRAWL_GRAPHQL_BATCH"
-    assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCRAWL_MAX_CONCURRENT"
+    assert SETTINGS_ENV["max_shards"] == "GITCORPUS_MAX_SHARDS"
+    assert SETTINGS_ENV["request_deadline_seconds"] == "GITCORPUS_REQUEST_DEADLINE_SECONDS"
+    assert SETTINGS_ENV["graphql_batch"] == "GITCORPUS_GRAPHQL_BATCH"
+    assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCORPUS_MAX_CONCURRENT"
 
 
 def test_env_pinned_fields_lists_only_set_variables(monkeypatch):
-    monkeypatch.delenv("GITCRAWL_MAX_SHARDS", raising=False)
-    monkeypatch.setenv("GITCRAWL_GRAPHQL_BATCH", "0")
+    monkeypatch.delenv("GITCORPUS_MAX_SHARDS", raising=False)
+    monkeypatch.setenv("GITCORPUS_GRAPHQL_BATCH", "0")
     assert env_pinned_fields() == frozenset({"graphql_batch"})
 
 
@@ -298,14 +298,14 @@ from sqlalchemy.engine import Engine
 from store.models import AppSettings
 
 SETTINGS_ENV: Mapping[str, str] = {
-    "max_shards": "GITCRAWL_MAX_SHARDS",
-    "max_candidates": "GITCRAWL_MAX_CANDIDATES",
-    "max_hydrate": "GITCRAWL_MAX_HYDRATE",
-    "max_enrich": "GITCRAWL_MAX_ENRICH",
-    "request_deadline_seconds": "GITCRAWL_REQUEST_DEADLINE_SECONDS",
-    "graphql_batch": "GITCRAWL_GRAPHQL_BATCH",
-    "graphql_batch_size": "GITCRAWL_GRAPHQL_BATCH_SIZE",
-    "limiter_max_concurrent": "GITCRAWL_MAX_CONCURRENT",
+    "max_shards": "GITCORPUS_MAX_SHARDS",
+    "max_candidates": "GITCORPUS_MAX_CANDIDATES",
+    "max_hydrate": "GITCORPUS_MAX_HYDRATE",
+    "max_enrich": "GITCORPUS_MAX_ENRICH",
+    "request_deadline_seconds": "GITCORPUS_REQUEST_DEADLINE_SECONDS",
+    "graphql_batch": "GITCORPUS_GRAPHQL_BATCH",
+    "graphql_batch_size": "GITCORPUS_GRAPHQL_BATCH_SIZE",
+    "limiter_max_concurrent": "GITCORPUS_MAX_CONCURRENT",
 }
 
 _BOOL_FIELDS = frozenset({"graphql_batch"})
@@ -1188,7 +1188,7 @@ Add the top-level import `from serve.runner import build_deps` (it is currently 
 
 - [ ] **Step 6: Run the affected suites**
 
-Run: `$env:PYTHONPATH='src'; $env:GITCRAWL_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest tests/unit/test_graphql_batch_core.py tests/integration/test_runner.py tests/contract/test_settings.py tests/contract/test_pages.py tests/contract/test_console_api.py -q`
+Run: `$env:PYTHONPATH='src'; $env:GITCORPUS_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest tests/unit/test_graphql_batch_core.py tests/integration/test_runner.py tests/contract/test_settings.py tests/contract/test_pages.py tests/contract/test_console_api.py -q`
 Expected: PASS. If a contract test posts `/find`, `healthy_client` sets `GITHUB_TOKEN`, so the per-run `build_deps` succeeds; fix any fixture that does not.
 
 - [ ] **Step 7: Commit**
@@ -1221,14 +1221,14 @@ applies to new runs only. Environment variables pin a field (the page shows it r
 
 | Field | Environment variable | Default | Corpus-build example |
 |---|---|---|---|
-| Run shards | `GITCRAWL_MAX_SHARDS` | 10 | 10000 |
-| Candidates | `GITCRAWL_MAX_CANDIDATES` | 500 | 100000 |
-| Hydrations | `GITCRAWL_MAX_HYDRATE` | 200 | 100000 |
-| Enrichment checks | `GITCRAWL_MAX_ENRICH` | 100 | 100000 |
-| Request deadline (s) | `GITCRAWL_REQUEST_DEADLINE_SECONDS` | 3600 | 86400 |
-| GraphQL batching | `GITCRAWL_GRAPHQL_BATCH` | on | on |
-| Batch size | `GITCRAWL_GRAPHQL_BATCH_SIZE` | 20 | 20 |
-| Concurrency | `GITCRAWL_MAX_CONCURRENT` | 10 | 10 |
+| Run shards | `GITCORPUS_MAX_SHARDS` | 10 | 10000 |
+| Candidates | `GITCORPUS_MAX_CANDIDATES` | 500 | 100000 |
+| Hydrations | `GITCORPUS_MAX_HYDRATE` | 200 | 100000 |
+| Enrichment checks | `GITCORPUS_MAX_ENRICH` | 100 | 100000 |
+| Request deadline (s) | `GITCORPUS_REQUEST_DEADLINE_SECONDS` | 3600 | 86400 |
+| GraphQL batching | `GITCORPUS_GRAPHQL_BATCH` | on | on |
+| Batch size | `GITCORPUS_GRAPHQL_BATCH_SIZE` | 20 | 20 |
+| Concurrency | `GITCORPUS_MAX_CONCURRENT` | 10 | 10 |
 
 A corpus run occupies the single executor for its whole duration; run it overnight, and note that
 progress is not checkpointed inside a run (resume re-fetches from the start).
@@ -1244,7 +1244,7 @@ In `design/corpus-building-efficient-engineering.md` §11 ("Current code caveats
 
 - [ ] **Step 4: Full suite with coverage**
 
-Run: `$env:PYTHONPATH='src'; $env:GITCRAWL_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
+Run: `$env:PYTHONPATH='src'; $env:GITCORPUS_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
 Expected: all pass; coverage `>= 93%`.
 
 - [ ] **Step 5: Lint and format**

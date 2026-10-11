@@ -15,8 +15,8 @@ from lib.gh_client import API_VERSION
 from serve.app import create_app
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
-MARKER_NAME = ".gitcrawl-clone-done"
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
+MARKER_NAME = ".gitcorpus-clone-done"
 IDLE_PROGRESS = {
     "status": "done",
     "total": 0,
@@ -451,7 +451,7 @@ def test_clone_wires_env_timeout_and_cancel_event(clean: Engine, tmp_path, monke
         return cloner.CloneStats(requested=0, completed=0, skipped=0, failed=0, dest_root="clones")
 
     monkeypatch.setattr("serve.runs.clone_repos", fake_clone_repos)
-    monkeypatch.setenv("GITCRAWL_CLONE_TIMEOUT_SECONDS", "42")
+    monkeypatch.setenv("GITCORPUS_CLONE_TIMEOUT_SECONDS", "42")
     client = make_client(clean, tmp_path)
 
     response = client.post(f"/runs/{run_id}/clone", json={"limit": 1, "mode": "shallow"})

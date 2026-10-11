@@ -14,8 +14,8 @@ from serve.app import create_app
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 from serve.pages import CSRF_COOKIE
 
-FILTER_A = {"gitcrawl_filter": 1, "q": "language:rust"}
-FILTER_B = {"gitcrawl_filter": 1, "q": "language:go"}
+FILTER_A = {"gitcorpus_filter": 1, "q": "language:rust"}
+FILTER_B = {"gitcorpus_filter": 1, "q": "language:go"}
 HTML = {"Accept": "text/html"}
 SHORTCUTS = ("g-h", "g-f", "g-r", "g-l", "j", "k", "enter", "escape", "question")
 
@@ -323,7 +323,7 @@ def test_find_page_loads_saved_filter_into_the_form(client: TestClient):
 def test_runs_page_renders_history_rows_and_replay_action(client: TestClient, clean, tmp_path):
     done = seed_run(clean, tmp_path, spec=FILTER_A, items=[run_item(1), run_item(2)])
     partial = seed_run(clean, tmp_path, spec=FILTER_B, items=[run_item(3)], incomplete=True)
-    queued = create_run(clean, {"gitcrawl_filter": 1, "q": "language:c"}, api_version=API_VERSION)
+    queued = create_run(clean, {"gitcorpus_filter": 1, "q": "language:c"}, api_version=API_VERSION)
 
     html = client.get("/runs").text
 
@@ -384,7 +384,7 @@ def test_runs_page_paginates_50_per_page(client: TestClient, clean: Engine):
     for index in range(51):
         create_run(
             clean,
-            {"gitcrawl_filter": 1, "q": f"language:x{index}"},
+            {"gitcorpus_filter": 1, "q": f"language:x{index}"},
             api_version=API_VERSION,
         )
 
@@ -643,7 +643,7 @@ def test_applib_loads_before_app_js(client: TestClient):
 def test_app_js_invalidates_the_row_cache_after_htmx_swaps(client: TestClient):
     script = client.get("/static/app.js").text
 
-    assert "window.gitcrawlApp" in script
+    assert "window.gitcorpusApp" in script
     assert "applib.createRowCache" in script
     assert '"htmx:afterSwap", invalidateRowCache' in script
 
@@ -668,7 +668,7 @@ def test_actionable_clone_errors_are_wired(client: TestClient):
     helper = client.get("/static/errors.js")
 
     assert helper.status_code == 200
-    assert "gitcrawlErrors" in helper.text
+    assert "gitcorpusErrors" in helper.text
     assert "apiErrorText" in helper.text
     for marker in (
         "apiErrorText",
@@ -711,7 +711,7 @@ def test_modal_focus_trap_is_wired(client: TestClient):
     helper = client.get("/static/modalfocus.js")
 
     assert helper.status_code == 200
-    assert "gitcrawlModalFocus" in helper.text
+    assert "gitcorpusModalFocus" in helper.text
     for marker in ("trapTab", "restoreFocusTo", "nextFocusIndex", "activeModal"):
         assert marker in script
 

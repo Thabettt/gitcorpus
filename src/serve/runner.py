@@ -59,7 +59,7 @@ _DOCKERFILE_PATH = "Dockerfile"
 _ID_BATCH = 5000
 HYDRATION_CONCURRENCY_CEILING = 32
 
-logger = logging.getLogger("gitcrawl.serve")
+logger = logging.getLogger("gitcorpus.serve")
 
 
 class RedisUnavailable(RuntimeError):
@@ -106,7 +106,7 @@ def _redis_or_fake():
             return client
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
-            if os.environ.get("GITCRAWL_REDIS_STRICT") == "1":
+            if os.environ.get("GITCORPUS_REDIS_STRICT") == "1":
                 raise RedisUnavailable(reason) from exc
             logger.warning(
                 "REDIS_URL is set but unreachable (%s); falling back to fakeredis", reason

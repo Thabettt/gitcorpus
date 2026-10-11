@@ -14,7 +14,7 @@ from lib.gh_client import API_VERSION
 from serve.app import create_app
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 HX = {"HX-Request": "true"}
 RUN_MARKERS = (
     'id="run-header"',
@@ -750,7 +750,7 @@ def test_run_detail_compare_form_lists_previous_same_hash_runs(clean: Engine, tm
     third = seed_run(clean, tmp_path)
     fourth = seed_run(clean, tmp_path)
     viewed = seed_run(clean, tmp_path)
-    other = seed_run(clean, tmp_path, spec={"gitcrawl_filter": 1, "q": "language:go"})
+    other = seed_run(clean, tmp_path, spec={"gitcorpus_filter": 1, "q": "language:go"})
     client = make_client(clean, tmp_path)
 
     html = client.get(f"/runs/{viewed}").text
@@ -771,7 +771,7 @@ def test_run_detail_compare_form_lists_previous_same_hash_runs(clean: Engine, tm
 
 def test_run_detail_compare_form_needs_no_previous_same_hash_run(clean: Engine, tmp_path):
     run_id = seed_run(clean, tmp_path)
-    seed_run(clean, tmp_path, spec={"gitcrawl_filter": 1, "q": "language:go"})
+    seed_run(clean, tmp_path, spec={"gitcorpus_filter": 1, "q": "language:go"})
     client = make_client(clean, tmp_path)
 
     html = client.get(f"/runs/{run_id}").text

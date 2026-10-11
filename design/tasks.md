@@ -1,4 +1,4 @@
-# Tasks: gitcrawl
+# Tasks: gitcorpus
 
 **Input**: Design documents from `design/` (spec.md user stories US1–US3, plan.md structure, data-model.md entities, contracts/search-api.md)
 
@@ -47,7 +47,7 @@
 **Purpose**: Project init, stack, gates that everything else assumes
 
 - [ ] T001 Create project structure per plan.md (`src/scheduler,limiter,discover,store,hydrate,enrich,serve,lib`, `tests/contract,integration,unit`, `docker-compose.yml` for Postgres 17 + Redis 7)
-- [ ] T002 Initialize Python 3.12+ project with pinned deps (FastAPI, httpx, SQLAlchemy 2, Alembic, redis-py, pydantic v2, PyYAML, pytest) + `X-GitHub-Api-Version` + `User-Agent: gitcrawl/…` defaults in `src/lib/gh_client.py`; tokens via env (`GITHUB_TOKEN`/`GITHUB_TOKENS`) only, never hardcoded, fingerprint-only logging (1 PAT dev/golden-org, 5–10 for 100k+ runs)
+- [ ] T002 Initialize Python 3.12+ project with pinned deps (FastAPI, httpx, SQLAlchemy 2, Alembic, redis-py, pydantic v2, PyYAML, pytest) + `X-GitHub-Api-Version` + `User-Agent: gitcorpus/…` defaults in `src/lib/gh_client.py`; tokens via env (`GITHUB_TOKEN`/`GITHUB_TOKENS`) only, never hardcoded, fingerprint-only logging (1 PAT dev/golden-org, 5–10 for 100k+ runs)
 - [ ] T003 [P] Configure linting/formatting (ruff + black) and pytest layout per plan.md
 - [ ] T004 [P] Write ToS/legal gates checklist (`robots.txt` check, token-ownership log, resale-review trigger, trademark naming) in `docs/legal-gates.md` per spec FR-011
 

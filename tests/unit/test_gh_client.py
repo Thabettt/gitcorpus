@@ -28,7 +28,7 @@ from limiter.buckets import BucketLimiter
 def test_constants_pin_github_api_values():
     assert API_BASE == "https://api.github.com"
     assert API_VERSION == "2022-11-28"
-    assert USER_AGENT == "gitcrawl/0.0.1"
+    assert USER_AGENT == "gitcorpus/0.0.1"
     assert ACCEPT == "application/vnd.github+json"
 
 
@@ -91,7 +91,7 @@ def test_build_headers_without_token_has_exact_defaults():
     assert build_headers() == {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "gitcrawl/0.0.1",
+        "User-Agent": "gitcorpus/0.0.1",
     }
 
 
@@ -107,7 +107,7 @@ def test_build_headers_with_token_adds_bearer_authorization():
     assert build_headers("ghp_example-token") == {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "gitcrawl/0.0.1",
+        "User-Agent": "gitcorpus/0.0.1",
         "Authorization": "Bearer ghp_example-token",
     }
 
@@ -138,7 +138,7 @@ def test_create_client_sends_required_headers(monkeypatch):
     headers = captured["headers"]
     assert headers["Accept"] == "application/vnd.github+json"
     assert headers["X-GitHub-Api-Version"] == "2022-11-28"
-    assert headers["User-Agent"] == "gitcrawl/0.0.1"
+    assert headers["User-Agent"] == "gitcorpus/0.0.1"
     assert headers["Authorization"] == "Bearer ghp_example-token"
 
 
@@ -511,7 +511,7 @@ def test_request_with_retry_posts_json_body_and_extra_headers():
         return httpx.Response(200, json={"ok": True})
 
     client = httpx.Client(
-        headers={"User-Agent": "gitcrawl/0.0.1"},
+        headers={"User-Agent": "gitcorpus/0.0.1"},
         transport=httpx.MockTransport(handler),
     )
     response = request_with_retry(
@@ -526,7 +526,7 @@ def test_request_with_retry_posts_json_body_and_extra_headers():
     assert captured["method"] == "POST"
     assert captured["body"] == {"query": "{ rateLimit { cost } }"}
     assert captured["headers"]["Authorization"] == "Bearer tok"
-    assert captured["headers"]["User-Agent"] == "gitcrawl/0.0.1"
+    assert captured["headers"]["User-Agent"] == "gitcorpus/0.0.1"
 
 
 def test_request_with_retry_auth_false_strips_client_authorization():
@@ -537,7 +537,7 @@ def test_request_with_retry_auth_false_strips_client_authorization():
         return httpx.Response(200, json={"ok": True})
 
     client = httpx.Client(
-        headers={"Authorization": "Bearer ghp_secret", "User-Agent": "gitcrawl/0.0.1"},
+        headers={"Authorization": "Bearer ghp_secret", "User-Agent": "gitcorpus/0.0.1"},
         transport=httpx.MockTransport(handler),
     )
     response = request_with_retry(
@@ -550,7 +550,7 @@ def test_request_with_retry_auth_false_strips_client_authorization():
 
     assert response.status_code == 200
     assert "Authorization" not in captured["headers"]
-    assert captured["headers"]["User-Agent"] == "gitcrawl/0.0.1"
+    assert captured["headers"]["User-Agent"] == "gitcorpus/0.0.1"
 
 
 def test_request_with_retry_auth_default_keeps_client_authorization():
@@ -577,7 +577,7 @@ def test_request_with_retry_merges_extra_headers_over_client_defaults():
         return httpx.Response(200, json={})
 
     client = httpx.Client(
-        headers={"User-Agent": "gitcrawl/0.0.1", "Authorization": "Bearer original"},
+        headers={"User-Agent": "gitcorpus/0.0.1", "Authorization": "Bearer original"},
         transport=httpx.MockTransport(handler),
     )
     response = request_with_retry(
@@ -590,7 +590,7 @@ def test_request_with_retry_merges_extra_headers_over_client_defaults():
     assert response.status_code == 200
     assert captured["headers"]["If-None-Match"] == 'W/"one"'
     assert captured["headers"]["Authorization"] == "Bearer override"
-    assert captured["headers"]["User-Agent"] == "gitcrawl/0.0.1"
+    assert captured["headers"]["User-Agent"] == "gitcorpus/0.0.1"
 
 
 def test_request_with_retry_keeps_json_body_and_audit_hook_across_retries():

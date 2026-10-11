@@ -35,14 +35,14 @@ FRAME = {
 
 
 def base(**overrides):
-    doc = {"gitcrawl_filter": 1}
+    doc = {"gitcorpus_filter": 1}
     doc.update(overrides)
     return doc
 
 
 def test_allowed_top_level_is_the_documented_allowlist():
     assert ALLOWED_TOP_LEVEL == {
-        "gitcrawl_filter",
+        "gitcorpus_filter",
         "q",
         "sort",
         "order",
@@ -295,15 +295,15 @@ def test_filter_spec_is_frozen():
 def test_missing_version_is_an_error_with_a_hint():
     with pytest.raises(FilterSpecError) as excinfo:
         parse_filter_spec({})
-    assert any("gitcrawl_filter" in error for error in excinfo.value.errors)
+    assert any("gitcorpus_filter" in error for error in excinfo.value.errors)
     assert excinfo.value.hints
 
 
 @pytest.mark.parametrize("value", [2, 0, "1", 1.0, True, None])
 def test_wrong_version_is_an_error_with_a_hint(value):
     with pytest.raises(FilterSpecError) as excinfo:
-        parse_filter_spec(base(gitcrawl_filter=value))
-    assert any("gitcrawl_filter" in error for error in excinfo.value.errors)
+        parse_filter_spec(base(gitcorpus_filter=value))
+    assert any("gitcorpus_filter" in error for error in excinfo.value.errors)
     assert excinfo.value.hints
 
 
@@ -586,7 +586,7 @@ def test_spec_to_dict_is_normalized_in_stable_order():
     )
     normalized = spec_to_dict(spec)
     assert list(normalized) == [
-        "gitcrawl_filter",
+        "gitcorpus_filter",
         "q",
         "sort",
         "order",
@@ -595,14 +595,14 @@ def test_spec_to_dict_is_normalized_in_stable_order():
         "frame",
         "as_of",
     ]
-    assert normalized["gitcrawl_filter"] == 1
+    assert normalized["gitcorpus_filter"] == 1
     assert normalized["virtual"] == {"min_stars": 10}
     assert normalized["page"] == {"per_page": 20, "max_pages": 3}
     assert normalized["frame"] == {"star_floor": 10}
 
 
 def test_spec_to_dict_omits_unset_optionals():
-    assert list(spec_to_dict(parse_filter_spec(base()))) == ["gitcrawl_filter", "q", "page"]
+    assert list(spec_to_dict(parse_filter_spec(base()))) == ["gitcorpus_filter", "q", "page"]
 
 
 def test_spec_to_dict_round_trips_through_parse():
@@ -644,7 +644,7 @@ def test_spec_hash_is_stable_across_dict_key_order_and_whitespace():
             "virtual": {"team_topic": "rust", "min_stars": 10},
             "sort": "stars",
             "q": "  language:rust   fork:false ",
-            "gitcrawl_filter": 1,
+            "gitcorpus_filter": 1,
         }
     )
     assert spec_hash(first) == spec_hash(second)
@@ -693,7 +693,7 @@ def test_parse_filter_spec_does_not_mutate_the_input_document():
 
 def test_contract_example_filter_spec_parses():
     doc = {
-        "gitcrawl_filter": 1,
+        "gitcorpus_filter": 1,
         "q": "language:rust fork:false pushed:>2024-09-29",
         "sort": "stars",
         "order": "desc",

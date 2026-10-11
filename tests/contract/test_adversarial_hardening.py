@@ -18,7 +18,7 @@ from serve.middleware import (
     _same_origin,
 )
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -162,7 +162,7 @@ def test_same_origin_matches_host_scheme_and_effective_port():
 
 @pytest.fixture(autouse=True)
 def _allow_testclient_host(monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "testserver")
 
 
 @pytest.mark.parametrize(
@@ -189,11 +189,11 @@ def test_non_local_host_is_rejected(clean: Engine, tmp_path):
 
 
 def test_allowed_hosts_env_extends_the_allowlist(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ALLOWED_HOSTS", "gitcrawl.internal")
+    monkeypatch.setenv("GITCORPUS_ALLOWED_HOSTS", "gitcorpus.internal")
     application = create_app(engine=clean, runs_root=str(tmp_path / "runs"))
 
     allowed = TestClient(
-        application, base_url="http://gitcrawl.internal", raise_server_exceptions=False
+        application, base_url="http://gitcorpus.internal", raise_server_exceptions=False
     )
     replaced = TestClient(application, base_url="http://testserver", raise_server_exceptions=False)
 
@@ -264,7 +264,7 @@ def test_chunked_body_without_content_length_is_capped(clean: Engine, tmp_path):
 
 
 def test_get_repos_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "0.05")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "0.05")
     release = threading.Event()
     started = threading.Event()
 
@@ -284,7 +284,7 @@ def test_get_repos_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
 
 
 def test_post_run_timeout_returns_503(clean: Engine, tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "0.05")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "0.05")
     release = threading.Event()
 
     def blocking(run_id: int, filter_spec: dict) -> RunPayload:

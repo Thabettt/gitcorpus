@@ -3,7 +3,7 @@
   if (typeof module === "object" && module.exports) {
     module.exports = factory();
   } else {
-    root.gitcrawlRowNav = factory();
+    root.gitcorpusRowNav = factory();
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";

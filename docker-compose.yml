@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: gitcrawl
-      POSTGRES_PASSWORD: gitcrawl
-      POSTGRES_DB: gitcrawl
+      POSTGRES_USER: gitcorpus
+      POSTGRES_PASSWORD: gitcorpus
+      POSTGRES_DB: gitcorpus
     ports:
       - "5432:5432"
     volumes:

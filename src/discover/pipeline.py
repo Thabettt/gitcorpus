@@ -25,7 +25,7 @@ from scheduler.shard_planner import plan_shards
 from scheduler.state_machine import ShardState, ShardStore
 from store.upserts import UpsertStats, dedupe_items, upsert_repos
 
-logger = logging.getLogger("gitcrawl.discover")
+logger = logging.getLogger("gitcorpus.discover")
 
 _INT_PARAMS = ("page", "per_page", "since")
 _MAX_PROBE_CONCURRENCY = 8

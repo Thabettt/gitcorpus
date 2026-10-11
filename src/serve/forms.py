@@ -173,7 +173,7 @@ def _page_value(form: Mapping[str, str], name: str, default: int) -> int | str:
 
 def build_spec_from_form(form: Mapping[str, str]) -> dict:
     document: dict[str, object] = {
-        "gitcrawl_filter": FILTER_SPEC_VERSION,
+        "gitcorpus_filter": FILTER_SPEC_VERSION,
         "q": build_query_from_form(form),
     }
     sort = _clean(form, "sort")

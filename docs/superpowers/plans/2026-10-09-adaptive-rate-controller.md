@@ -4,7 +4,7 @@
 
 **Goal:** Add a default-off, env-gated three-loop adaptive controller (AIMD concurrency window + batch-size guard + hourly quota pacer + whole-pool pause) to the GraphQL batch engine so runs shrink on the first pushback, never drain the point meter to zero, and stop cleanly instead of sleeping to reset.
 
-**Architecture:** A new pure-logic module `src/limiter/adaptive.py` owns all controller math behind an injectable clock/RNG. `lib/graphql_batch.fetch_batch` grows an optional `adaptive=` parameter: the fixed `ThreadPoolExecutor` is sized to the controller ceiling, while submissions are gated by the live window `W`; outcome samples (HTTP status, transient markers, `ThrottledError`, per-response latency from the existing hook) feed the controller; pending keys are re-sliced at dispatch time so batch-size changes apply going forward. `hydrate.tail.refresh_repos_batched` passes the controller through and raises the Redis slot cap to the ceiling; `serve.runner._hydrate` constructs the controller only when `GITCRAWL_ADAPTIVE=1`, clamped inside the hydration envelope that Theme 2 names (`min(HYDRATION_CONCURRENCY_CEILING=32, limiter_max_concurrent)`), so `W` starts at 20 and grows toward that envelope. State is emitted additively into `field_stats.graphql.hydration` (no DB changes).
+**Architecture:** A new pure-logic module `src/limiter/adaptive.py` owns all controller math behind an injectable clock/RNG. `lib/graphql_batch.fetch_batch` grows an optional `adaptive=` parameter: the fixed `ThreadPoolExecutor` is sized to the controller ceiling, while submissions are gated by the live window `W`; outcome samples (HTTP status, transient markers, `ThrottledError`, per-response latency from the existing hook) feed the controller; pending keys are re-sliced at dispatch time so batch-size changes apply going forward. `hydrate.tail.refresh_repos_batched` passes the controller through and raises the Redis slot cap to the ceiling; `serve.runner._hydrate` constructs the controller only when `GITCORPUS_ADAPTIVE=1`, clamped inside the hydration envelope that Theme 2 names (`min(HYDRATION_CONCURRENCY_CEILING=32, limiter_max_concurrent)`), so `W` starts at 20 and grows toward that envelope. State is emitted additively into `field_stats.graphql.hydration` (no DB changes).
 
 **Tech Stack:** Python 3.12, httpx 0.28.1 (sync client, `MockTransport` in tests), threads + `ThreadPoolExecutor`, fakeredis, pytest. No new dependencies.
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python 3.12; no new dependencies; the controller module imports only the standard library (no httpx, no Redis client).
-- **No DB/schema changes, no settings rows, no alembic migration** (Theme 2 owns the single migration). The kill switch is the env flag `GITCRAWL_ADAPTIVE` only, read as `"1"`; default OFF.
+- **No DB/schema changes, no settings rows, no alembic migration** (Theme 2 owns the single migration). The kill switch is the env flag `GITCORPUS_ADAPTIVE` only, read as `"1"`; default OFF.
 - Adaptive OFF (no controller passed) must preserve existing behavior exactly: all tests in `tests/unit/test_graphql_batch_core.py`, `tests/integration/test_hydrate_batch.py`, and `tests/integration/test_runner.py` keep passing unmodified.
 - Existing guarantees are non-negotiable with adaptive ON too: parse data first, per-key attribution, split only failures, REST fallback, explicit final states, deadline, cancellation.
 - Coverage gate `fail_under = 93` (`pyproject.toml`); new code must be covered by its own unit/integration tests.
@@ -42,7 +42,7 @@ These interfaces were written against the sibling plans on disk (`2026-10-09-tra
 | `src/limiter/adaptive.py` (create) | Pure controller: AIMD window, batch guard, quota pacer, whole-pool pause state, telemetry snapshot, env flag helper |
 | `src/lib/graphql_batch.py` (modify) | Live dispatch gate, adaptive response hook, re-slicing queue, drop/guard signal folding, reserve deferral, pool-wide pause wait loop, `BatchStats.deferred`/`.adaptive` |
 | `src/hydrate/tail.py` (modify) | Pass the controller through; raise the Redis slot cap to the controller ceiling for the batch run |
-| `src/serve/runner.py` (modify) | Build the controller when `GITCRAWL_ADAPTIVE=1`; add the deferred warning |
+| `src/serve/runner.py` (modify) | Build the controller when `GITCORPUS_ADAPTIVE=1`; add the deferred warning |
 | `docs/environment.md` (modify) | Document the kill switch |
 | `tests/unit/test_adaptive.py` (create), `tests/unit/test_graphql_batch_adaptive.py` (create), `tests/integration/test_adaptive_hydration.py` (create), `tests/integration/test_runner.py` (add cases) | Coverage |
 | `docs/findings/2026-10-09-adaptive-soak.md` (create, Task 4) | Manual soak evidence |
@@ -58,7 +58,7 @@ These interfaces were written against the sibling plans on disk (`2026-10-09-tra
 **Interfaces:**
 - Consumes: standard library only (`math`, `os`, `random`, `threading`, `time`, `collections.deque`).
 - Produces:
-  - `limiter.adaptive.MIN_WINDOW = 8`, `MAX_WINDOW = 48`, `MIN_BATCH = 10`, `MAX_BATCH = 29`, `ADAPTIVE_ENV = "GITCRAWL_ADAPTIVE"`.
+  - `limiter.adaptive.MIN_WINDOW = 8`, `MAX_WINDOW = 48`, `MIN_BATCH = 10`, `MAX_BATCH = 29`, `ADAPTIVE_ENV = "GITCORPUS_ADAPTIVE"`.
   - `limiter.adaptive.adaptive_enabled(env: Mapping[str, str] | None = None) -> bool` — true only when the flag is exactly `"1"`.
   - `limiter.adaptive.AdaptiveConfig` (frozen dataclass) fields with defaults: `initial_window=20`, `min_window=8`, `max_window=48`, `initial_batch=20`, `min_batch=10`, `max_batch=29`, `cooldown_seconds=120.0`, `dwell_seconds=300.0`, `grow_batches=50`, `shrink_factor=0.7`, `latency_p95_ms=7000.0`, `latency_samples=50`, `reserve_points=400`, `burst_points=4.0`, `short_pause_seconds=60.0`, `pause_jitter_seconds=60.0`, `max_pause_seconds=300.0`, `max_pacer_wait_seconds=30.0`, `retry_budget_ratio=0.10`.
   - `limiter.adaptive.AdaptiveController(config: AdaptiveConfig | None = None, *, now: Callable[[], float] = time.monotonic, rng: Callable[[], float] = random.random, initial_batch: int | None = None, initial_window: int | None = None)` with:
@@ -313,7 +313,7 @@ MIN_WINDOW = 8
 MAX_WINDOW = 48
 MIN_BATCH = 10
 MAX_BATCH = 29
-ADAPTIVE_ENV = "GITCRAWL_ADAPTIVE"
+ADAPTIVE_ENV = "GITCORPUS_ADAPTIVE"
 
 
 def adaptive_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -1343,7 +1343,7 @@ def test_run_filter_adaptive_is_off_by_default(clean: Engine):
 
 
 def test_run_filter_adaptive_flag_reports_controller_state(clean: Engine, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ADAPTIVE", "1")
+    monkeypatch.setenv("GITCORPUS_ADAPTIVE", "1")
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = path_of(request)
@@ -1377,7 +1377,7 @@ def test_run_filter_adaptive_flag_reports_controller_state(clean: Engine, monkey
 
 
 def test_run_filter_warns_when_the_reserve_defers_hydration(clean: Engine, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ADAPTIVE", "1")
+    monkeypatch.setenv("GITCORPUS_ADAPTIVE", "1")
     barrier = threading.Barrier(20, timeout=10)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1535,11 +1535,11 @@ def _hydrate(
 `docs/environment.md` — add a row to the environment-variable table (after the `GITHUB_TOKEN` row, around line 121) and a bullet under the corpus-profile notes (around line 235):
 
 ```markdown
-| `GITCRAWL_ADAPTIVE` | `1` enables the adaptive rate controller (default off) | hydration batching (`limiter/adaptive`) |
+| `GITCORPUS_ADAPTIVE` | `1` enables the adaptive rate controller (default off) | hydration batching (`limiter/adaptive`) |
 ```
 
 ```markdown
-- `GITCRAWL_ADAPTIVE=1` turns on the three-loop adaptive controller for hydration: the AIMD window starts at 20 (bounds 8-48), the batch guard starts at the configured batch size capped at 29 (bounds 10-29), the quota pacer paces to `(remaining - 400) / seconds-to-reset` with a burst of 4, and any 403/429/502/504/rate-limit signal pauses the pool. It emits `field_stats.graphql.hydration.adaptive` and `.deferred`; keep it off until a soak run validates it.
+- `GITCORPUS_ADAPTIVE=1` turns on the three-loop adaptive controller for hydration: the AIMD window starts at 20 (bounds 8-48), the batch guard starts at the configured batch size capped at 29 (bounds 10-29), the quota pacer paces to `(remaining - 400) / seconds-to-reset` with a burst of 4, and any 403/429/502/504/rate-limit signal pauses the pool. It emits `field_stats.graphql.hydration.adaptive` and `.deferred`; keep it off until a soak run validates it.
 ```
 
 - [ ] **Step 4: Run the hydration, runner, and batch suites**
@@ -1573,7 +1573,7 @@ git commit -m "feat(runner): env-gated adaptive hydration wiring and telemetry"
 Full suite green (Task 3 Step 5), DB + Redis up per `docs/environment.md`, one token configured, corpus preset loaded at `/settings` (`max_shards=1000`, `max_candidates=100000`, `max_hydrate=100000`, `max_enrich=100000`, `request_deadline_seconds=86400`, `graphql_batch_size` at its current default, `limiter_max_concurrent` at its current default). Set the kill switch only for this run:
 
 ```powershell
-$env:GITCRAWL_ADAPTIVE = "1"
+$env:GITCORPUS_ADAPTIVE = "1"
 ```
 
 Restart the server process so the env var is picked up (the flag is read per `_hydrate` call, but restart avoids stale env in the scheduled task).
@@ -1611,7 +1611,7 @@ git commit -m "docs(findings): adaptive controller soak validation"
 
 - Discovery-side adaptation: `src/discover/graphql_search.py` keeps its current page halving (`100 -> 50 -> 25`) and fixed concurrency; a later plan can share the controller's pacer there.
 - Enrichment adapters (files/owners) still use the fixed Redis slot cap; no controller passes through them.
-- Flipping `GITCRAWL_ADAPTIVE` on by default requires the Task 4 evidence plus the Theme 2 telemetry (`rl_used`, run id) to validate the 1-point-per-batch assumption.
+- Flipping `GITCORPUS_ADAPTIVE` on by default requires the Task 4 evidence plus the Theme 2 telemetry (`rl_used`, run id) to validate the 1-point-per-batch assumption.
 
 ## Self-review notes
 

@@ -26,7 +26,7 @@ CAPTURED_HEADERS = (
     "content-type",
     "cache-control",
     "content-disposition",
-    "x-gitcrawl-regenerated",
+    "x-gitcorpus-regenerated",
     "location",
 )
 RELATIVE_TIME = re.compile(r"\b(?:just now|\d+m ago|\d+h ago|\d+d ago|\d+mo ago)\b")
@@ -40,7 +40,7 @@ CLONE_DESTINATION = re.compile(
     r".*?(/&lt;hash&gt;</span></p>)"
 )
 
-FILTER_SPEC_JSON = '{"gitcrawl_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}'
+FILTER_SPEC_JSON = '{"gitcorpus_filter": 1, "q": "language:rust", "sort": "stars", "order": "desc"}'
 
 GOLDEN_SEED_SQL = (
     "TRUNCATE TABLE app_settings, corpora, run_items, runs, saved_filters, audit_log, shards, "
@@ -48,7 +48,7 @@ GOLDEN_SEED_SQL = (
     "INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
     """
     INSERT INTO owners (id, login, type, location_raw, country_iso, geo_confidence, company)
-    VALUES (901, 'octo', 'User', 'Berlin, Germany', 'DE', 'name', 'GitCrawl Labs')
+    VALUES (901, 'octo', 'User', 'Berlin, Germany', 'DE', 'name', 'GitCorpus Labs')
     """,
     """
     INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility, description,

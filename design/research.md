@@ -88,7 +88,7 @@
 
 ## D13. Thesis tracks: corpus, traces, validation (FR-015–FR-022)
 
-Source: the `thisisjustthebeginning` thesis repo (proposal §3, research-notes methodology + replication-package deep dive, meeting-script paper map). Rule: gitcrawl feeds the thesis pipeline evidence; analysis (metrics, models, writing) lives downstream.
+Source: the `thisisjustthebeginning` thesis repo (proposal §3, research-notes methodology + replication-package deep dive, meeting-script paper map). Rule: gitcorpus feeds the thesis pipeline evidence; analysis (metrics, models, writing) lives downstream.
 
 - **Corpus frame first (timeline pressure: draft due 10.12.2026, month 1–2 pipelines + basic rates).** Filter-spec carries buckets (frozen-list date for old/new), attrition accounting (~2k drops at 128k scale: private/deleted/dotfiles), size splits (small/med/large), study window (drop pre-2025), ≥10-star Dabic option. Raw upstream JSON stored per repo (replication package requirement).
 - **Trace packs versioned + frozen pre-run** (authors/files/branches/labels/bots for 63 agents): content fetch for guidance files (not existence), generic-`AGENTS.md` weighted down, `CONVENTIONS.md` excluded, per-agent attribution for preference ranking; disabled-trace agents (Claude opt-out, Pi/OpenCode unsigned) mean measured adoption is always an undercount — reported, never silently corrected.

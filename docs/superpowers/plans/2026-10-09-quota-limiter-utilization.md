@@ -892,7 +892,7 @@ def test_reconcile_uses_the_header_limit_over_the_spec(redis):
         {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "40", "x-ratelimit-reset": "60"},
         now=0.0,
     )
-    assert redis.hget("gitcrawl:rl:core:token-a", "count") == b"60"
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"60"
     denied = limiter.acquire("core", "token-a", now=0.0)
     assert denied.allowed is False
     assert denied.retry_after == 60.0

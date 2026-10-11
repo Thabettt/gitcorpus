@@ -13,7 +13,7 @@ MIN_WINDOW = 8
 MAX_WINDOW = 48
 MIN_BATCH = 10
 MAX_BATCH = 29
-ADAPTIVE_ENV = "GITCRAWL_ADAPTIVE"
+ADAPTIVE_ENV = "GITCORPUS_ADAPTIVE"
 
 
 def adaptive_enabled(env: Mapping[str, str] | None = None) -> bool:

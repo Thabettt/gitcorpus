@@ -5,7 +5,7 @@
 **The one-paragraph version**: the first research pass got the core parameters right, but when three reviewers went through it against live docs, they found load-bearing blind spots — the `since`-enumeration backfill, lifecycle on immutable IDs, auth/SSO/App rate buckets, watermark/ETag/`total_count` traps, bulk datasets, feed alternatives, and legal/ops gates. Any one of these would break a production crawler, and none of them announce themselves — they just produce a corpus that is quietly wrong or a run that gets throttled forever. This file names every gap with a severity, the evidence, and the concrete fix, in the order the fixes should land.
 
 > **Date**: 2026-09-29 (all evidence links accessed 2026-09-29 unless noted); **live API re-verification and gap closure**: 2026-10-06/07 (see `## F`). **Method**: `requesting-code-review` — 3 parallel reviewer subagents (technical-API, landscape/architecture, legal/ops/repro) + re-read of `01–04` + README + live docs verification.
-> **Verdict**: `01–04` are correct on core params/qualifiers/limits but have load-bearing gaps for building gitcrawl. Nothing in `01–04` needs deletion; ~12 Critical gaps need new sections, 12 Important need corrections, and the rest are rot-proofing. **Live re-verification 2026-10-06/07**: A4, A6, and A7/A11 now have probe evidence (see `## F`); the remaining gaps are unchanged.
+> **Verdict**: `01–04` are correct on core params/qualifiers/limits but have load-bearing gaps for building gitcorpus. Nothing in `01–04` needs deletion; ~12 Critical gaps need new sections, 12 Important need corrections, and the rest are rot-proofing. **Live re-verification 2026-10-06/07**: A4, A6, and A7/A11 now have probe evidence (see `## F`); the remaining gaps are unchanged.
 > **Full evidence URLs**: see `## E. Evidence links` at the end of this file; each A/B item also cites inline.
 
 ## A. Critical — will break or misdirect the build if not fixed
@@ -67,9 +67,9 @@ These are the "you will ship a wrong corpus" items. Read them as a pre-flight ch
 
 ### A10. Legal/ops blockers: token-sharing, scraping, robots, deletion, resale, PII, trademark
 
-- Multi-PAT "rotation" without the §H guardrail ("You may not share API tokens to exceed rate limitations… suspension… sole discretion… warn via email") = suspension risk — rotate only across accounts you control, log token hashes, back off then stop. The scraping advice was over-permissive: continuous commercial gitcrawl qualifies for neither the Researcher (public non-personal + open-access pubs only) nor Archivist exception; the `§C.5` reference is stale → current Acceptable Use §7; `github.com/robots.txt` (`Disallow: /search`?) was never checked — default API-only, HTML fallback needs legal review. No deletion/privatization runbook (search never pushes deletes; `GET` 404 = purge/quarantine in N days, audit-log `repo.destroy`, retention window, email minimization, GDPR/CCPA access/erase via `privacy@github`). The resale/high-throughput subscription trigger (§H "GitHub may offer subscription… for high-throughput… or resale") was ignored despite the `crawl→store→serve` recommendation. The spam/selling-PII ban (§H + AU §7) was not operationalized (forbid `user:email`, recruiter use, bulk outreach; allowlist stored fields). Trademark gap (`GITHUB®/OCTOCAT®`, no endorsement, no Invertocat logo) if gitcrawl ships UI.
+- Multi-PAT "rotation" without the §H guardrail ("You may not share API tokens to exceed rate limitations… suspension… sole discretion… warn via email") = suspension risk — rotate only across accounts you control, log token hashes, back off then stop. The scraping advice was over-permissive: continuous commercial gitcorpus qualifies for neither the Researcher (public non-personal + open-access pubs only) nor Archivist exception; the `§C.5` reference is stale → current Acceptable Use §7; `github.com/robots.txt` (`Disallow: /search`?) was never checked — default API-only, HTML fallback needs legal review. No deletion/privatization runbook (search never pushes deletes; `GET` 404 = purge/quarantine in N days, audit-log `repo.destroy`, retention window, email minimization, GDPR/CCPA access/erase via `privacy@github`). The resale/high-throughput subscription trigger (§H "GitHub may offer subscription… for high-throughput… or resale") was ignored despite the `crawl→store→serve` recommendation. The spam/selling-PII ban (§H + AU §7) was not operationalized (forbid `user:email`, recruiter use, bulk outreach; allowlist stored fields). Trademark gap (`GITHUB®/OCTOCAT®`, no endorsement, no Invertocat logo) if gitcorpus ships UI.
 - Evidence: ToS §H, Acceptable Use §7, Privacy Statement, Logo Policy/Brand Toolkit (verified 2026-09-29).
-- Fix: legal gates + runbooks before any crawl/serve/scrape step; least-privilege fine-grained PAT (no `repo` scope for public), vault/OIDC, `User-Agent: gitcrawl/…`, secret-scanning.
+- Fix: legal gates + runbooks before any crawl/serve/scrape step; least-privilege fine-grained PAT (no `repo` scope for public), vault/OIDC, `User-Agent: gitcorpus/…`, secret-scanning.
 
 ### A11. Token storage, audit logging, observability missing
 
@@ -132,13 +132,13 @@ Not fatal, but each one costs time, calls, or trust if unhandled.
 
 ## F. Live re-verification and gap closure (2026-10-06/07)
 
-Probe-confirmed against the live API on 2026-10-06/07, alongside the gitcrawl implementation commits (d04bc34 planner, bf2201d hydration). This section updates the status of the A/B items above; it does not delete the original audit.
+Probe-confirmed against the live API on 2026-10-06/07, alongside the gitcorpus implementation commits (d04bc34 planner, bf2201d hydration). This section updates the status of the A/B items above; it does not delete the original audit.
 
 ### F1. Closed (live evidence landed)
 
 | Gap | Closure |
 |---|---|
-| A4 — SSO semantics | `x-github-sso: partial-results; organizations=...` rides on `200` (orgs silently withheld); `x-github-sso: required; url=...` is a `403` carrying a one-hour authorization URL. Gitcrawl hydration now degrades SSO partials to per-repo fallback/unresolved and still fails loudly on `401`. |
+| A4 — SSO semantics | `x-github-sso: partial-results; organizations=...` rides on `200` (orgs silently withheld); `x-github-sso: required; url=...` is a `403` carrying a one-hour authorization URL. Gitcorpus hydration now degrades SSO partials to per-repo fallback/unresolved and still fails loudly on `401`. |
 | A6 — page-11 truth | Confirmed live: page 11 at `per_page=100` → `422 "Only the first 1000 search results are available"` (never `[]`); the `422`-vs-split branch is the correct one. |
 | A6 — `total_count` instability | Confirmed live: `total_count` can exceed 1,000 and drifts over hours (38,820 → 38,823 → 38,833 in ~5 h for the same query). `sum(shards)==total` is a sanity signal only. |
 | A6/B — shard correctness | Duplicate same-type qualifiers (e.g. two `created:`) are a **union**, not an AND (repo-scoped probe, live-verified). This was the root cause of the bisection-never-converges planner bug: appending `created:D1..D2` to a query that already carried a `created:` bound unioned instead of narrowing. Fixed via `split_created` / `replace_created` — the planner replaces the clause on the parent query (d04bc34). |

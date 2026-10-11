@@ -3,14 +3,14 @@
 **Provisioned**: 2026-10-01 · **Host**: ZENBOOK (Windows, user `ZENBOOK\Abdul`, non-elevated shell)
 Companion: `development-log.md` (what was built and why) · `design/plan.md` (stack decisions)
 
-This document records every service, credential location, env var, and start/stop command for the local gitcrawl development environment, so nothing depends on session memory.
+This document records every service, credential location, env var, and start/stop command for the local gitcorpus development environment, so nothing depends on session memory.
 
 ## At a glance
 
 | Service | Endpoint | Started by | Auto-start | Credentials live in |
 |---|---|---|---|---|
-| PostgreSQL 18.1 (project-local cluster) | `localhost:5433` | `pg_ctl` (user process, no Windows service) | logon task `gitcrawl-postgres` | User env `DATABASE_URL` / `TEST_DATABASE_URL` |
-| Redis 7 (WSL2 Ubuntu service) | `redis://localhost:6379/0` | WSL `service redis-server` | logon task `gitcrawl-redis` | none (localhost only) |
+| PostgreSQL 18.1 (project-local cluster) | `localhost:5433` | `pg_ctl` (user process, no Windows service) | logon task `gitcorpus-postgres` | User env `DATABASE_URL` / `TEST_DATABASE_URL` |
+| Redis 7 (WSL2 Ubuntu service) | `redis://localhost:6379/0` | WSL `service redis-server` | logon task `gitcorpus-redis` | none (localhost only) |
 | GitHub API | `https://api.github.com` | app code (`httpx`) | — | User env `GITHUB_TOKEN` |
 
 All env vars are set at **User** level (`HKCU\Environment`), never committed to the repo. A running opencode process does **not** see env vars set after it started — restart opencode after any change.
@@ -27,25 +27,25 @@ Instead, a **second, project-local cluster** was initialized from the same PG 18
 
 ## PostgreSQL — project-local cluster
 
-- **Data dir**: `%LOCALAPPDATA%\gitcrawl\pgdata`
-- **Log**: `%LOCALAPPDATA%\gitcrawl\pg.log`
+- **Data dir**: `%LOCALAPPDATA%\gitcorpus\pgdata`
+- **Log**: `%LOCALAPPDATA%\gitcorpus\pg.log`
 - **Port**: `5433` (set in `postgresql.conf`: `port = 5433`, `listen_addresses = 'localhost'`)
-- **Role (superuser of this cluster)**: `gitcrawl`
-- **Databases**: `gitcrawl` (dev), `gitcrawl_test` (tests — migration tests upgrade/downgrade it)
+- **Role (superuser of this cluster)**: `gitcorpus`
+- **Databases**: `gitcorpus` (dev), `gitcorpus_test` (tests — migration tests upgrade/downgrade it)
 - **Auth**: `scram-sha-256` for `127.0.0.1`/`::1` (generated 28-char alphanumeric password)
 
 ### How it was created
 
 ```powershell
 $bin = 'C:\Program Files\PostgreSQL\18\bin'
-$data = "$env:LOCALAPPDATA\gitcrawl\pgdata"
+$data = "$env:LOCALAPPDATA\gitcorpus\pgdata"
 # password generated in-memory, written to a temp --pwfile, deleted afterwards
-& "$bin\initdb.exe" -D $data -U gitcrawl --auth-host=scram-sha-256 --auth-local=scram-sha-256 `
+& "$bin\initdb.exe" -D $data -U gitcorpus --auth-host=scram-sha-256 --auth-local=scram-sha-256 `
   --pwfile=<temp-file> --encoding=UTF8 --locale=C
 Add-Content "$data\postgresql.conf" "`nport = 5433`nlisten_addresses = 'localhost'"
-& "$bin\pg_ctl.exe" start -D $data -l "$env:LOCALAPPDATA\gitcrawl\pg.log"
-& "$bin\createdb.exe" -h localhost -p 5433 -U gitcrawl gitcrawl
-& "$bin\createdb.exe" -h localhost -p 5433 -U gitcrawl gitcrawl_test
+& "$bin\pg_ctl.exe" start -D $data -l "$env:LOCALAPPDATA\gitcorpus\pg.log"
+& "$bin\createdb.exe" -h localhost -p 5433 -U gitcorpus gitcorpus
+& "$bin\createdb.exe" -h localhost -p 5433 -U gitcorpus gitcorpus_test
 ```
 
 The generated password exists **only** inside the two User-level env vars (below). It is not written to the repo, not in git, not in this doc.
@@ -54,10 +54,10 @@ The generated password exists **only** inside the two User-level env vars (below
 
 ```powershell
 $bin = 'C:\Program Files\PostgreSQL\18\bin'
-$data = "$env:LOCALAPPDATA\gitcrawl\pgdata"
+$data = "$env:LOCALAPPDATA\gitcorpus\pgdata"
 
 # start (detached — run via Start-Process in scripts so no console pipe is held)
-Start-Process -FilePath "$bin\pg_ctl.exe" -ArgumentList @('start','-D',$data,'-l',"$env:LOCALAPPDATA\gitcrawl\pg.log") -WindowStyle Hidden
+Start-Process -FilePath "$bin\pg_ctl.exe" -ArgumentList @('start','-D',$data,'-l',"$env:LOCALAPPDATA\gitcorpus\pg.log") -WindowStyle Hidden
 
 & "$bin\pg_ctl.exe" status -D $data          # status
 & "$bin\pg_isready.exe" -h localhost -p 5433 # readiness
@@ -69,14 +69,14 @@ Start-Process -FilePath "$bin\pg_ctl.exe" -ArgumentList @('start','-D',$data,'-l
 ```powershell
 $dsn = [Environment]::GetEnvironmentVariable('DATABASE_URL','User')   # contains the password — do not paste into logs
 $env:PGPASSWORD = [regex]::Match($dsn,'://[^:]+:([^@]+)@').Groups[1].Value
-& "$bin\psql.exe" -h localhost -p 5433 -U gitcrawl -d gitcrawl -w -c 'select 1'
+& "$bin\psql.exe" -h localhost -p 5433 -U gitcorpus -d gitcorpus -w -c 'select 1'
 Remove-Item Env:PGPASSWORD
 ```
 
 ### Password rotation / rebuild
 
-- **Rotate**: connect (as above) → `ALTER ROLE gitcrawl PASSWORD '<new>';` → update both User env vars with the new DSN → restart any process that had the old DSN.
-- **Rebuild from scratch** (destroys data): `pg_ctl stop -D $data -m fast`; delete `%LOCALAPPDATA%\gitcrawl\pgdata`; repeat "How it was created".
+- **Rotate**: connect (as above) → `ALTER ROLE gitcorpus PASSWORD '<new>';` → update both User env vars with the new DSN → restart any process that had the old DSN.
+- **Rebuild from scratch** (destroys data): `pg_ctl stop -D $data -m fast`; delete `%LOCALAPPDATA%\gitcorpus\pgdata`; repeat "How it was created".
 
 ## Redis — WSL2 Ubuntu
 
@@ -100,36 +100,36 @@ Two per-user scheduled tasks start the services after login:
 
 | Task | Action script | Effect |
 |---|---|---|
-| `gitcrawl-postgres` | `%LOCALAPPDATA%\gitcrawl\start-postgres.ps1` | `pg_ctl start` the 5433 cluster |
-| `gitcrawl-redis` | `%LOCALAPPDATA%\gitcrawl\start-redis.ps1` | `wsl -u root -- service redis-server start` |
+| `gitcorpus-postgres` | `%LOCALAPPDATA%\gitcorpus\start-postgres.ps1` | `pg_ctl start` the 5433 cluster |
+| `gitcorpus-redis` | `%LOCALAPPDATA%\gitcorpus\start-redis.ps1` | `wsl -u root -- service redis-server start` |
 
 Both tasks have the power conditions **disabled** (`DisallowStartIfOnBatteries=false`, `StopIfGoingOnBatteries=false`) — set 2026-10-10 after a reboot on battery left the tasks stuck in `Queued` and `./start` timed out. On this laptop the services must start regardless of AC/battery; if a task ever sits `Queued`, check these two settings first:
 
 ```powershell
-(Export-ScheduledTask -TaskName gitcrawl-postgres) -match 'Batteries'
-$t = Get-ScheduledTask -TaskName gitcrawl-postgres
+(Export-ScheduledTask -TaskName gitcorpus-postgres) -match 'Batteries'
+$t = Get-ScheduledTask -TaskName gitcorpus-postgres
 $t.Settings.DisallowStartIfOnBatteries = $false
 $t.Settings.StopIfGoingOnBatteries = $false
-Set-ScheduledTask -TaskName gitcrawl-postgres -Settings $t.Settings   # repeat for gitcrawl-redis
+Set-ScheduledTask -TaskName gitcorpus-postgres -Settings $t.Settings   # repeat for gitcorpus-redis
 ```
 
 Manual control:
 
 ```powershell
-Start-ScheduledTask -TaskName gitcrawl-postgres
-Unregister-ScheduledTask -TaskName gitcrawl-postgres -Confirm:$false   # remove
-Unregister-ScheduledTask -TaskName gitcrawl-redis -Confirm:$false
+Start-ScheduledTask -TaskName gitcorpus-postgres
+Unregister-ScheduledTask -TaskName gitcorpus-postgres -Confirm:$false   # remove
+Unregister-ScheduledTask -TaskName gitcorpus-redis -Confirm:$false
 ```
 
 ## Environment variables (User level, secrets never committed)
 
 | Name | Value (shape) | Used by |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg://gitcrawl:<pw>@localhost:5433/gitcrawl` | Alembic, app |
-| `TEST_DATABASE_URL` | `postgresql+psycopg://gitcrawl:<pw>@localhost:5433/gitcrawl_test` | DB integration tests (destructive-safe) |
+| `DATABASE_URL` | `postgresql+psycopg://gitcorpus:<pw>@localhost:5433/gitcorpus` | Alembic, app |
+| `TEST_DATABASE_URL` | `postgresql+psycopg://gitcorpus:<pw>@localhost:5433/gitcorpus_test` | DB integration tests (destructive-safe) |
 | `REDIS_URL` | `redis://localhost:6379/0` | limiter buckets at runtime |
 | `GITHUB_TOKEN` | OAuth token from the authenticated `gh` CLI keyring | live GitHub calls (fingerprint-only logging) |
-| `GITCRAWL_ADAPTIVE` | `1` force-enables the adaptive rate controller (normally toggled on `/settings`; default off) | hydration batching (`limiter/adaptive`) |
+| `GITCORPUS_ADAPTIVE` | `1` force-enables the adaptive rate controller (normally toggled on `/settings`; default off) | hydration batching (`limiter/adaptive`) |
 
 **Set/update pattern** (no secret echoed):
 
@@ -165,7 +165,7 @@ $env:PYTHONPATH = 'src'
 .venv\Scripts\python.exe -m uvicorn serve.app:app --host 127.0.0.1 --port 8000
 ```
 
-`GITCRAWL_HOST` / `GITCRAWL_PORT` override host/port for `python -m serve` (defaults `127.0.0.1:8000`). The console binds localhost only, has no auth (single operator), and never renders secrets.
+`GITCORPUS_HOST` / `GITCORPUS_PORT` override host/port for `python -m serve` (defaults `127.0.0.1:8000`). The console binds localhost only, has no auth (single operator), and never renders secrets.
 
 ### Start / restart from bash
 
@@ -177,13 +177,13 @@ so they do not apply to the Compose/macOS/Linux paths):
 ./restart    # stop the running server, then run the full start flow
 ```
 
-- The server runs detached; its PID lives in `%LOCALAPPDATA%\gitcrawl\serve.pid` and stdout/stderr go
+- The server runs detached; its PID lives in `%LOCALAPPDATA%\gitcorpus\serve.pid` and stdout/stderr go
   to `serve.log` / `serve.err.log` in the same folder as `pg.log`. `start` prints the exact log path
   and a `tail -f` command when it finishes.
 - `start` is idempotent: if the recorded PID is alive it prints the URL and exits 0. It fails early
   with a clear message when `DATABASE_URL`, `REDIS_URL`, or `GITHUB_TOKEN` are missing, when the venv
   is absent, or when port 8000 is already taken.
-- Down services are started through the existing `gitcrawl-postgres` / `gitcrawl-redis` scheduled
+- Down services are started through the existing `gitcorpus-postgres` / `gitcorpus-redis` scheduled
   tasks (Redis includes the WSL keeper session) and then polled for up to 30 s.
 - `restart` stops only the app process; Postgres and Redis are checked but not bounced, because the
   test suites share them.
@@ -205,7 +205,7 @@ so they do not apply to the Compose/macOS/Linux paths):
 - **No JS**: every read path (dashboard, history, diff, library, run table) is server-rendered, and forms POST normally with the hidden CSRF field; keyboard shortcuts, htmx polling/fragments, and the clone modal are enhancements.
 - **No Node / no Tailwind at runtime**: styling is the hand-rolled `src/serve/static/app.css` (R46); `htmx.min.js` and `app.js` are vendored and committed — no CDN or build step.
 - **Keyboard**: `/` focuses quick search, `g h`/`g f`/`g r`/`g l` navigate, `j`/`k` select table rows, `Enter` opens the selected row, `?` toggles the shortcut help, `Esc` closes dialogs.
-- **Redis keeper session (R34)**: keep the hidden `wsl.exe -u root -- sleep infinity` session alive so WSL2 localhost forwarding stays up; the `gitcrawl-redis` logon task starts Redis plus that keeper. If `/health` shows Redis down, run `wsl -u root -- service redis-server status` and reopen the keeper.
+- **Redis keeper session (R34)**: keep the hidden `wsl.exe -u root -- sleep infinity` session alive so WSL2 localhost forwarding stays up; the `gitcorpus-redis` logon task starts Redis plus that keeper. If `/health` shows Redis down, run `wsl -u root -- service redis-server status` and reopen the keeper.
 
 ## Tests and gates
 
@@ -230,23 +230,23 @@ shows it read-only):
 
 | Field | Environment variable | Default | Corpus-build example |
 |---|---|---|---|
-| Run shards | `GITCRAWL_MAX_SHARDS` | 10 | 1000 |
-| Candidates | `GITCRAWL_MAX_CANDIDATES` | 500 | 100000 |
-| Hydrations | `GITCRAWL_MAX_HYDRATE` | 200 | 100000 |
-| Enrichment checks | `GITCRAWL_MAX_ENRICH` | 100 | 100000 |
-| Request deadline (s) | `GITCRAWL_REQUEST_DEADLINE_SECONDS` | 3600 | 86400 |
-| GraphQL batching | `GITCRAWL_GRAPHQL_BATCH` | on | on |
-| Batch size | `GITCRAWL_GRAPHQL_BATCH_SIZE` | 29 | 29 |
-| Adaptive pacing | `GITCRAWL_ADAPTIVE` | off | off |
-| Concurrency | `GITCRAWL_MAX_CONCURRENT` | 10 | 32 |
-| Discovery workers | `GITCRAWL_DISCOVERY_CONCURRENCY` | 32 | 32 |
+| Run shards | `GITCORPUS_MAX_SHARDS` | 10 | 1000 |
+| Candidates | `GITCORPUS_MAX_CANDIDATES` | 500 | 100000 |
+| Hydrations | `GITCORPUS_MAX_HYDRATE` | 200 | 100000 |
+| Enrichment checks | `GITCORPUS_MAX_ENRICH` | 100 | 100000 |
+| Request deadline (s) | `GITCORPUS_REQUEST_DEADLINE_SECONDS` | 3600 | 86400 |
+| GraphQL batching | `GITCORPUS_GRAPHQL_BATCH` | on | on |
+| Batch size | `GITCORPUS_GRAPHQL_BATCH_SIZE` | 29 | 29 |
+| Adaptive pacing | `GITCORPUS_ADAPTIVE` | off | off |
+| Concurrency | `GITCORPUS_MAX_CONCURRENT` | 10 | 32 |
+| Discovery workers | `GITCORPUS_DISCOVERY_CONCURRENCY` | 32 | 32 |
 
 These are the values the **Set to corpus-build limits** button applies; the ranges shown on the page are safety limits, and the preset sits well inside them. The derivation (and the multi-token scale-up) lives in `design/run-limits.md`.
 
-- `GITCRAWL_GRAPHQL_BATCH_SIZE` env overrides are clamped to 1..50 at settings load (a value above the API cap clamps to 50 instead of failing every run); the default stays 29 (the largest batch that still costs one GraphQL point).
-- `GITCRAWL_MAX_CONCURRENT` is the limiter's cap **and** the hydration driver: each new run snapshots `min(limiter_max_concurrent, 32)` as the GraphQL batch concurrency. The corpus preset is 32, raised from the profiled 10 (which ran ~2,800 repos/min live against ~300–400 sequential); the per-run point cost is unchanged, so watch for secondary-limit 403s — the classifier backoff already handles them. The 32-worker ceiling stays static; the adaptive toggle below makes the submission window dynamic inside it.
-- `GITCRAWL_DISCOVERY_CONCURRENCY` is the discovery pool size: each run plans shards with batched GraphQL count probes, then fetches pages with one GraphQL search connection per worker. Default and corpus value 32 — the measured operating point (`design/corpus-building-efficient-engineering.md` §9.4).
-- **Adaptive pacing** is the normal switch for the three-loop adaptive controller, a checkbox on the `/settings` page (System → Limits → Request pacing), default **off**; the corpus preset also sets it off. When a run starts with it on, the AIMD window starts at 20 (bounds 8-48), the batch guard starts at the configured batch size capped at 29 (bounds 10-29), the quota pacer paces to `(remaining - 400) / seconds-to-reset` with a burst of 4, and any 403/429/502/504/rate-limit signal pauses the pool. It emits `field_stats.graphql.hydration.adaptive` and `.deferred`. `GITCRAWL_ADAPTIVE=1` still force-enables it as an ops override (and pins the checkbox read-only, like the other env-pinned fields); the default stays off per the 2026-10-09 soak evidence (`docs/findings/2026-10-09-adaptive-soak.md`).
+- `GITCORPUS_GRAPHQL_BATCH_SIZE` env overrides are clamped to 1..50 at settings load (a value above the API cap clamps to 50 instead of failing every run); the default stays 29 (the largest batch that still costs one GraphQL point).
+- `GITCORPUS_MAX_CONCURRENT` is the limiter's cap **and** the hydration driver: each new run snapshots `min(limiter_max_concurrent, 32)` as the GraphQL batch concurrency. The corpus preset is 32, raised from the profiled 10 (which ran ~2,800 repos/min live against ~300–400 sequential); the per-run point cost is unchanged, so watch for secondary-limit 403s — the classifier backoff already handles them. The 32-worker ceiling stays static; the adaptive toggle below makes the submission window dynamic inside it.
+- `GITCORPUS_DISCOVERY_CONCURRENCY` is the discovery pool size: each run plans shards with batched GraphQL count probes, then fetches pages with one GraphQL search connection per worker. Default and corpus value 32 — the measured operating point (`design/corpus-building-efficient-engineering.md` §9.4).
+- **Adaptive pacing** is the normal switch for the three-loop adaptive controller, a checkbox on the `/settings` page (System → Limits → Request pacing), default **off**; the corpus preset also sets it off. When a run starts with it on, the AIMD window starts at 20 (bounds 8-48), the batch guard starts at the configured batch size capped at 29 (bounds 10-29), the quota pacer paces to `(remaining - 400) / seconds-to-reset` with a burst of 4, and any 403/429/502/504/rate-limit signal pauses the pool. It emits `field_stats.graphql.hydration.adaptive` and `.deferred`. `GITCORPUS_ADAPTIVE=1` still force-enables it as an ops override (and pins the checkbox read-only, like the other env-pinned fields); the default stays off per the 2026-10-09 soak evidence (`docs/findings/2026-10-09-adaptive-soak.md`).
 
 **Secondary limits (2026-10-11).** When GitHub answers with a secondary-rate-limit 403/429 (`retry-after: 60`, no rate-limit headers — the scraping-flavored flag), the client now pauses the whole token bucket for the wait instead of just the one worker, and repeats escalate the pool pause: 60 → 120 → 240 → 480 seconds (capped, +0–30 s jitter) so workers wake desynchronized rather than in a synchronized re-knock wave. A batch pass (hydration or enrichment; discovery hits do not count) stops dispatching after 15 secondary hits: remaining queued repos are deferred, and the pass ends **partial and resumable** instead of accumulating more hits. If you see the scraping-flavored message, rest that token for **24 hours or more** — GitHub's secondary sensitivity escalates with repeated triggers and decays slowly.
 
@@ -300,8 +300,8 @@ During provisioning, a combined setup command was killed by the tool's pipe hand
 ## Troubleshooting
 
 - **`fe_sendauth: no password supplied`** → use the DSN extraction snippet above, or `-w` will fail fast instead of prompting.
-- **`connection refused` on 5433** → cluster down: run the start command or `Start-ScheduledTask -TaskName gitcrawl-postgres`; check `%LOCALAPPDATA%\gitcrawl\pg.log`.
-- **`./start` times out waiting for PostgreSQL/Redis** → check the task state (`Get-ScheduledTask -TaskName gitcrawl-postgres`); `Queued` means it never ran — on battery that is the power-condition setting (see Auto-start at logon above). A machine reboot can also kill the cluster uncleanly; the next start does automatic recovery (`pg.log` shows "automatic recovery in progress"), which may take longer than the 30 s poll.
+- **`connection refused` on 5433** → cluster down: run the start command or `Start-ScheduledTask -TaskName gitcorpus-postgres`; check `%LOCALAPPDATA%\gitcorpus\pg.log`.
+- **`./start` times out waiting for PostgreSQL/Redis** → check the task state (`Get-ScheduledTask -TaskName gitcorpus-postgres`); `Queued` means it never ran — on battery that is the power-condition setting (see Auto-start at logon above). A machine reboot can also kill the cluster uncleanly; the next start does automatic recovery (`pg.log` shows "automatic recovery in progress"), which may take longer than the 30 s poll.
 - **Windows can't reach Redis** → `wsl -u root -- redis-cli ping` first (distro may be stopped); then the Python check. If localhost forwarding ever fails, use the WSL IP (`wsl hostname -I`) in `REDIS_URL` as a temporary fallback.
 - **Env vars "missing" in a shell** → that shell predates the change; restart opencode or read them from the registry as shown above.
 

@@ -1,4 +1,4 @@
-# gitcrawl Quality Hardening — Design Specification
+# gitcorpus Quality Hardening — Design Specification
 
 **Date:** 2026-10-01
 **Status:** Proposed (awaiting sign-off; plans written alongside)
@@ -96,7 +96,7 @@ coverage measurement, and ~53% of the suite silently skips without `TEST_DATABAS
 Design:
 
 1. **CI.** GitHub Actions workflow on `ubuntu-latest` and `windows-latest` with
-   `postgres:17` and `redis:7` services. Create database `gitcrawl_test`, set
+   `postgres:17` and `redis:7` services. Create database `gitcorpus_test`, set
    `TEST_DATABASE_URL`; run `pytest -q`, `ruff check`, `black --check`. A missing
    `TEST_DATABASE_URL` in CI must fail, not skip.
 2. **Endpoint golden harness.** A session-scoped fixture seeds a fixed corpus into a real
@@ -176,11 +176,11 @@ harness.
    This closes the JSON/clone endpoints without changing the browser UI (same-origin forms
    and htmx already send a matching Origin) or scripted clients.
 2. **Host allowlist.** `TrustedHostMiddleware` with `localhost`, `127.0.0.1`, `[::1]`,
-   extendable via `GITCRAWL_ALLOWED_HOSTS`. Default bind remains `127.0.0.1`
+   extendable via `GITCORPUS_ALLOWED_HOSTS`. Default bind remains `127.0.0.1`
    (`src/serve/__main__.py:9`). Only non-local `Host` headers are rejected.
 3. **Deadlines.** A single configurable deadline policy:
    - clone subprocess timeout (default generous, e.g. 1800 s per repo via
-     `GITCRAWL_CLONE_TIMEOUT_SECONDS`), plus `GIT_TERMINAL_PROMPT=0`, stdin closed, and no
+     `GITCORPUS_CLONE_TIMEOUT_SECONDS`), plus `GIT_TERMINAL_PROMPT=0`, stdin closed, and no
      credential helper — prevents interactive hangs;
    - bounded waits for `RunExecutor` results (`app.py:377-380,452`), payload-cache waiters
      (`payload_cache.py:66`), and the discovery limiter sleep (`gh_client.py:133-138`) —
@@ -193,7 +193,7 @@ harness.
    below; oversized requests get 413 (today they buffer unboundedly).
 5. **Redis fail-loud.** Log a warning with the failure reason and surface a degraded
    indicator on `/health` when the real Redis URL is unreachable. Default behavior keeps
-   the fake fallback (INV-3 only makes the outage visible); `GITCRAWL_REDIS_STRICT=1`
+   the fake fallback (INV-3 only makes the outage visible); `GITCORPUS_REDIS_STRICT=1`
    refuses fallback for deployments.
 6. **Clone lifecycle (backend).** Add `DELETE /runs/{id}/clone` cancellation backed by a
    cancel event the git runner honours. New capability, no existing flow altered; UI in

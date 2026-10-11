@@ -6,7 +6,7 @@ SDD implementation of branch `graphql-discovery`** at commit `ce2e38c` (lean pag
 malformed-response resume), on top of `52b6380` (adaptive page halving).
 
 - Filter (run #9): `created:>=2025-02-24 language:rust`, `page {per_page: 20, max_pages: 3}`,
-  `virtual {min_stars: 4, min_commits: 50, min_language_bytes: 175000}`, `gitcrawl_filter: 1`.
+  `virtual {min_stars: 4, min_commits: 50, min_language_bytes: 175000}`, `gitcorpus_filter: 1`.
 - Environment: one personal token (`GITHUB_TOKEN`, fingerprint `324662332ca6`), local dev
   Postgres (`localhost:5433`), local Redis (`localhost:6379`). Writes are local DB rows.
 - Prior reference: the 2026-10-08 spike (`design/corpus-building-efficient-engineering.md` §9.4)

@@ -1,4 +1,4 @@
-# gitcrawl Development Log
+# gitcorpus Development Log
 
 > **Frozen 2026-10-11.** This log is the durable record of provisioning (2026-10-01) through the quota/limiter session (2026-10-09), kept exactly as written at the time. Its successor is the living, consolidated history — run register, hypothesis and failure ledgers, operating-point trail, and errata against primary data — in [`../design/methodology.md`](../design/methodology.md). New session records go there; this file stays as the reference for rulings R1–R58 and per-task commits.
 
@@ -8,14 +8,14 @@
 
 ## Objective (frozen 2026-09-30)
 
-gitcrawl is a **live-only** GitHub repository discovery tool: one operator-triggered run validates a filter, searches GitHub live, hydrates matches, applies virtual filters, enriches survivors, resolves owner countries, serves/export a run bundle (JSON + CSV). No background crawl, no watermarks/tiers, no GH Archive tail; lifecycle (301 renames, 404 tombstones) resolves **within the run**. Thesis tracks are parked. Full authority: `design/spec.md` (Frozen v2) + `design/plan.md` + `design/tasks.md`.
+gitcorpus is a **live-only** GitHub repository discovery tool: one operator-triggered run validates a filter, searches GitHub live, hydrates matches, applies virtual filters, enriches survivors, resolves owner countries, serves/export a run bundle (JSON + CSV). No background crawl, no watermarks/tiers, no GH Archive tail; lifecycle (301 renames, 404 tombstones) resolves **within the run**. Thesis tracks are parked. Full authority: `design/spec.md` (Frozen v2) + `design/plan.md` + `design/tasks.md`.
 
 ## Environment provisioning (2026-10-01)
 
 | What | Result | Details |
 |---|---|---|
-| Project-local PostgreSQL 18.1 cluster | ✅ running | `localhost:5433`, DBs `gitcrawl` + `gitcrawl_test`, logon task `gitcrawl-postgres` |
-| WSL2 Redis 7 service | ✅ running | `redis://localhost:6379/0`, verified from Windows, logon task `gitcrawl-redis` |
+| Project-local PostgreSQL 18.1 cluster | ✅ running | `localhost:5433`, DBs `gitcorpus` + `gitcorpus_test`, logon task `gitcorpus-postgres` |
+| WSL2 Redis 7 service | ✅ running | `redis://localhost:6379/0`, verified from Windows, logon task `gitcorpus-redis` |
 | User env vars | ✅ set | `DATABASE_URL`, `TEST_DATABASE_URL`, `REDIS_URL`, `GITHUB_TOKEN` (from `gh` keyring; value never printed) |
 | Docker Desktop | ⛔ skipped | WSL + local cluster chosen instead; `docker-compose.yml` kept for other hosts |
 
@@ -29,7 +29,7 @@ While preparing the opencode restart, a `.kilo/` directory was found in the repo
 - Content was **identical to our commit at the blob level** (sampled sha1s match; working-tree hash differences were CRLF-only reproductions of the same blobs). Working tree clean, no commits, no extra branches, no running process.
 - Kilo Code had written 28 ignore lines into `.git/info/exclude` (`.kilo/worktrees/`, `.kilo/agent-manager.json`, `.kilo/setup-script*`, `.kilocode/*`), which is why `git status` never showed it.
 
-Owner states Kilo Code was never used. **Removed**: `git worktree remove .kilo/worktrees/spiky-door --force`, `git worktree prune`, deleted `.kilo/`, restored `.git/info/exclude` to its default comments. Verified after: single worktree, branches only `main` + `001-gitcrawl`, `git status` clean, zero "kilo" mentions in git metadata.
+Owner states Kilo Code was never used. **Removed**: `git worktree remove .kilo/worktrees/spiky-door --force`, `git worktree prune`, deleted `.kilo/`, restored `.git/info/exclude` to its default comments. Verified after: single worktree, branches only `main` + `001-gitcorpus`, `git status` clean, zero "kilo" mentions in git metadata.
 
 Source note: VS Code extension `kilocode.kilo-code-7.8.1-win32-x64` is installed in `~/.vscode/extensions` (installed 2026-09-26 15:49); no Kilo task state (`globalStorage`/`workspaceStorage`) or logs retained. Uninstall offered to the owner. Separately, the design-doc v2 edits observed at 2026-09-30 22:45–22:50 predate this worktree and were not made by this session; they remain unexplained.
 
@@ -63,13 +63,13 @@ Source note: VS Code extension `kilocode.kilo-code-7.8.1-win32-x64` is installed
 | R24 | multi-worker machinery built but unwired (documented) | hidden dead code until wired |
 | R25 | live delta probe test added | two extra API calls |
 | R26 | Console docs live in `design/console-spec.md` + `console-plan.md`; plan format compressed to interface-level (writing-plans adapted for scope) | implementer gaps caught at review |
-| R27 | Overnight work continues on `001-gitcrawl` (no new branch); integration decision stays pending | branch semantics |
+| R27 | Overnight work continues on `001-gitcorpus` (no new branch); integration decision stays pending | branch semantics |
 | R28 | AC standby/hibernate disabled for the overnight run (`powercfg`) | machine sleeps mid-run |
 | R29 | Spec review deferred to morning per operator's continuous-run instruction | unreviewed spec assumptions |
 | R30 | Single-worker in-process run executor (no Redis queue for runs) | run concurrency limited |
 | R31 | Front-end assets vendored committed (Tailwind standalone output preferred, hand-rolled CSS fallback) | design quality varies by path |
 
-## Task progress (commits on `001-gitcrawl`)
+## Task progress (commits on `001-gitcorpus`)
 
 | Task | Scope | Commit(s) | Review |
 |---|---|---|---|
@@ -109,7 +109,7 @@ The final whole-branch review triaged every prior deferred minor as **"Can ship"
 ## Current status & how to resume
 
 - **Done**: T000; Phase 1 (T001–T004); Phase 2 (T005–T009); **US1 complete** (T010–T018 + T011 live parity); **final whole-branch review clean after one fix wave** (`f64bd69`). 350 tests green incl. live parity (A=566/B=566) and live delta probe (34,207,993 → 11,756).
-- **Overnight run (2026-10-01 → 02)**: operator approved completing **US2 + US3 + US4 console in one continuous run** (backend first, then UI), no check-ins, spec review deferred to morning, continuing on `001-gitcrawl`; machine kept awake (R28). Plan of record: `design/console-spec.md` + `design/console-plan.md` (batches B1–B10) executing outstanding tasks T019–T037/T051 plus new console tasks T052–T059.
+- **Overnight run (2026-10-01 → 02)**: operator approved completing **US2 + US3 + US4 console in one continuous run** (backend first, then UI), no check-ins, spec review deferred to morning, continuing on `001-gitcorpus`; machine kept awake (R28). Plan of record: `design/console-spec.md` + `design/console-plan.md` (batches B1–B10) executing outstanding tasks T019–T037/T051 plus new console tasks T052–T059.
 - **Live progress ledger**: `.superpowers/sdd/tasks/progress.md` (recreated for part 2; scratch, points at this log). Completed batches and rulings R18–R31 accumulate there and in the tables above.
 - **Known gap — built-but-unwired (ruling R24)**: `limiter/retry.py::RetryQueue`, `scheduler/state_machine.py::retry_or_dlq`/`reclaim_stale`/`pel_size`, `scheduler/tiering.py::order_shards`, `discover/since_scan.py::plan_id_ranges` remain deliberately unwired for the single-consumer path.
 - **Morning leftovers**: branch integration decision (merge/PR/keep), the residual minors ledger, and any parked findings surfaced by the final console review.
@@ -118,7 +118,7 @@ The final whole-branch review triaged every prior deferred minor as **"Can ship"
 
 ## Console build run — completion record (2026-10-01 overnight)
 
-**Scope executed:** US2 within-run lifecycle (T019–T023), US3 enrichment + serve (T028–T037, T051), and US4 operator console (T052–T059: persistence, executor, library, diff, UI shell/detail/history/library, keyboard/dark, polish). Batches B1–B9 + final review + one fix wave, all on `001-gitcrawl`.
+**Scope executed:** US2 within-run lifecycle (T019–T023), US3 enrichment + serve (T028–T037, T051), and US4 operator console (T052–T059: persistence, executor, library, diff, UI shell/detail/history/library, keyboard/dark, polish). Batches B1–B9 + final review + one fix wave, all on `001-gitcorpus`.
 
 **Result:** **1020 tests passing first-hand (live golden-org + delta included)**, ruff/black clean, working tree clean. Final layered whole-branch review (3 reviewers: US2+enrichment / backend serve / clone+UI) → one fix wave (`918339e`) → scoped re-review: all items addressed; one latent residual parked (below). Head: `918339e`.
 
@@ -192,7 +192,7 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 
 ## Repo/git facts
 
-- `main` holds the frozen baseline (`717c9b3`); all work happens on `001-gitcrawl`.
+- `main` holds the frozen baseline (`717c9b3`); all work happens on `001-gitcorpus`.
 - `.gitignore` excludes `.venv`, `runs/`, `clones/`, `.superpowers/`, `.env*`.
 - `docs/legal-gates.md` (compliance checklist) and `docs/environment.md` (this setup) are tracked; **no secrets are tracked anywhere**.
 
@@ -205,15 +205,15 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 | Ratchet policy | Raise `fail_under` by 1 whenever a phase's measured total exceeds the floor by at least 2 points; never lower it; record each change here |
 | Lowest modules (measured) | `src/skeleton.py` 0% (135 statements, missing lines 1-189); `src/serve/runner.py` 89% (39 missed); `src/serve/__main__.py` 89% (1 missed, line 15); `src/serve/app.py` 92% (27 missed); `src/discover/org_enum.py` 92% (3 missed, lines 53-56); `src/serve/pages.py` 93% (36 missed); everything else 93-100% |
 | Untested at baseline | `src/skeleton.py` 0% (excluded from black/ruff; quarantined in Phase 1b); `static/app.js` has no pytest coverage (`tests/js/rownav.test.mjs` covers one helper via Node); real-Redis client paths run against `fakeredis` only. Spec §4.4's `cloner.free_disk_mb`/`cloner._default_git_runner` entry is stale: measured `src/enrich/cloner.py` is 99% with exactly 1 missed statement — line 231, the `clone_timeout`-specified `_default_git_runner` call |
-| CI | `.github/workflows/ci.yml`: ubuntu-latest `postgres:17` + `redis:7` services; windows-latest native PostgreSQL 17 + Memurai 4.1.8; `GITCRAWL_REQUIRE_TEST_DB=1`; both `Tests` steps now run `pytest -q -rs --cov=src --cov-report=term-missing` |
+| CI | `.github/workflows/ci.yml`: ubuntu-latest `postgres:17` + `redis:7` services; windows-latest native PostgreSQL 17 + Memurai 4.1.8; `GITCORPUS_REQUIRE_TEST_DB=1`; both `Tests` steps now run `pytest -q -rs --cov=src --cov-report=term-missing` |
 | Golden harness | `tests/golden/` snapshots 23 GET-route cases; JSON byte-exact, HTML normalized (CSRF, relative time, disk warning); regenerate with `UPDATE_GOLDEN=1 pytest tests/golden -q` |
 | OpenAPI pin | `tests/golden/snapshots/openapi.sha256` pins canonical `app.openapi()`; a schema change fails CI |
 
 ## Quality hardening operations (2026-10-02)
 
-- **Host allowlist** (`src/serve/app.py::_allowed_hosts`): loopback defaults `localhost`, `127.0.0.1`, `[::1]`; `GITCRAWL_ALLOWED_HOSTS` adds comma-separated extras. Behind a TLS-terminating proxy set it to the public hostname and run uvicorn with `--proxy-headers`/`--forwarded-allow-ips` so Origin/scheme checks see the effective base URL.
-- **Deadlines** (`src/lib/deadlines.py`): `GITCRAWL_REQUEST_DEADLINE_SECONDS` (default 3600) bounds API requests; `GITCRAWL_CLONE_TIMEOUT_SECONDS` (default 1800) bounds each clone. A hung request fails with 503 `{"error":"timeout",...}`; a clone that exceeds its timeout is killed and recorded as failed instead of hanging forever. Missing, non-numeric, or non-positive values fall back to the defaults.
-- **Redis strictness** (`src/serve/runner.py::_redis_or_fake`): with `GITCRAWL_REDIS_STRICT=1`, an unreachable `REDIS_URL` refuses the fakeredis fallback; otherwise the outage is logged and `/health` reports `redis_degraded`.
+- **Host allowlist** (`src/serve/app.py::_allowed_hosts`): loopback defaults `localhost`, `127.0.0.1`, `[::1]`; `GITCORPUS_ALLOWED_HOSTS` adds comma-separated extras. Behind a TLS-terminating proxy set it to the public hostname and run uvicorn with `--proxy-headers`/`--forwarded-allow-ips` so Origin/scheme checks see the effective base URL.
+- **Deadlines** (`src/lib/deadlines.py`): `GITCORPUS_REQUEST_DEADLINE_SECONDS` (default 3600) bounds API requests; `GITCORPUS_CLONE_TIMEOUT_SECONDS` (default 1800) bounds each clone. A hung request fails with 503 `{"error":"timeout",...}`; a clone that exceeds its timeout is killed and recorded as failed instead of hanging forever. Missing, non-numeric, or non-positive values fall back to the defaults.
+- **Redis strictness** (`src/serve/runner.py::_redis_or_fake`): with `GITCORPUS_REDIS_STRICT=1`, an unreachable `REDIS_URL` refuses the fakeredis fallback; otherwise the outage is logged and `/health` reports `redis_degraded`.
 - **Body caps** (`src/serve/middleware.py`): state-changing request bodies default to 1 MiB; `/find` uploads allow 10 MiB. Oversized requests get 413 `{"error":"payload_too_large",...}`.
 - **Clone git environment** (`src/enrich/cloner.py::_git_env`): clones run with `GIT_TERMINAL_PROMPT=0`, stdin closed, and global/system git config disabled (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` pointed at the null device). A machine that relies on global `http.proxy`/custom CA/`url.*.insteadOf` config must set it per-repo or via environment instead.
 - **Run counters (E1)**: run pages now show real `updated`/`unchanged`/`skipped` counters (`src/serve/templates/partials/status.html`).
@@ -268,7 +268,7 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 ## Console settings Phase 2 (2026-10-03)
 
 - Page: **System → Limits (the `/settings` page)** edits the run limits for new runs only, persisted in the single-row `app_settings` table (migration `0008`, seeded with the previous hard-coded values so behavior is unchanged until edited). Migration numbering: settings claim `0008`; UX corpora take `0009` and agent detection renumbers to `0010` (R11).
-- Resolution precedence: `GITCRAWL_*` environment variable → persisted row → `RunSettings` default; env-pinned fields render read-only with a "set by environment" badge. Validation bounds plus `max_hydrate ≤ max_candidates`, CSRF enforced, every save writes an `audit_log` row with before/after, and the GitHub token is never stored or rendered.
+- Resolution precedence: `GITCORPUS_*` environment variable → persisted row → `RunSettings` default; env-pinned fields render read-only with a "set by environment" badge. Validation bounds plus `max_hydrate ≤ max_candidates`, CSRF enforced, every save writes an `audit_log` row with before/after, and the GitHub token is never stored or rendered.
 - New runs snapshot the settings at submit: `runner_config_from` maps `RunSettings` → `RunnerConfig`; the batching toggle is honored via `fetch_batch(allow_requests=False)`, a fallback-only mode that routes every key through the REST fallback instead of deleting the batching engine; concurrency is passed to `build_deps(max_concurrent=...)`; the request deadline binds from the persisted value.
 - Verification: full suite 1268 tests collected/passed, coverage 95.40% (floor 93); ruff + black clean.
 
@@ -361,7 +361,7 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 - Discovery is two-phase and rides the GraphQL points meter: a batched planner probes `repositoryCount` for up to 20 date windows per query (1 point per query) and bisects until every shard is fetchable; the executor fetches shards with one search connection per page from a `ThreadPoolExecutor(discovery_concurrency)` pool (default 32). The 1,000-result cap and `max_pages` semantics are unchanged; `since` scan and org/user enumeration stay on the core REST meter.
 - New `src/discover/graphql_search.py`; `plan_shards` replaces the `ShardPlanner` class; `discover/search_shards.py` is deleted; `RequestFailed`/`short_message`/`next_link` moved to `lib/gh_client.py`.
 - Redis Streams shard queue, `ShardQueue`/`RetryOutcome`/`reclaim_stale`/`retry_or_dlq`/PEL metrics deleted (R58); retry/backoff is inline per page; Stop/deadline leave in-flight shards PENDING.
-- Setting `discovery_concurrency` (default 32, bounds 1–64, env `GITCRAWL_DISCOVERY_CONCURRENCY`) + migration `0012`; corpus preset 32.
+- Setting `discovery_concurrency` (default 32, bounds 1–64, env `GITCORPUS_DISCOVERY_CONCURRENCY`) + migration `0012`; corpus preset 32.
 - Audit records `repositoryCount` as `total_count` for GraphQL search rows; the SLO is renamed `search_remaining` → `graphql_remaining` (latest `rl_resource='graphql'` audit row), and the queue card is removed.
 
 **Measured ledger (the 2026-10-08 spike the engine was built from; one personal token)** — run-#9 filter (`language:rust stars:>=4 created:>=2025-02-24`): plan 111 probes in 9 batched queries → 56 shards in **8.9 s**; fetch 418 pages (32 in flight) → **38,969 unique ids in 59.0 s**; **67.9 s total, 0 retries/failures, ~430–500 GraphQL points (~10% of the hourly budget)**; 99.93% overlap (17,782/17,795) with the prior REST run's exported survivors. Full ledger: `design/corpus-building-efficient-engineering.md` §9.4. The engine's own live end-to-end validation (plan Task 9) landed the same day on the wired default build path (`build_deps` at 10 slots with the discovery phase bound to 32): the run-#9 filter planned 192 shards and fetched 39,007 ids in **109.3 s** with 0/192 incomplete — see `docs/findings/2026-10-08-hydration-profile.md` (addendum).

@@ -262,7 +262,7 @@ def is_search_request(request: httpx.Request) -> bool:
 
 
 def spec_for(**overrides):
-    document = {"gitcrawl_filter": 1}
+    document = {"gitcorpus_filter": 1}
     document.update(overrides)
     return parse_filter_spec(document)
 
@@ -1181,7 +1181,7 @@ def test_make_runner_parses_filter_spec_dicts(clean: Engine):
 
     client, requests = scripted(handler)
     runner = make_runner(make_deps(clean, client), config=RunnerConfig(max_shards=1))
-    payload = runner(7, {"gitcrawl_filter": 1, "q": "language:rust"})
+    payload = runner(7, {"gitcorpus_filter": 1, "q": "language:rust"})
 
     assert payload.total_count == 0
     assert payload.items == []
@@ -1289,7 +1289,7 @@ def test_run_filter_field_stats_flow_into_the_bundle(clean: Engine, tmp_path):
     }
     assert "graphql" in payload.field_stats
 
-    run_id = create_run(clean, {"gitcrawl_filter": 1, "q": "language:python"}, api_version="v1")
+    run_id = create_run(clean, {"gitcorpus_filter": 1, "q": "language:python"}, api_version="v1")
     execute_run(clean, run_id, runner=lambda rid, spec: payload, runs_root=str(tmp_path))
     status = run_status(clean, run_id)
     bundle = json.loads((Path(status["bundle_dir"]) / "bundle.json").read_text(encoding="utf-8"))
@@ -1625,7 +1625,7 @@ def test_load_owners_chunks_large_id_lists(clean_db, monkeypatch):
 
 
 def test_run_filter_adaptive_is_off_by_default(clean: Engine, monkeypatch):
-    monkeypatch.delenv("GITCRAWL_ADAPTIVE", raising=False)
+    monkeypatch.delenv("GITCORPUS_ADAPTIVE", raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = path_of(request)
@@ -1646,7 +1646,7 @@ def test_run_filter_adaptive_is_off_by_default(clean: Engine, monkeypatch):
 
 
 def test_run_filter_adaptive_flag_reports_controller_state(clean: Engine, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ADAPTIVE", "1")
+    monkeypatch.setenv("GITCORPUS_ADAPTIVE", "1")
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = path_of(request)
@@ -1680,7 +1680,7 @@ def test_run_filter_adaptive_flag_reports_controller_state(clean: Engine, monkey
 
 
 def test_run_filter_settings_adaptive_reports_controller_state(clean: Engine, monkeypatch):
-    monkeypatch.delenv("GITCRAWL_ADAPTIVE", raising=False)
+    monkeypatch.delenv("GITCORPUS_ADAPTIVE", raising=False)
     from serve.runner import runner_config_from
     from store.settings import load_run_settings, update_run_settings
 
@@ -1716,7 +1716,7 @@ def test_run_filter_settings_adaptive_reports_controller_state(clean: Engine, mo
 
 
 def test_run_filter_warns_when_the_reserve_defers_hydration(clean: Engine, monkeypatch):
-    monkeypatch.setenv("GITCRAWL_ADAPTIVE", "1")
+    monkeypatch.setenv("GITCORPUS_ADAPTIVE", "1")
     barrier = threading.Barrier(20, timeout=10)
 
     def handler(request: httpx.Request) -> httpx.Response:

@@ -97,7 +97,7 @@ def test_severity_thresholds():
 def test_metrics_payload_reads_paused_buckets(clean_db, monkeypatch):
     engine = clean_db()
     redis = fakeredis.FakeRedis()
-    redis.hset("gitcrawl:rl:search:abcdef123456", mapping={"paused_until": 10_000})
+    redis.hset("gitcorpus:rl:search:abcdef123456", mapping={"paused_until": 10_000})
     monkeypatch.setattr("serve.metrics.time", lambda: 9_000.0)
     payload = metrics_payload(engine, redis_client=redis)
     paused = payload["limiter"]["paused"]
@@ -107,9 +107,9 @@ def test_metrics_payload_reads_paused_buckets(clean_db, monkeypatch):
 def test_metrics_payload_tolerates_malformed_rl_keys(clean_db, monkeypatch):
     engine = clean_db()
     redis = fakeredis.FakeRedis()
-    redis.hset("gitcrawl:rl:search:abcdef123456", mapping={"paused_until": 10_000})
-    redis.hset("gitcrawl:rl:oops", mapping={"paused_until": 10_000})
-    redis.hset("gitcrawl:rl:core:badvalue", mapping={"paused_until": "not-a-number"})
+    redis.hset("gitcorpus:rl:search:abcdef123456", mapping={"paused_until": 10_000})
+    redis.hset("gitcorpus:rl:oops", mapping={"paused_until": 10_000})
+    redis.hset("gitcorpus:rl:core:badvalue", mapping={"paused_until": "not-a-number"})
     monkeypatch.setattr("serve.metrics.time", lambda: 9_000.0)
     payload = metrics_payload(engine, redis_client=redis)
     assert payload["limiter"]["paused"] == [

@@ -635,7 +635,7 @@ def test_diff_handles_null_repo_ids(clean: Engine):
     }
 ```
 
-For export, keep existing tests but change assertions to consume the stream: `content = b"".join(export_bundle(...)[0])` then `json.loads(content)` and compare parsed structure plus `X-Gitcrawl-Regenerated`.
+For export, keep existing tests but change assertions to consume the stream: `content = b"".join(export_bundle(...)[0])` then `json.loads(content)` and compare parsed structure plus `X-Gitcorpus-Regenerated`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -705,7 +705,7 @@ def export_bundle(engine, run_id, *, format, runs_root="runs") -> tuple[Iterator
     return _csv_chunks(engine, run_id), _MEDIA_TYPES[format]
 ```
 
-`app.py` export route: set `X-Gitcrawl-Regenerated` from `bundle_file(...).is_file()` before building the response, then `return StreamingResponse(chunks, media_type=media_type, headers=headers)`.
+`app.py` export route: set `X-Gitcorpus-Regenerated` from `bundle_file(...).is_file()` before building the response, then `return StreamingResponse(chunks, media_type=media_type, headers=headers)`.
 
 `diff.py`:
 
@@ -741,7 +741,7 @@ git commit -m "perf: stream exports in constant memory and make diff NULL-safe"
 - Test: `tests/unit/test_audit.py`, `tests/integration/test_audit_db.py`, `tests/integration/test_pipeline.py`, contract suites
 
 **Interfaces:**
-- `record_from_response(..., body: object | None = None)`; parsed body stored on `response.extensions["gitcrawl.json"]`.
+- `record_from_response(..., body: object | None = None)`; parsed body stored on `response.extensions["gitcorpus.json"]`.
 - `cached_json(response) -> object | None`.
 - `AuditBuffer(engine, *, batch_size=100)` with `add(record)` and `flush()`.
 - `Deps.audit_buffer: AuditBuffer | None = None` (default preserves per-record `record_audit` calls).
@@ -756,7 +756,7 @@ def test_record_from_response_caches_parsed_body():
     response = _response(200, json={"total_count": 7, "incomplete_results": False})
     body = response.json()
     # emulate the hook having cached it
-    response.extensions["gitcrawl.json"] = body
+    response.extensions["gitcorpus.json"] = body
     assert cached_json(response) is body
 
 
@@ -803,7 +803,7 @@ Expected: FAIL — missing `cached_json`, `body` param, `AuditBuffer`.
 `audit.py`:
 
 ```python
-_PARSED_BODY_KEY = "gitcrawl.json"
+_PARSED_BODY_KEY = "gitcorpus.json"
 
 
 def cached_json(response: httpx.Response) -> object | None:

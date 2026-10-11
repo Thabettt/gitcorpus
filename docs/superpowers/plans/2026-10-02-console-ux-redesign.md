@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python `>=3.12`; line length 100; ruff (`E,F,I,UP,B`) + black clean; coverage floor `fail_under = 93`.
-- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCRAWL_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures.
+- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCORPUS_REQUIRE_TEST_DB=1`); use `tests/conftest.py` fixtures.
 - Run tests with: `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m pytest <path> -q` (Windows PowerShell).
 - Migration `0009` (down_revision `0008`) is the corpora table; agent detection renumbers to `0010` (record in the dev log).
 - Copy is part of the contract: the exact strings in `design/console-ux-redesign.md` §6 (Copy deck) and §3.1 (Term map) are asserted by tests where listed. Never ship a raw internal name (`partial`, `shards`, `count_parity`, `PEL`, `p95`, `filter hash`) as a visible label.
@@ -629,7 +629,7 @@ def test_freeze_creates_corpus_and_redirects(clean, tmp_path, monkeypatch):
 
 
 def test_freeze_requires_a_finished_search(clean, tmp_path, monkeypatch):
-    run_id = create_run(clean, {"gitcrawl_filter": 1, "q": "language:rust"}, api_version=API_VERSION)
+    run_id = create_run(clean, {"gitcorpus_filter": 1, "q": "language:rust"}, api_version=API_VERSION)
     client = healthy_client(clean, tmp_path, monkeypatch)
     response = client.post(
         f"/runs/{run_id}/corpus",
@@ -678,7 +678,7 @@ def test_library_run_now_creates_a_run_and_redirects(clean, tmp_path, monkeypatc
     token = csrf_token(client)
     client.post(
         "/filters",
-        data={"name": "rust picks", "gitcrawl_filter": "1", "q": "language:rust"},
+        data={"name": "rust picks", "gitcorpus_filter": "1", "q": "language:rust"},
         headers={"x-csrf-token": token},
     )
     filter_id = ...  # query saved_filters
@@ -736,7 +736,7 @@ Give each list an explanatory empty state with a next action: Searches (“No se
 
 - [ ] **Step 4: Full verification**
 
-Run: `$env:PYTHONPATH='src'; $env:GITCRAWL_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
+Run: `$env:PYTHONPATH='src'; $env:GITCORPUS_REQUIRE_TEST_DB='1'; .\.venv\Scripts\python.exe -m pytest --cov=src --cov-report=term-missing -q`
 Expected: all pass; coverage `>= 93%`.
 
 Run: `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m ruff check src tests; .\.venv\Scripts\python.exe -m black --check src tests`

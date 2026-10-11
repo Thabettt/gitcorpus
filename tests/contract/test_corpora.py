@@ -13,7 +13,7 @@ from serve.app import create_app
 from serve.corpora import CorpusError, freeze_corpus, get_corpus, list_corpora
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 DETECT_COPY = (
     "Scans the frozen corpus through GitHub’s API on its own allowance "
     "and stores evidence per repo."
@@ -160,7 +160,7 @@ def test_freeze_creates_corpus_and_redirects(clean, tmp_path, monkeypatch):
 
 def test_freeze_requires_a_finished_search(clean, tmp_path, monkeypatch):
     run_id = create_run(
-        clean, {"gitcrawl_filter": 1, "q": "language:rust"}, api_version=API_VERSION
+        clean, {"gitcorpus_filter": 1, "q": "language:rust"}, api_version=API_VERSION
     )
     client = healthy_client(clean, tmp_path, monkeypatch)
     response = client.post(
@@ -370,7 +370,7 @@ def test_run_detail_offers_freeze_only_when_finished(clean, tmp_path, monkeypatc
     done_run, _ = seed_run(clean, tmp_path)
     partial_run, _ = seed_run(clean, tmp_path, incomplete=True)
     queued_run = create_run(
-        clean, {"gitcrawl_filter": 1, "q": "language:go"}, api_version=API_VERSION
+        clean, {"gitcorpus_filter": 1, "q": "language:go"}, api_version=API_VERSION
     )
     client = healthy_client(clean, tmp_path, monkeypatch)
 

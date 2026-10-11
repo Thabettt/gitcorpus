@@ -357,7 +357,7 @@ def test_fetch_batch_reads_the_hook_cached_body_without_reparsing(monkeypatch):
         return original_json()
 
     def caching_hook(resp: httpx.Response, latency_ms: float) -> None:
-        resp.extensions["gitcrawl.json"] = resp.json()
+        resp.extensions["gitcorpus.json"] = resp.json()
 
     monkeypatch.setattr(response, "json", counting_json)
     client = client_from([response])

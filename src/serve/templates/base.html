@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token }}">
-<title>{% block title %}gitcrawl{% endblock %}</title>
+<title>{% block title %}gitcorpus{% endblock %}</title>
 <script>
 (function () {
   "use strict";
@@ -31,7 +31,7 @@
 <a class="skip-link" href="#content">Skip to content</a>
 <div id="nav-progress" class="nav-progress" aria-hidden="true"></div>
 <header class="site-header">
-  <a class="brand" href="/">gitcrawl</a>
+  <a class="brand" href="/">gitcorpus</a>
   {% set path = request.url.path %}
   <nav id="main-nav" class="site-nav" aria-label="Primary">
     <a href="/"{% if path == "/" %} aria-current="page"{% endif %}>Home</a>

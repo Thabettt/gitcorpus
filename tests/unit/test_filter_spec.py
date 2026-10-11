@@ -4,7 +4,7 @@ from serve.filter_spec import describe_spec, parse_filter_spec
 
 
 def make_spec(q: str = "", virtual: dict | None = None):
-    document: dict = {"gitcrawl_filter": 1, "q": q}
+    document: dict = {"gitcorpus_filter": 1, "q": q}
     if virtual:
         document["virtual"] = virtual
     return parse_filter_spec(document)

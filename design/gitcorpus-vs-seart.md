@@ -1,8 +1,8 @@
-# gitcrawl vs. SEART GitHub Search
+# gitcorpus vs. SEART GitHub Search
 
-**Date**: 2026-10-02 (gitcrawl capability notes updated 2026-10-07). Companion to `how-the-data-flows.md` and `corpus-building-efficient-engineering.md`. No prior knowledge assumed. SEART facts below were verified against its public site, repository, and published papers on 2026-10-02.
+**Date**: 2026-10-02 (gitcorpus capability notes updated 2026-10-07). Companion to `how-the-data-flows.md` and `corpus-building-efficient-engineering.md`. No prior knowledge assumed. SEART facts below were verified against its public site, repository, and published papers on 2026-10-02.
 
-**Purpose of this document**: explain, plainly, what SEART GitHub Search is, what gitcrawl is, where each one genuinely wins, and why gitcrawl is the better fit for this project's thesis work. It is written to be fair: SEART is a good, citable research platform, and there are jobs where it is clearly the better choice. The claim is not "gitcrawl beats SEART at everything" — it is "gitcrawl wins at the specific job we need done."
+**Purpose of this document**: explain, plainly, what SEART GitHub Search is, what gitcorpus is, where each one genuinely wins, and why gitcorpus is the better fit for this project's thesis work. It is written to be fair: SEART is a good, citable research platform, and there are jobs where it is clearly the better choice. The claim is not "gitcorpus beats SEART at everything" — it is "gitcorpus wins at the specific job we need done."
 
 ---
 
@@ -10,15 +10,15 @@
 
 **SEART GitHub Search** (seart-ghs.si.usi.ch) is a research platform built by the SEART group at the Università della Svizzera italiana. Their servers continuously crawl GitHub and store repository metadata in a central database. Researchers then use a web form to sample repositories by criteria like language, stars, commits, contributors, issues, pull requests, branches, releases, creation date, last-commit date, license, forks, and lines of code. Results can be exported as CSV/JSON/XML, and the whole database is published as periodic dumps. It is a *shared, pre-crawled catalog*: you search what they have already collected.
 
-**gitcrawl** is the tool in this repository. It runs a live search against GitHub on demand, at the moment you press Find (`ran_at`), saves every candidate's current details, applies filters GitHub itself cannot express (does it have a Dockerfile? is the owner in Germany?), and writes a frozen, replayable bundle containing exactly what GitHub said, plus explicit notes about anything incomplete. It is an *on-demand instrument*: you measure what GitHub is right now, and you keep the evidence.
+**gitcorpus** is the tool in this repository. It runs a live search against GitHub on demand, at the moment you press Find (`ran_at`), saves every candidate's current details, applies filters GitHub itself cannot express (does it have a Dockerfile? is the owner in Germany?), and writes a frozen, replayable bundle containing exactly what GitHub said, plus explicit notes about anything incomplete. It is an *on-demand instrument*: you measure what GitHub is right now, and you keep the evidence.
 
-The one-sentence difference: **SEART asks "what does my catalog contain that matches?"; gitcrawl asks "what does GitHub contain right now that matches, and prove it."**
+The one-sentence difference: **SEART asks "what does my catalog contain that matches?"; gitcorpus asks "what does GitHub contain right now that matches, and prove it."**
 
 ---
 
 ## 2. Side-by-side
 
-| Dimension | SEART GitHub Search | gitcrawl |
+| Dimension | SEART GitHub Search | gitcorpus |
 |---|---|---|
 | **Where data comes from** | Their servers' continuous crawl into their database | Live GitHub API at the moment the run executes |
 | **Freshness** | Crawl cycles about every 6 hours; public dumps at most 15 days behind; the platform can lag or be temporarily unavailable (a 502 outage issue is open) | Exact timestamp per run (`ran_at`); no third-party lag |
@@ -42,47 +42,47 @@ The one-sentence difference: **SEART asks "what does my catalog contain that mat
 Stating this first is not politeness; it is accuracy.
 
 1. **Time to first result.** No token, no crawl, no setup — the catalog already exists. For a quick sample, SEART wins outright.
-2. **Precomputed heavy metrics.** Commits, contributors, issues, PRs, and `cloc` line counts across ~1.9M repos cost them months of crawling; asking gitcrawl to (eventually) compute the same is real work.
+2. **Precomputed heavy metrics.** Commits, contributors, issues, PRs, and `cloc` line counts across ~1.9M repos cost them months of crawling; asking gitcorpus to (eventually) compute the same is real work.
 3. **Citable and known.** Peer reviewers in empirical software engineering recognize SEART (Dabić et al., MSR 2021; Zenodo DOI). "We sampled from SEART" is a sentence reviewers accept without explanation.
 4. **Bulk downloads.** Their dumps let you analyze offline without any API interaction at all.
 5. **Zero GitHub-account risk.** You are not the one calling GitHub, so you cannot trip rate or abuse limits.
 
-If the task were "give me 5,000 Java repos with more than 100 commits, I don't care whether it is today's state," SEART is the right tool and gitcrawl would be wasted effort.
+If the task were "give me 5,000 Java repos with more than 100 commits, I don't care whether it is today's state," SEART is the right tool and gitcorpus would be wasted effort.
 
 ---
 
-## 4. Where gitcrawl wins, and why it matters here
+## 4. Where gitcorpus wins, and why it matters here
 
-Three capability differences are decisive for this project. They share one root cause: **SEART can only show columns its crawler already collected; gitcrawl can ask GitHub a brand-new question at run time.** The file question in particular is not just a filter — it is the first stage of the agent-detection work that follows corpus building.
+Three capability differences are decisive for this project. They share one root cause: **SEART can only show columns its crawler already collected; gitcorpus can ask GitHub a brand-new question at run time.** The file question in particular is not just a filter — it is the first stage of the agent-detection work that follows corpus building.
 
 ### 4.1 Location: knowing where the owner is
 
 GitHub search has no "owner is in Germany" filter. An owner's `location` is free-form human text ("🇩🇪 Berlin", "Lagos", "🌍 remote", often empty), and SEART collects no owner-geography columns at all: it cannot filter by country, and it cannot hand you the data to filter later.
 
-gitcrawl resolves owner location itself — flag emojis decode deterministically, an offline city gazetteer covers most text, aliases catch variants, a cached geocoder handles the residue, and every result carries `{country_iso, confidence, raw_location}` with an explicit unmatched bucket. Geography becomes a first-class study variable (country-level adoption comparisons, for example) with honest confidence labels instead of a blind spot. Cost: about one request per owner, cached forever after.
+gitcorpus resolves owner location itself — flag emojis decode deterministically, an offline city gazetteer covers most text, aliases catch variants, a cached geocoder handles the residue, and every result carries `{country_iso, confidence, raw_location}` with an explicit unmatched bucket. Geography becomes a first-class study variable (country-level adoption comparisons, for example) with honest confidence labels instead of a blind spot. Cost: about one request per owner, cached forever after.
 
 ### 4.2 Stars below 10: the invisible majority
 
 SEART's crawler ships with a minimum of 10 stars (`ghs.crawler.minimum-stars=10`), and its own site notes that a repo excluded for falling below a threshold only appears "a few days after" it crosses. That default hides the absolute bottom tail of GitHub: a 2026 third-party analysis of the SEART platform (arXiv 2609.18953) opens by noting **317 million repositories with fewer than 10 stars**, and that "unpopular repositories are not always noise" — many are highly active with hundreds of commits.
 
-gitcrawl has no such floor. `stars:<10`, `stars:0..9`, or no star filter at all are all valid search filters; the star policy becomes a study-design decision recorded in the frozen filter spec instead of a platform default imposed on every query. The practical cost is volume: the low-star slice is enormous, so such runs lean on language/date filters and sharded discovery (search can list ~600,000 repos per 4 hours; saving them is the usual bottleneck — see `corpus-building-efficient-engineering.md` §3–§4).
+gitcorpus has no such floor. `stars:<10`, `stars:0..9`, or no star filter at all are all valid search filters; the star policy becomes a study-design decision recorded in the frozen filter spec instead of a platform default imposed on every query. The practical cost is volume: the low-star slice is enormous, so such runs lean on language/date filters and sharded discovery (search can list ~600,000 repos per 4 hours; saving them is the usual bottleneck — see `corpus-building-efficient-engineering.md` §3–§4).
 
 ### 4.3 Finding files — and why it is also the road to agent detection
 
 SEART stores repository metadata, not repository contents. It cannot answer "does this repo contain `CLAUDE.md`?", "is there a `.cursor/` directory?", "is there an `AGENTS.md`?", or even "does it have a Dockerfile?" — those are not columns in its catalog. Its separate Data Hub clones repositories for Java/Python code datasets, but that is a different tool, a different input, and not a filter you can put in a query.
 
-gitcrawl inspects files directly: one recursive tree call answers every path question for a repo at once (never one call per file), with `.gitignore` lines read as a secondary "visible only via ignore" signal. `has_dockerfile` ships today as the first customer of this machinery.
+gitcorpus inspects files directly: one recursive tree call answers every path question for a repo at once (never one call per file), with `.gitignore` lines read as a secondary "visible only via ignore" signal. `has_dockerfile` ships today as the first customer of this machinery.
 
 That same machinery **is** the file channel of the agent-detection work (currently deferred): the trace packs match file patterns such as `CLAUDE.md`, `.cursor/`, and `AGENTS.md`, with `AGENTS.md` flagged as a generic (shared) signal and `CONVENTIONS.md` excluded. Building "find files" now therefore builds the first detector for later at no extra conceptual cost — the query, the matching, and the evidence records all get reused. No catalog platform can offer that, because detection needs per-repo evidence recorded at the observation time, not a precomputed column.
 
 ### 4.4 The rest of the advantages
 
-1. **Live at `ran_at`.** The thesis compares adoption across ecosystems at a defined observation time. SEART's crawl time is theirs, not yours; their database may lag hours to days, and a repo crossing a threshold today shows up "a few days later" by their own documentation. gitcrawl stamps every run and every response with the moment it ran.
-2. **Frozen evidence, not just a result list.** gitcrawl stores raw upstream JSON per repo plus the filter spec and API version, so a reviewer can re-run the same frozen spec and diff drift. SEART hands you rows; the underlying GitHub response of a given day is not part of the artifact.
-3. **Explicit incompleteness.** gitcrawl's rule is "never present partial data as complete": capped searches, throttled pages, dropped candidates, and unresolved repos all become named flags in the run. A shared catalog cannot tell you what it missed.
-4. **Independence.** gitcrawl does not stop working when someone else's service returns 502, runs its crawler on a 6-hour cycle, or changes its schema. The pipeline is in this repository, under this project's control and audit.
+1. **Live at `ran_at`.** The thesis compares adoption across ecosystems at a defined observation time. SEART's crawl time is theirs, not yours; their database may lag hours to days, and a repo crossing a threshold today shows up "a few days later" by their own documentation. gitcorpus stamps every run and every response with the moment it ran.
+2. **Frozen evidence, not just a result list.** gitcorpus stores raw upstream JSON per repo plus the filter spec and API version, so a reviewer can re-run the same frozen spec and diff drift. SEART hands you rows; the underlying GitHub response of a given day is not part of the artifact.
+3. **Explicit incompleteness.** gitcorpus's rule is "never present partial data as complete": capped searches, throttled pages, dropped candidates, and unresolved repos all become named flags in the run. A shared catalog cannot tell you what it missed.
+4. **Independence.** gitcorpus does not stop working when someone else's service returns 502, runs its crawler on a 6-hour cycle, or changes its schema. The pipeline is in this repository, under this project's control and audit.
 5. **One pipeline for the whole study.** Search, virtual filters, geo, optional cloning, run bundles, and (later) the detection channels all live in one place. With SEART, repo selection is one tool and everything else is your own separate scripts.
-6. **Roadmap off the same core.** The GraphQL batching engine (built 2026-10-02, parallelized 2026-10-06; `corpus-building-efficient-engineering.md` §9–§10) raises gitcrawl's ceiling: run #9 hydrated 38,833 repos with 1,942 GraphQL requests and zero fallbacks — ~2,800 repos/min at concurrency 10 (was ~300–400/min sequential) — and the LOC estimate work (`loc-dilemma.md`) closes the one metric gap where SEART is ahead.
+6. **Roadmap off the same core.** The GraphQL batching engine (built 2026-10-02, parallelized 2026-10-06; `corpus-building-efficient-engineering.md` §9–§10) raises gitcorpus's ceiling: run #9 hydrated 38,833 repos with 1,942 GraphQL requests and zero fallbacks — ~2,800 repos/min at concurrency 10 (was ~300–400/min sequential) — and the LOC estimate work (`loc-dilemma.md`) closes the one metric gap where SEART is ahead.
 
 ---
 
@@ -90,7 +90,7 @@ That same machinery **is** the file channel of the agent-detection work (current
 
 Filter: Rust, not a fork, pushed since a cutoff, at least 100 stars, plus "has a Dockerfile" and "owner located in Germany."
 
-| Step | SEART | gitcrawl |
+| Step | SEART | gitcorpus |
 |---|---|---|
 | Find candidates | Instant query over their catalog (if Rust is in their crawl scope) | Live search, sharded to beat the 1,000-result cap |
 | Star/date/license filters | Yes, precomputed | Yes, from search results (free) |
@@ -105,34 +105,34 @@ Neither column is universally better — the point is that only one column can a
 
 ---
 
-## 6. Honest limitations of gitcrawl (as of this writing)
+## 6. Honest limitations of gitcorpus (as of this writing)
 
 - **A single run starts with small caps** (500 candidates, 200 saved, 100 checked), tunable at `/settings`; the corpus preset raises them to 100,000 candidates/hydrate/enrich and 1,000 shards (24 h deadline). SEART has no such caps.
 - **`cloc`-style LOC filters are recorded but not enforced yet** (`min_commits` and language-byte filters `min_language_bytes`/`max_language_bytes` are enforced; see `loc-dilemma.md`) — SEART is ahead on true LOC today.
 - **GraphQL batching is built** (2026-10-02) and now runs parallel batches (bounded concurrency; hydration uses `min(limiter_max_concurrent, 32)`, corpus preset 32, settled operating point 17–20) with the one-by-one REST path as fallback.
 - **It needs infrastructure**: Postgres, Redis, a token, and operational care. SEART needs a browser.
-- **You own the rate-limit responsibility.** gitcrawl paces itself and records fingerprints, but the token and its behavior are yours (see `corpus-building-efficient-engineering.md` §5).
+- **You own the rate-limit responsibility.** gitcorpus paces itself and records fingerprints, but the token and its behavior are yours (see `corpus-building-efficient-engineering.md` §5).
 
 ---
 
 ## 7. Bottom line
 
-SEART is a catalog: fast, citable, precomputed, and fixed in what it contains. gitcrawl is an instrument: live, custom-filterable, evidence-producing, and reproducible. For a one-off sample of standard criteria, use SEART. For a thesis corpus whose every number must be traceable to a timestamped GitHub response — and whose filters include things no catalog stores — gitcrawl is the better tool.
+SEART is a catalog: fast, citable, precomputed, and fixed in what it contains. gitcorpus is an instrument: live, custom-filterable, evidence-producing, and reproducible. For a one-off sample of standard criteria, use SEART. For a thesis corpus whose every number must be traceable to a timestamped GitHub response — and whose filters include things no catalog stores — gitcorpus is the better tool.
 
-The three differences that decide this project all point the same way: **owner location**, **stars below ten**, and **file presence** are exactly the questions a prebuilt catalog cannot answer, and the file machinery is the same machinery that will detect coding agents later. The batching work already designed is what will make gitcrawl fast enough to be the *only* tool needed.
+The three differences that decide this project all point the same way: **owner location**, **stars below ten**, and **file presence** are exactly the questions a prebuilt catalog cannot answer, and the file machinery is the same machinery that will detect coding agents later. The batching work already designed is what will make gitcorpus fast enough to be the *only* tool needed.
 
 ---
 
 ## 8. Glossary
 
-- **Catalog vs. instrument**: pre-collected data you query (SEART) versus a live measurement you run (gitcrawl).
+- **Catalog vs. instrument**: pre-collected data you query (SEART) versus a live measurement you run (gitcorpus).
 - **Crawl**: a server periodically walking GitHub and storing what it finds.
 - **Dump**: a downloadable copy of a catalog's database.
 - **Virtual filter**: a condition GitHub's own search cannot express, computed by the tool (Dockerfile presence, owner country, commit counts).
 - **`ran_at`**: the exact moment a run measured GitHub.
-- **Run bundle**: gitcrawl's frozen artifact — spec, hash, timestamp, API version, raw per-repo responses, flags.
+- **Run bundle**: gitcorpus's frozen artifact — spec, hash, timestamp, API version, raw per-repo responses, flags.
 - **Incompleteness flags**: named, explicit notes about anything a run could not finish.
-- **10-star floor**: SEART's minimum-star crawl rule; gitcrawl has none.
+- **10-star floor**: SEART's minimum-star crawl rule; gitcorpus has none.
 
 ---
 
@@ -143,6 +143,6 @@ The three differences that decide this project all point the same way: **owner l
 - Dabić, Aghajani, Bavota, "Sampling Projects in GitHub for MSR Studies" (MSR 2021); Zenodo DOI `10.5281/zenodo.4588464`
 - Dabić, Tufano, Bavota, "SEART Data Hub" (arXiv 2409.18658, 2024)
 - "Removing Noise or Introducing Bias? The Hidden Cost of MSR Filtering" (arXiv 2609.18953) — third-party analysis of ~1.9M SEART repos, 1.57M clean baseline, and the limits of the 10-star threshold
-- gitcrawl data flow — `design/how-the-data-flows.md`
-- gitcrawl throughput, meters, and batching design — `design/corpus-building-efficient-engineering.md`
-- Full market landscape, capability gap, and the `gitcrawl` name collision — `design/landscape-comparison.md`
+- gitcorpus data flow — `design/how-the-data-flows.md`
+- gitcorpus throughput, meters, and batching design — `design/corpus-building-efficient-engineering.md`
+- Full market landscape and capability gap — `design/landscape-comparison.md`

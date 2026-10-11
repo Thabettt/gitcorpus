@@ -20,7 +20,7 @@ FILTER_SPEC_VERSION = 1
 SORT_VALUES = frozenset({"stars", "forks", "help-wanted-issues", "updated"})
 ORDER_VALUES = frozenset({"desc", "asc"})
 
-ALLOWED_TOP_LEVEL = {"gitcrawl_filter", "q", "sort", "order", "virtual", "page", "frame", "as_of"}
+ALLOWED_TOP_LEVEL = {"gitcorpus_filter", "q", "sort", "order", "virtual", "page", "frame", "as_of"}
 
 _TOKEN_KEYS = frozenset({"token", "authorization", "github_token"})
 _PAGE_KEYS = frozenset({"per_page", "max_pages"})
@@ -174,13 +174,13 @@ def _validate_top_level(doc: Mapping[str, object], errors: list[str], hints: lis
 
 
 def _validate_version(doc: Mapping[str, object], errors: list[str], hints: list[str]) -> None:
-    if "gitcrawl_filter" not in doc:
-        errors.append("missing required `gitcrawl_filter` version")
-        hints.append(f"add `gitcrawl_filter: {FILTER_SPEC_VERSION}` at the top level")
+    if "gitcorpus_filter" not in doc:
+        errors.append("missing required `gitcorpus_filter` version")
+        hints.append(f"add `gitcorpus_filter: {FILTER_SPEC_VERSION}` at the top level")
         return
-    version = doc["gitcrawl_filter"]
+    version = doc["gitcorpus_filter"]
     if type(version) is not int or version != FILTER_SPEC_VERSION:
-        errors.append(f"unsupported `gitcrawl_filter` version `{version}`")
+        errors.append(f"unsupported `gitcorpus_filter` version `{version}`")
         hints.append(f"only filter-spec version {FILTER_SPEC_VERSION} is supported")
 
 
@@ -220,7 +220,7 @@ def parse_filter_spec(doc: Mapping[str, object]) -> FilterSpec:
     if not isinstance(doc, Mapping):
         raise FilterSpecError(
             ("filter-spec must be a JSON object",),
-            ("pass a JSON object with `gitcrawl_filter: 1`",),
+            ("pass a JSON object with `gitcorpus_filter: 1`",),
         )
     errors: list[str] = []
     hints: list[str] = []
@@ -371,7 +371,7 @@ def describe_spec(spec: FilterSpec) -> str:
 
 def spec_to_dict(spec: FilterSpec) -> dict:
     normalized: dict[str, object] = {
-        "gitcrawl_filter": FILTER_SPEC_VERSION,
+        "gitcorpus_filter": FILTER_SPEC_VERSION,
         "q": spec.q,
     }
     if spec.sort is not None:

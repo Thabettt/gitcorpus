@@ -340,7 +340,7 @@ def test_post_run_persists_and_returns_the_run_payload(clean: Engine, tmp_path):
     payload = RunPayload(total_count=9, fetched=1, items=[payload_item()])
     client = make_client(clean, counting_runner(payload, calls), runs_root=tmp_path)
     document = {
-        "gitcrawl_filter": 1,
+        "gitcorpus_filter": 1,
         "q": "language:rust",
         "sort": "stars",
         "order": "desc",
@@ -392,7 +392,7 @@ def test_post_maps_upstream_failures_to_a_sanitized_502(
         raise exc
 
     client = make_client(clean, runner, runs_root=tmp_path)
-    response = client.post("/vsearch/run", json={"gitcrawl_filter": 1, "q": "language:rust"})
+    response = client.post("/vsearch/run", json={"gitcorpus_filter": 1, "q": "language:rust"})
 
     assert response.status_code == 502
     assert response.json() == {
@@ -407,7 +407,7 @@ def test_post_non_upstream_run_failure_is_500_and_never_200(clean: Engine, tmp_p
         raise RuntimeError("boom")
 
     client = make_client(clean, runner, runs_root=tmp_path)
-    response = client.post("/vsearch/run", json={"gitcrawl_filter": 1, "q": "language:rust"})
+    response = client.post("/vsearch/run", json={"gitcorpus_filter": 1, "q": "language:rust"})
 
     assert response.status_code == 500
     assert response.json() == {"error": "run_failed"}
@@ -423,7 +423,7 @@ def test_post_runner_factory_failure_is_500_without_orphan_run(clean: Engine, tm
         raise ValueError("no GitHub token configured")
 
     client = make_client(clean, factory=factory, runs_root=tmp_path)
-    response = client.post("/vsearch/run", json={"gitcrawl_filter": 1, "q": "language:rust"})
+    response = client.post("/vsearch/run", json={"gitcorpus_filter": 1, "q": "language:rust"})
 
     assert response.status_code == 500
     assert response.json() == {"error": "internal_error"}
@@ -435,7 +435,7 @@ def test_post_invalid_spec_is_400_with_errors_and_hints(clean: Engine, tmp_path)
     calls: list = []
     client = make_client(clean, counting_runner(RunPayload(0, []), calls), runs_root=tmp_path)
 
-    response = client.post("/vsearch/run", json={"gitcrawl_filter": 1, "q": "updated:>2024"})
+    response = client.post("/vsearch/run", json={"gitcorpus_filter": 1, "q": "updated:>2024"})
 
     assert response.status_code == 400
     body = response.json()
@@ -451,7 +451,7 @@ def test_replay_returns_the_latest_run_and_404_when_unknown(clean: Engine, tmp_p
     calls: list = []
     payload = RunPayload(total_count=9, fetched=1, items=[payload_item()])
     client = make_client(clean, counting_runner(payload, calls), runs_root=tmp_path)
-    document = {"gitcrawl_filter": 1, "q": "language:rust"}
+    document = {"gitcorpus_filter": 1, "q": "language:rust"}
 
     created = client.post("/vsearch/run", json=document)
     assert created.status_code == 200
@@ -470,7 +470,7 @@ def test_replay_uses_the_latest_completed_run_when_the_newest_run_failed(clean: 
     calls: list = []
     payload = RunPayload(total_count=9, fetched=1, items=[payload_item()])
     client = make_client(clean, counting_runner(payload, calls), runs_root=tmp_path)
-    document = {"gitcrawl_filter": 1, "q": "language:rust"}
+    document = {"gitcorpus_filter": 1, "q": "language:rust"}
 
     spec = parse_filter_spec(document)
     created = client.post("/vsearch/run", json=document)
@@ -492,7 +492,7 @@ def test_replay_uses_the_latest_completed_run_when_the_newest_run_failed(clean: 
 def test_replay_is_409_when_only_non_terminal_runs_exist(clean: Engine, tmp_path):
     calls: list = []
     client = make_client(clean, counting_runner(RunPayload(0, []), calls), runs_root=tmp_path)
-    document = {"gitcrawl_filter": 1, "q": "language:rust"}
+    document = {"gitcorpus_filter": 1, "q": "language:rust"}
     filter_hash = spec_hash(parse_filter_spec(document))
     create_run(clean, spec_to_dict(parse_filter_spec(document)), api_version=API_VERSION)
 
@@ -542,7 +542,7 @@ def test_sort_order_is_shared_by_get_post_and_replay(clean: Engine, tmp_path):
     assert [item["id"] for item in desc.json()["items"]] == [2, 1296269, 3]
     assert [item["id"] for item in asc.json()["items"]] == [3, 1296269, 2]
 
-    document = {"gitcrawl_filter": 1, "q": "language:rust", "sort": "forks", "order": "desc"}
+    document = {"gitcorpus_filter": 1, "q": "language:rust", "sort": "forks", "order": "desc"}
     created = client.post("/vsearch/run", json=document)
     assert created.status_code == 200
     post_ids = [item["id"] for item in created.json()["items"]]

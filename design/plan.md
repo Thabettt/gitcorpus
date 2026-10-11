@@ -1,6 +1,6 @@
-# Implementation Plan: gitcrawl
+# Implementation Plan: gitcorpus
 
-**Branch**: `001-gitcrawl` | **Date**: 2026-09-29 (updated 2026-10-04) | **Spec**: [spec.md](./spec.md)
+**Branch**: `001-gitcorpus` | **Date**: 2026-09-29 (updated 2026-10-04) | **Spec**: [spec.md](./spec.md)
 
 **Status: historical plan of record.** This is the plan the build followed. Where reality diverged, the deviations are recorded in `../docs/environment.md` (stack/environment) and `../docs/development-log.md` (outcomes and rulings R1–R58); the inline corrections below keep the plan from misleading a reader. Read `how-the-data-flows.md` before this document.
 

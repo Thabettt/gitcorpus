@@ -117,7 +117,7 @@ def test_pause_at_least_blocks_acquire_and_sets_ttl(redis, limiter):
     denied = limiter.acquire("graphql", "token-a", now=100.0)
     assert denied.allowed is False
     assert denied.retry_after == 60.0
-    assert redis.ttl("gitcrawl:rl:graphql:token-a") > 0
+    assert redis.ttl("gitcorpus:rl:graphql:token-a") > 0
 
 
 def test_paused_denial_does_not_consume_window(redis):
@@ -125,7 +125,7 @@ def test_paused_denial_does_not_consume_window(redis):
     limiter.pause("search", "token-a", 10.0, now=0.0)
     assert limiter.acquire("search", "token-a", now=0.0).allowed is False
     assert limiter.acquire("search", "token-a", now=10.0).allowed is True
-    assert redis.hget("gitcrawl:rl:search:token-a", "count") == b"1"
+    assert redis.hget("gitcorpus:rl:search:token-a", "count") == b"1"
 
 
 def test_update_from_headers_remaining_zero_pauses_until_reset(limiter):
@@ -192,7 +192,7 @@ def test_reconcile_uses_the_header_limit_over_the_spec(redis):
         {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "40", "x-ratelimit-reset": "60"},
         now=0.0,
     )
-    assert redis.hget("gitcrawl:rl:core:token-a", "count") == b"60"
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"60"
     denied = limiter.acquire("core", "token-a", now=0.0)
     assert denied.allowed is False
     assert denied.retry_after == 60.0
@@ -206,7 +206,7 @@ def test_update_from_headers_ignores_malformed_values(redis, limiter):
         now=0.0,
     )
     assert limiter.paused_until("search", "token-a") is None
-    assert redis.hget("gitcrawl:rl:search:token-a", "count") is None
+    assert redis.hget("gitcorpus:rl:search:token-a", "count") is None
 
 
 def test_update_from_headers_ignores_missing_headers(limiter):
@@ -303,19 +303,19 @@ def test_release_decrements_slot_field(redis):
     limiter.acquire("search", "token-a", now=0.0)
     limiter.acquire("search", "token-a", now=0.0)
     limiter.release("search", "token-a")
-    assert redis.hget("gitcrawl:rl:search:token-a", "slots") == b"1"
+    assert redis.hget("gitcorpus:rl:search:token-a", "slots") == b"1"
 
 
 def test_concurrency_denial_does_not_consume_window(redis):
     limiter = BucketLimiter(redis, max_concurrent=1)
     assert limiter.acquire("search", "token-a", now=0.0).allowed is True
     assert limiter.acquire("search", "token-a", now=0.0).allowed is False
-    assert redis.hget("gitcrawl:rl:search:token-a", "count") == b"1"
+    assert redis.hget("gitcorpus:rl:search:token-a", "count") == b"1"
 
 
 def test_acquire_uses_hash_key_with_ttl(redis, limiter):
     limiter.acquire("search", "token-a", now=0.0)
-    key = "gitcrawl:rl:search:token-a"
+    key = "gitcorpus:rl:search:token-a"
     assert redis.type(key) == b"hash"
     assert redis.ttl(key) > 0
     assert redis.hget(key, "count") == b"1"

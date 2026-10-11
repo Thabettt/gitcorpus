@@ -83,7 +83,7 @@ _DETAIL_BATCH = 5000
 
 def _allowed_hosts() -> list[str]:
     hosts = ["localhost", "127.0.0.1", "[::1]"]
-    extra = os.environ.get("GITCRAWL_ALLOWED_HOSTS", "")
+    extra = os.environ.get("GITCORPUS_ALLOWED_HOSTS", "")
     hosts.extend(host.strip() for host in extra.split(",") if host.strip())
     return hosts
 
@@ -356,7 +356,7 @@ def create_app(
 ) -> FastAPI:
     loaders = _LazyLoaders()
     payload_cache = RunPayloadCache(ttl_seconds=CACHE_TTL_SECONDS, clock=clock)
-    application = FastAPI(title="gitcrawl", version="0.0.1")
+    application = FastAPI(title="gitcorpus", version="0.0.1")
     application.add_middleware(OriginCsrfMiddleware)
     application.add_middleware(
         TrustedHostMiddleware,
@@ -447,7 +447,7 @@ def create_app(
                 status_code=400,
                 content={"error": "invalid_param", "param": name, "hint": hint},
             )
-        document: dict[str, object] = {"gitcrawl_filter": FILTER_SPEC_VERSION}
+        document: dict[str, object] = {"gitcorpus_filter": FILTER_SPEC_VERSION}
         if "q" in values:
             document["q"] = values["q"]
         if "sort" in values:

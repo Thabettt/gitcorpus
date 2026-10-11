@@ -16,7 +16,7 @@
 - Scope is exactly spec §3.1 (pool leaks), §3.3 (double parse; discovery inline upsert), and recommendation 7 of §8 (both optional cleanups). Batch size defaults, concurrency caps, limiter window semantics, and any adaptive controller are owned by other plans — do not touch them.
 - No schema changes, no Alembic migrations, no new settings in this plan.
 - Lint: `.venv\Scripts\python.exe -m ruff check src tests` (rules E, F, I, UP, B; line length 100). Format: `.venv\Scripts\python.exe -m black --check src tests`. Types: `.venv\Scripts\python.exe -m mypy` (gated packages `src/lib`, `src/limiter`, `src/store`, `src/scheduler` per `pyproject.toml:21-23`).
-- Tests: `.venv\Scripts\python.exe -m pytest`; coverage gate `fail_under = 93` via `-q --cov=src --cov-report=term-missing`. Integration tests need `TEST_DATABASE_URL` pointing at a database whose name ends in `_test` (`tests/conftest.py:20-24`); CI sets `GITCRAWL_REQUIRE_TEST_DB=1`.
+- Tests: `.venv\Scripts\python.exe -m pytest`; coverage gate `fail_under = 93` via `-q --cov=src --cov-report=term-missing`. Integration tests need `TEST_DATABASE_URL` pointing at a database whose name ends in `_test` (`tests/conftest.py:20-24`); CI sets `GITCORPUS_REQUIRE_TEST_DB=1`.
 - Windows dev host (PowerShell 5.1); commands follow the sample plan's style.
 - `trust_env=False` is a deliberate behavior change: this repo has no proxy support (no `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` handling anywhere in `src`), so environment proxy auto-discovery is pinned off.
 - `run_search_discovery` gains keyword-only parameters with defaults; every existing call site keeps working unchanged.
@@ -108,7 +108,7 @@ git commit -m "perf(lib): pin httpx pool limits and ignore environment proxies"
 
 ### Task 2: Read GraphQL batch bodies from the audit cache instead of re-parsing
 
-The audit hook already parses every response body once and stores it on `response.extensions["gitcrawl.json"]` (`src/lib/audit.py:99-104`, read back by `cached_json` at `:83-84`). Discovery already exploits that (`src/discover/graphql_search.py:255-260`); the batch engine still calls `response.json()` again (`src/lib/graphql_batch.py:157-160`). This task makes `_post` follow the discovery pattern.
+The audit hook already parses every response body once and stores it on `response.extensions["gitcorpus.json"]` (`src/lib/audit.py:99-104`, read back by `cached_json` at `:83-84`). Discovery already exploits that (`src/discover/graphql_search.py:255-260`); the batch engine still calls `response.json()` again (`src/lib/graphql_batch.py:157-160`). This task makes `_post` follow the discovery pattern.
 
 **Files:**
 - Modify: `src/lib/graphql_batch.py:13` (import `audit`), `src/lib/graphql_batch.py:157-160` (parse block in `_post`)
@@ -116,7 +116,7 @@ The audit hook already parses every response body once and stores it on `respons
 
 **Interfaces:**
 - Produces: `lib.graphql_batch._post` keeps its exact signature `(adapter, keys, *, client, limiter, token_id, on_response, sleep, now, jitter) -> tuple[ParsedBatch, tuple[str, ...]]`; body parsing now reads `lib.audit.cached_json(response)` first and only falls back to `response.json()` when the cache is `None`.
-- Consumes: `lib.audit.cached_json(response: httpx.Response) -> object | None` and the `"gitcrawl.json"` extension key that `record_from_response` populates.
+- Consumes: `lib.audit.cached_json(response: httpx.Response) -> object | None` and the `"gitcorpus.json"` extension key that `record_from_response` populates.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -132,7 +132,7 @@ def test_fetch_batch_reads_the_hook_cached_body_without_reparsing(monkeypatch):
         return original_json()
 
     def caching_hook(resp: httpx.Response, latency_ms: float) -> None:
-        resp.extensions["gitcrawl.json"] = resp.json()
+        resp.extensions["gitcorpus.json"] = resp.json()
 
     monkeypatch.setattr(response, "json", counting_json)
     client = client_from([response])
@@ -558,7 +558,7 @@ Audit records are currently written by whichever network worker happens to fill 
 - Produces: `lib.audit.AuditBuffer(engine: Engine, *, batch_size: int = 100)` with unchanged public surface:
   - `add(record: AuditRecord) -> None` — appends and, at `batch_size`, enqueues a batch; never waits for an INSERT except when the bounded queue is full (backpressure at 4 pending batches).
   - `flush() -> None` — submits the partial batch, drains every submitted batch, stops the writer thread, and re-raises the first write failure. Must be called when no other thread is adding (true at every call site: discovery's `_flush_audit` runs after the shard pool joins, runner's finally runs after `_run_filter` returns).
-- Produces: writer thread named `"gitcrawl-audit"`; `flush()` leaves `_writer` stopped so a long-lived process (the console server creates one buffer per run at `src/serve/runner.py:136`) does not accumulate threads; a later `add` restarts it.
+- Produces: writer thread named `"gitcorpus-audit"`; `flush()` leaves `_writer` stopped so a long-lived process (the console server creates one buffer per run at `src/serve/runner.py:136`) does not accumulate threads; a later `add` restarts it.
 - Consumes: `sqlalchemy.insert(AuditLog)`, `dataclasses.asdict`, `queue.Queue`.
 
 - [ ] **Step 1: Adapt the existing batching test and write the new failing tests**
@@ -746,7 +746,7 @@ class AuditBuffer:
             if self._writer is not None and self._writer.is_alive():
                 return
             self._writer = threading.Thread(
-                target=self._write_loop, name="gitcrawl-audit", daemon=True
+                target=self._write_loop, name="gitcorpus-audit", daemon=True
             )
             self._writer.start()
 
@@ -812,7 +812,7 @@ Expected evidence:
 - [ ] **Step 2: Run the full suite with the coverage gate**
 
 ```powershell
-$env:TEST_DATABASE_URL = 'postgresql+psycopg://gitcrawl:gitcrawl@localhost:5432/gitcrawl_test'
+$env:TEST_DATABASE_URL = 'postgresql+psycopg://gitcorpus:gitcorpus@localhost:5432/gitcorpus_test'
 .venv\Scripts\python.exe -m pytest -q --cov=src --cov-report=term-missing
 ```
 

@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine, RowMapping
 
 from store.models import Repo, RunItem, Runs
 
-MARKER_NAME = ".gitcrawl-clone-done"
+MARKER_NAME = ".gitcorpus-clone-done"
 PROGRESS_NAME = "clone-progress.json"
 CLONE_URL_TEMPLATE = "https://github.com/{full_name}.git"
 LOW_DISK_THRESHOLD_MB = 2048.0

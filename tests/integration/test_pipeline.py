@@ -814,9 +814,9 @@ def test_run_emits_single_info_summary(clean: Engine, caplog):
         return httpx.Response(200, json=[repo_item(45, owner_login="acme")])
 
     deps = make_deps(clean, scripted_client(handler, requests))
-    with caplog.at_level(logging.INFO, logger="gitcrawl.discover"):
+    with caplog.at_level(logging.INFO, logger="gitcorpus.discover"):
         run_org_enum(deps, org="acme", jitter=lambda: 0.0)
-    records = [record for record in caplog.records if record.name == "gitcrawl.discover"]
+    records = [record for record in caplog.records if record.name == "gitcorpus.discover"]
     assert len(records) == 1
     assert records[0].levelno == logging.INFO
     assert records[0].getMessage().startswith("discovery run kind=org")

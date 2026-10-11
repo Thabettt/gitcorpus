@@ -102,7 +102,7 @@ _templates = Jinja2Templates(
 _templates.env.globals["severity"] = severity
 _templates.env.globals["status_label"] = status_label
 _redis_client = None
-logger = logging.getLogger("gitcrawl.serve")
+logger = logging.getLogger("gitcorpus.serve")
 
 
 class CachedStaticFiles(StaticFiles):
@@ -1051,7 +1051,7 @@ def register_pages(
             return Response(
                 content=payload,
                 media_type="application/json",
-                headers={"Content-Disposition": 'attachment; filename="gitcrawl-filter.json"'},
+                headers={"Content-Disposition": 'attachment; filename="gitcorpus-filter.json"'},
             )
         if action == "save":
             try:

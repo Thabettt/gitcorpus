@@ -9,7 +9,7 @@ from lib.gh_client import API_VERSION
 from serve.diff import CHANGED_FIELDS, RunDiff, diff_runs
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 
 @pytest.fixture(scope="module", autouse=True)

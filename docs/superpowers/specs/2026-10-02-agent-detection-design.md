@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-02
 **Status**: Draft for review — plan only, not approved for execution
-**Depends on**: US1 discovery, US2 lifecycle, US3 enrichment/serve, US4 console (all shipped, `001-gitcrawl`)
+**Depends on**: US1 discovery, US2 lifecycle, US3 enrichment/serve, US4 console (all shipped, `001-gitcorpus`)
 **Spec lineage**: FR-015 (trace packs), FR-016 (commit history), FR-017 (PR channel); this design is the API-only first tier of those tracks.
 
 ## 1. Context

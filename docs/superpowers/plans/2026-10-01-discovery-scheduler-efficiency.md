@@ -508,7 +508,7 @@ Expected: FAIL — second `claim` re-issues `xgroup_create` per lane.
 `_ensure_group` memoization:
 
 ```python
-    def __init__(self, redis, *, lanes: int = 4, max_attempts: int = 3, prefix: str = "gitcrawl:shards") -> None:
+    def __init__(self, redis, *, lanes: int = 4, max_attempts: int = 3, prefix: str = "gitcorpus:shards") -> None:
         ...
         self._groups_ready: set[int] = set()
 

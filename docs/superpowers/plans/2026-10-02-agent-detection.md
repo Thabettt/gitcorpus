@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python `>=3.12`; line length 100; ruff (`E,F,I,UP,B`) + black clean; coverage floor `fail_under = 93` (`pyproject.toml`).
-- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCRAWL_REQUIRE_TEST_DB=1` to fail loudly); use `tests/conftest.py` fixtures.
+- DB tests require `TEST_DATABASE_URL` ending in `_test` (or `GITCORPUS_REQUIRE_TEST_DB=1` to fail loudly); use `tests/conftest.py` fixtures.
 - Detection runs MUST NOT call discovery/search endpoints (`/search/repositories`, `/search/code`, `/repositories?since=`); enforced by test.
 - Candidates come from the source run's `run_items`; top-N order is `stargazers DESC, repo_id ASC`.
 - Channels (exact names): `file, author, branch, label, bot, commit_trailer, pr_metadata`.
@@ -1924,7 +1924,7 @@ def deps_for(client, engine) -> Deps:
 def make_detect_run(engine, source_id: int) -> int:
     return create_run(
         engine,
-        {"gitcrawl_detect": 1},
+        {"gitcorpus_detect": 1},
         api_version="2022-11-28",
         kind="detect",
         source_run_id=source_id,
@@ -2183,7 +2183,7 @@ from serve.detect_spec import DetectSpecError, parse_detect_spec
 def test_parse_minimal_spec():
     spec = parse_detect_spec(
         {
-            "gitcrawl_detect": 1,
+            "gitcorpus_detect": 1,
             "source_run_id": 5,
             "pack_version": "v1",
             "channels": ["file", "author"],
@@ -2198,7 +2198,7 @@ def test_parse_minimal_spec():
 def test_unknown_channel_and_hint():
     with pytest.raises(DetectSpecError) as exc:
         parse_detect_spec(
-            {"gitcrawl_detect": 1, "source_run_id": 5, "pack_version": "v1", "channels": ["files"]}
+            {"gitcorpus_detect": 1, "source_run_id": 5, "pack_version": "v1", "channels": ["files"]}
         )
     assert any("channel" in e for e in exc.value.errors)
     assert exc.value.hints
@@ -2208,7 +2208,7 @@ def test_limit_and_windows_bounds():
     with pytest.raises(DetectSpecError):
         parse_detect_spec(
             {
-                "gitcrawl_detect": 1,
+                "gitcorpus_detect": 1,
                 "source_run_id": 5,
                 "pack_version": "v1",
                 "channels": ["file"],
@@ -2218,7 +2218,7 @@ def test_limit_and_windows_bounds():
     with pytest.raises(DetectSpecError):
         parse_detect_spec(
             {
-                "gitcrawl_detect": 1,
+                "gitcorpus_detect": 1,
                 "source_run_id": 5,
                 "pack_version": "v1",
                 "channels": ["file"],
@@ -2258,8 +2258,8 @@ class DetectSpec:
 def parse_detect_spec(doc: Mapping[str, object]) -> DetectSpec:
     errors: list[str] = []
     hints: list[str] = []
-    if doc.get("gitcrawl_detect") != 1:
-        errors.append("`gitcrawl_detect` must be 1")
+    if doc.get("gitcorpus_detect") != 1:
+        errors.append("`gitcorpus_detect` must be 1")
     source_run_id = doc.get("source_run_id")
     if not isinstance(source_run_id, int) or source_run_id <= 0:
         errors.append("`source_run_id` must be a positive integer")
@@ -2371,7 +2371,7 @@ def test_post_detect_creates_run_and_redirects(client_with_source, clean):
 def test_detect_on_a_detect_run_is_rejected(client_with_source, clean):
     client, source_id = client_with_source
     detect_id = create_run(
-        clean, {"gitcrawl_detect": 1}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+        clean, {"gitcorpus_detect": 1}, api_version="2022-11-28", kind="detect", source_run_id=source_id
     )
     token = csrf_token(client)
     response = client.post(
@@ -2507,7 +2507,7 @@ def register_detect(
             return HTMLResponse("source run not eligible", status_code=400)
         limit_raw = form.get("limit")
         spec_doc = {
-            "gitcrawl_detect": 1,
+            "gitcorpus_detect": 1,
             "source_run_id": run_id,
             "pack_version": form.get("pack_version") or "",
             "channels": list(form.getlist("channels")),
@@ -2583,7 +2583,7 @@ from store.models import DetectionEvidence, RunItem
 def seed_detect_run(clean, source_id: int, *, status: str = "done") -> int:
     detect_id = create_run(
         clean,
-        {"gitcrawl_detect": 1},
+        {"gitcorpus_detect": 1},
         api_version="2022-11-28",
         kind="detect",
         source_run_id=source_id,
@@ -2742,7 +2742,7 @@ Expected: clean. (If the repo vendors ruff/black in the venv; otherwise use `pyt
 
 - [ ] **Step 5: Optional live smoke (token-guarded)**
 
-Add one optional test (skip when `GITHUB_TOKEN` unset) that runs `detect_files` against a known repo (e.g. the gitcrawl repo itself is private-safe; use a stable public fixture like `pallets/flask` expecting no crash and a list of hits). Mark it `@pytest.mark.live` per existing live-test conventions in `tests/integration/test_golden_org.py`.
+Add one optional test (skip when `GITHUB_TOKEN` unset) that runs `detect_files` against a known repo (e.g. the gitcorpus repo itself is private-safe; use a stable public fixture like `pallets/flask` expecting no crash and a list of hits). Mark it `@pytest.mark.live` per existing live-test conventions in `tests/integration/test_golden_org.py`.
 
 - [ ] **Step 6: Commit**
 

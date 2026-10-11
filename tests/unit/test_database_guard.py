@@ -15,7 +15,7 @@ def test_missing_test_database_url_fails_when_required():
         for key, value in os.environ.items()
         if key not in {"TEST_DATABASE_URL", "DATABASE_URL"}
     }
-    env["GITCRAWL_REQUIRE_TEST_DB"] = "1"
+    env["GITCORPUS_REQUIRE_TEST_DB"] = "1"
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-rs", TARGET],
         cwd=ROOT,

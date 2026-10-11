@@ -320,7 +320,7 @@ git commit -m "perf: cache static assets and move progress animation off layout"
 - Test: Node test via pytest wrapper
 
 **Interfaces:**
-- `gitcrawlRowNav.nextIndex(current: number, delta: number, length: number) -> number` (returns `-1` when `length <= 0`).
+- `gitcorpusRowNav.nextIndex(current: number, delta: number, length: number) -> number` (returns `-1` when `length <= 0`).
 - `app.js` caches `selectableRows()` until an htmx swap, removes `row-selected` from only the previously selected row, and disables the clone start button while its POST is in flight.
 
 - [ ] **Step 1: Write the failing tests**
@@ -382,7 +382,7 @@ Expected: FAIL — `rownav.js` missing (or Node reports module not found).
   if (typeof module === "object" && module.exports) {
     module.exports = factory();
   } else {
-    root.gitcrawlRowNav = factory();
+    root.gitcorpusRowNav = factory();
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
@@ -434,7 +434,7 @@ Expected: FAIL — `rownav.js` missing (or Node reports module not found).
         break;
       }
     }
-    var next = window.gitcrawlRowNav.nextIndex(current, delta, rows.length);
+    var next = window.gitcorpusRowNav.nextIndex(current, delta, rows.length);
     var previous = document.querySelector("tr.row-selected");
     if (previous) {
       previous.classList.remove("row-selected");

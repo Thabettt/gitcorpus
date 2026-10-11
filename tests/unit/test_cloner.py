@@ -22,7 +22,7 @@ from enrich.cloner import (
 )
 from serve.executor import create_run
 
-FILTER = {"gitcrawl_filter": 1, "q": "language:rust"}
+FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
 
 MODE_FLAGS = {
     CloneMode.SHALLOW: ("--depth", "1"),

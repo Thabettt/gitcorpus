@@ -1,4 +1,4 @@
-# gitcrawl Efficiency Audit — Report, Savings Model, and Plan Index
+# gitcorpus Efficiency Audit — Report, Savings Model, and Plan Index
 
 **Date:** 2026-10-01
 **Scope:** every tracked source file (61 Python files under `src/`, all migrations, templates, static assets, configs) plus docs/tests for semantics.

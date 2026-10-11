@@ -23,15 +23,15 @@ def test_defaults_are_generous():
 
 
 def test_env_overrides_are_read(monkeypatch):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", "120")
-    monkeypatch.setenv("GITCRAWL_CLONE_TIMEOUT_SECONDS", "60")
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", "120")
+    monkeypatch.setenv("GITCORPUS_CLONE_TIMEOUT_SECONDS", "60")
     assert request_deadline_seconds() == 120.0
     assert clone_timeout_seconds() == 60.0
 
 
 @pytest.mark.parametrize("raw", ["", "abc", "0", "-5"])
 def test_invalid_env_values_fall_back_to_defaults(monkeypatch, raw):
-    monkeypatch.setenv("GITCRAWL_REQUEST_DEADLINE_SECONDS", raw)
+    monkeypatch.setenv("GITCORPUS_REQUEST_DEADLINE_SECONDS", raw)
     assert request_deadline_seconds() == DEFAULT_REQUEST_DEADLINE_SECONDS
 
 

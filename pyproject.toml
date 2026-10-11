@@ -1,5 +1,5 @@
 [project]
-name = "gitcrawl"
+name = "gitcorpus"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

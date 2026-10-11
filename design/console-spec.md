@@ -1,10 +1,10 @@
-# Console Spec (US4) — gitcrawl Operator Console
+# Console Spec (US4) — gitcorpus Operator Console
 
 **Status**: Implemented (2026-10-01→03; outcomes in `../docs/development-log.md`). Approved-for-overnight v1; **UX flow revised 2026-10-02** — see `console-ux-redesign.md`. This spec remains authoritative for the backend and route contract; later phases (corpora, settings, system/metrics, quality, run controls) extended the route table — those rows are marked below, and the implementation is the final authority. Parents: `spec.md` (Frozen v3), `tasks.md` (T019–T037, T051), `contracts/search-api.md`, `data-model.md`. Plan of record: `console-plan.md`.
 
 ## Goal
 
-A local single-operator web console for gitcrawl: run live Finds, watch progress, explore/sort/export results, browse run history, diff runs, manage saved filters, optionally clone top-N repos. One FastAPI process, Jinja2 + htmx + one local CSS file — **no Node/toolchain at runtime**.
+A local single-operator web console for gitcorpus: run live Finds, watch progress, explore/sort/export results, browse run history, diff runs, manage saved filters, optionally clone top-N repos. One FastAPI process, Jinja2 + htmx + one local CSS file — **no Node/toolchain at runtime**.
 
 ## Scope
 

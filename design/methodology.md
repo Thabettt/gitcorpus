@@ -1,4 +1,4 @@
-# Methodology: How gitcrawl Was Built, Measured, and Optimized — a Run-by-Run Journal
+# Methodology: How gitcorpus Was Built, Measured, and Optimized — a Run-by-Run Journal
 
 **Date**: 2026-10-11 (first complete edition). **Status**: living document — expected to grow.
 **Companions**: `how-the-data-flows.md` (what the pipeline does), `corpus-building-efficient-engineering.md` (the meters and the math), `run-limits.md` (the operating dials), `runtime-audit-and-adaptive-control.md` (the audit + its §11 production log), `loc-dilemma.md`, `adoption-window.md`, and the frozen journal in `../docs/development-log.md`.
@@ -13,7 +13,7 @@
 
 Claims in this document are ranked by the strength of their source. When two sources disagree, the higher rank wins, and the disagreement is recorded in Appendix B:
 
-1. **Primary machine data** — the PostgreSQL database (`runs`, `shards`, `audit_log`, `run_items`, `app_settings`, `corpora`), the run bundles under `runs/<filter_hash>/<run_id>/`, and the Windows audit trail (`%LOCALAPPDATA%\gitcrawl\`). This is what actually happened.
+1. **Primary machine data** — the PostgreSQL database (`runs`, `shards`, `audit_log`, `run_items`, `app_settings`, `corpora`), the run bundles under `runs/<filter_hash>/<run_id>/`, and the Windows audit trail (`%LOCALAPPDATA%\gitcorpus\`). This is what actually happened.
 2. **Git history** — 284 commits reachable from `main` (branch `quality-hardening` is an ancestor, not a divergent line; there is a single linear history). Commit messages and diffs are the record of intent and implementation.
 3. **Dated in-repo notes** — `docs/development-log.md` (frozen 2026-10-09, see §0.4), `docs/findings/*`, `design/*` status banners, `docs/superpowers/{specs,plans,prompts}/*`.
 4. **Reconstructed narrative** — anything only described in prose, labeled as such.
@@ -36,8 +36,8 @@ The full working state as of 2026-10-11 04:20 UTC (commit `6d15587`):
 | Source + docs | working tree, `main` | the whole codebase; docs referenced throughout |
 | Full history | git | 284 commits, oldest `717c9b3` (2026-09-29) → `6d15587`; reflog shows ordinary development (no rebases/amends beyond pre-review folds); no stashes; one worktree |
 | Run artifacts | `runs/` (git-ignored) | bundles for runs 1, 2, 9, 10, 12, 16–19, 22, 23, 28–30 |
-| Operational DB | PostgreSQL `gitcrawl` @ localhost:5433 | 30 runs, 216,217 run items, 6,978 shard rows, 66,729 audit rows, 48,530 repos, 3 corpora, 1 saved filter |
-| Ops logs | `%LOCALAPPDATA%\gitcrawl\` | `pg.log` (723 KB), access logs; `serve.log` empty as of the last restart |
+| Operational DB | PostgreSQL `gitcorpus` @ localhost:5433 | 30 runs, 216,217 run items, 6,978 shard rows, 66,729 audit rows, 48,530 repos, 3 corpora, 1 saved filter |
+| Ops logs | `%LOCALAPPDATA%\gitcorpus\` | `pg.log` (723 KB), access logs; `serve.log` empty as of the last restart |
 | Scratch evidence | `%LOCALAPPDATA%\Temp\opencode\` | the adaptive soak script + payload (`soak\soak_run.py`, `soak_A_payload.json`, `soak_A_summary.json`), corpus-diff scripts from 2026-10-07 |
 | Review artifacts | `.superpowers/sdd/2026-10-09-adaptive-rate-controller/` | review diffs for `a723844`, `cb8a674..6dbb759`, `cb8a674..a723844` |
 
@@ -62,7 +62,7 @@ No database run existed yet. This era's whole output was a pipeline, a console, 
 
 ## I.1 The frozen objective (2026-09-29)
 
-The founding artifacts landed in one commit, `717c9b3` — "import gitcrawl research + frozen v2 design (live-only freshness, thesis tracks parked)":
+The founding artifacts landed in one commit, `717c9b3` — "import gitcorpus research + frozen v2 design (live-only freshness, thesis tracks parked)":
 
 - `design/spec.md` — Feature Specification, **Frozen v3** ("2026-10-01 amendment: US4 operator console added"). Four user stories: **US1** discover every matching public repo (sharded search + `since` backfill), **US2** reflect current state at fetch moment (renames/tombstones), **US3** enrich + serve with virtual filters including owner country, **US4** the operator console. Functional requirements FR-001–FR-023; success criteria SC-001–SC-008.
 - `design/plan.md` — "historical plan of record": the SEART pattern (crawl → store → serve) hardened with the gap fixes from `findings/05` and an efficiency review; live-only freshness (**D4** in `research.md`), immutable `id BIGINT` keys, Redis per-bucket limiter, cost-aware enrichment (D12), audit logging (FR-010) from day one.
@@ -117,7 +117,7 @@ The second gate was correctness *of the development process itself*. `docs/super
 - **Phase 0** — CI workflow (Linux with service containers; Windows with native PostgreSQL 17 + Memurai 4.1.8), golden harness (23 GET-route cases), OpenAPI hash pin, coverage floor `fail_under = 93`, measured baseline **93.23% (4965 statements, 336 missed)**. Note: *CI was never observed running* — pushing was deliberately forbidden throughout; the workflow was parse-validated only. This remains true today and is listed as an open thread.
 - **Phase 1a** — zero-behavior fixes: clone registry atomicity (`d79eb49`), single-flight lazy loaders (`def016b`), dirty-row isolation, poison-shard recovery, batched `GeoCache` (`968cbf1`), and the **E1** run-counter surfacing (`d894460`); E1 was the one approved visible change (run summaries gained real `updated`/`unchanged`/`skipped`).
 - **Phase 1b** — test/tooling hardening: centralized `clean_db` fixtures (22 files), CWD independence, deterministic synchronization replacing wall-clock flakes, JS helper extraction + Node tests, `mypy` ratchet (scoped to `lib`, `limiter`, `store`, `scheduler`), import-boundary tests, and the **quarantine manifest** (13 entries).
-- **Phase 2** — adversarial hardening: Origin-aware CSRF, Host allowlist, body caps (1 MiB / 10 MiB), deadline policy (request 3,600 s and clone 1,800 s — sized as "≥ 4× the worst legitimate run", computed as a ≤ 421-call floor ≈ 458 s), clone timeout + `DELETE /runs/{id}/clone`, `GITCRAWL_REDIS_STRICT`, health single-flight.
+- **Phase 2** — adversarial hardening: Origin-aware CSRF, Host allowlist, body caps (1 MiB / 10 MiB), deadline policy (request 3,600 s and clone 1,800 s — sized as "≥ 4× the worst legitimate run", computed as a ≤ 421-call floor ≈ 458 s), clone timeout + `DELETE /runs/{id}/clone`, `GITCORPUS_REDIS_STRICT`, health single-flight.
 - **Phase 3** — UX polish (9 additive-only tasks).
 
 The interesting methodological moment of this era is the **inversion of the quarantine policy**:
@@ -126,7 +126,7 @@ The interesting methodological moment of this era is the **inversion of the quar
 
 The deleted `graphql_batch` is the punchline of this document: within 48 hours the *concept* would be rebuilt as `src/lib/graphql_batch.py` — this time with tests and a demand (the engineering-audit reasoning in `corpus-building-efficient-engineering.md` §10.3 lists the old module's five defects as the requirements for the new one). R58's rule — delete, don't quarantine; git is the archive — is itself a methodology that has held since.
 
-Hardening outcome, measured: **1214 tests, 0 failures/errors/skips, 94.74% coverage**, `mypy` clean on 14 files, 23/23 Node tests. One incident is part of the record: *"a non-session pytest process briefly ran against the shared `gitcrawl_test` DB at 12:03–12:06 during Phase 1 Task 2 and exited… the affected runs were repeated clean."* No cause was ever identified; the lesson recorded was procedural (precondition checks).
+Hardening outcome, measured: **1214 tests, 0 failures/errors/skips, 94.74% coverage**, `mypy` clean on 14 files, 23/23 Node tests. One incident is part of the record: *"a non-session pytest process briefly ran against the shared `gitcorpus_test` DB at 12:03–12:06 during Phase 1 Task 2 and exited… the affected runs were repeated clean."* No cause was ever identified; the lesson recorded was procedural (precondition checks).
 
 ### The queued overnight, first batch (2026-10-02, 24 commits)
 
@@ -348,7 +348,7 @@ Gate: **1514 passed, 94.86% coverage**. The deliberate deferrals were recorded, 
 
 ## III.5 Theme 3 — the adaptive controller, and the soak that kept it off
 
-The controller (`src/limiter/adaptive.py`, `088a4f9` + `5a888bd` + `65d0b4c`) implements the audit's three loops as code: AIMD window (`MIN_WINDOW = 8`, `MAX_WINDOW = 48`, start 20), batch guard (10–29, ×0.7 on a signal, +1 per 50 clean batches), quota pacer (reserve 400 points, burst 4, never sleep-to-reset), whole-pool pause with jitter, and a retry budget (10%). It is wired into `fetch_batch(..., adaptive=…)` behind `GITCRAWL_ADAPTIVE=1`, later a settings checkbox (migration `0015`, default **off**, `6dbb759`, 17:49 UTC).
+The controller (`src/limiter/adaptive.py`, `088a4f9` + `5a888bd` + `65d0b4c`) implements the audit's three loops as code: AIMD window (`MIN_WINDOW = 8`, `MAX_WINDOW = 48`, start 20), batch guard (10–29, ×0.7 on a signal, +1 per 50 clean batches), quota pacer (reserve 400 points, burst 4, never sleep-to-reset), whole-pool pause with jitter, and a retry budget (10%). It is wired into `fetch_batch(..., adaptive=…)` behind `GITCORPUS_ADAPTIVE=1`, later a settings checkbox (migration `0015`, default **off**, `6dbb759`, 17:49 UTC).
 
 **The soak** (scratch run, 2026-10-10 15:59:03 → 16:19:57 UTC; the run's audit rows carry `run_id = NULL`, which is how it was identified for this document): batch 29, adaptive ON, envelope 32, **wall 20.9 min**, 0×403, but **2 × 504 timeouts** (16:02:22.873Z and 16:08:17.491Z; ~11.2 s; no `retry-after`, no rate-limit headers) triggered two full drop+pause cycles: window 20 → 10 → 8, batch 29 → 20 → 14 (recovering to 26), 2 pauses, 2,387 hydration points, pacer settling at ~1.23 points/s after a mid-run window reset, 0 deferred, 0 unresolved, complete result (39,418/39,418, no warnings).
 
@@ -525,7 +525,7 @@ Settings columns (B = `graphql_batch_size`, C = `limiter_max_concurrent`) are fr
 | Conforming | 10-08 | `max_concurrent=32` | 97.3 s, 39,005 ids, 0 incomplete, 99.99% spike overlap |
 | Wired default (post-binding fix) | 10-08 | server path, phase binds 32 | **109.3 s, 39,007 ids, 0/192 incomplete** |
 | Hydration profile (Parts A/B) | 10-08 | full `run_filter` at C=10 | 22.3 min total; hydration **1,239.7 s** for 39,005 repos (1,951 requests); 1,888 repos/min; points 4,912 → 1,996; cProfile: blocked on batch completion |
-| Adaptive soak | 10-10 15:59:03 → 16:19:57 | `run_filter` with `GITCRAWL_ADAPTIVE=1`, B=29 | **20.9 min**; W 20→10→8; B 29→14→26; drops 2 (504s); pauses 2; 0×403; 2,898 points; decision: keep off |
+| Adaptive soak | 10-10 15:59:03 → 16:19:57 | `run_filter` with `GITCORPUS_ADAPTIVE=1`, B=29 | **20.9 min**; W 20→10→8; B 29→14→26; drops 2 (504s); pauses 2; 0×403; 2,898 points; decision: keep off |
 
 ### IV.1.3 Per-phase timings, where recorded (seconds, bundle `timings`; `—` = not recorded in that bundle)
 
@@ -594,7 +594,7 @@ The gap between a phase's last request and the next phase's first is the runner'
 | F-3 | 10-06 | Planner appended duplicate `created:` (GitHub unions) → bisection never converged | runs 5–7 dead; run 7 burned 8h14m | fixed `d04bc34` |
 | F-4 | 10-06 | Process restarts orphaned queued/running runs (no recovery) | runs 5–7 (`orphaned: process restarted`) | orphan recovery + resume shipped 10-02 batch 1 (`bfa6c42`, `2bc9216`) |
 | F-5 | 10-08 | Discovery slot storm (10 limiter slots, 32 workers) | prescribed validation "finished" in 58 s with 176/192 shards dead | fixed `0eb1c33` (`bound_concurrency`) |
-| F-6 | 10-02 | Non-session pytest ran against shared `gitcrawl_test` DB 12:03–12:06 | test interference; no corruption | runs repeated clean; cause unknown |
+| F-6 | 10-02 | Non-session pytest ran against shared `gitcorpus_test` DB 12:03–12:06 | test interference; no corruption | runs repeated clean; cause unknown |
 | F-7 | 10-08 21:02 | Run 18: 2× server latency night | timing comparisons invalidated for that night | recorded as a confound, not a bug |
 | F-8 | 10-10 17:09 | **Run 24: C=32 hydration storm** | 159×403 in 8 s; cancelled at 26% | diagnosed (per-worker sleeps, siblings knocked); fixed by hardening §III.11 |
 | F-9 | 10-10 ~15:59 | Soak's scratch script left C=32 in settings with no audit row | run 24 started from an unintended value | hardening + settings hygiene; this doc records the gap |
@@ -702,7 +702,7 @@ Session note: `SET timezone = 'UTC'` before reading timestamps; the stored value
 **A.4 Scratch and ops artifacts.**
 - Adaptive soak: `%LOCALAPPDATA%\Temp\opencode\soak\` (`soak_run.py`, `soak_A_payload.json` 13.6 MB, `soak_A_summary.json`).
 - Corpus-diff scripts: `%LOCALAPPDATA%\Temp\opencode\gc_corpus_delta.py`, `gc_corpus_diff.py`, `gc_corpus_diff2.py` (compare run 9's export with `repos_rust.csv`, 17,757 rows).
-- Service logs: `%LOCALAPPDATA%\gitcrawl\pg.log`, `serve*.log`, `app.out.log`; `repos_rust.csv` sits in the repo root (gitignored corpus export).
+- Service logs: `%LOCALAPPDATA%\gitcorpus\pg.log`, `serve*.log`, `app.out.log`; `repos_rust.csv` sits in the repo root (gitignored corpus export).
 - Review artifacts: `.superpowers/sdd/2026-10-09-adaptive-rate-controller/*.diff`.
 
 **A.5 Git.** The commit index is Appendix C; the full history is `git log --all`; the environment documentation generated during the build is in `../docs/environment.md` and `../docs/development-log.md` (frozen). The granular per-commit dump used to build this document is reproducible with `git log --all --pretty=format:'%ad|%h|%s' --date=format:%Y-%m-%d`.
@@ -734,7 +734,7 @@ Session note: `SET timezone = 'UTC'` before reading timestamps; the stored value
 | `design/runtime-audit-and-adaptive-control.md` | III | the audit + §11 production log (read with Appendix B here) |
 | `design/loc-dilemma.md` | I+ | why `min_loc` is recorded-only; the six-tier estimator design |
 | `design/adoption-window.md` | I+ | thesis framing (cutoff robustness, cohorts, detector floor) |
-| `design/landscape-comparison.md`, `gitcrawl-vs-seart.md` | I | why build rather than adopt |
+| `design/landscape-comparison.md`, `gitcorpus-vs-seart.md` | I | why build rather than adopt |
 | `docs/superpowers/{specs,plans,prompts}/*` | I–III | every design spec, implementation plan, overnight queue and execution report |
 | `design/methodology.md` (this file) | living | the consolidated history you are reading |
 
@@ -761,7 +761,7 @@ Every commit reachable from `main` (branch `quality-hardening` is an ancestor �
 
 ### 2026-09-30 — 10 commits
 
-- `717c9b3` docs: import gitcrawl research + frozen v2 design (live-only freshness, thesis tracks parked)
+- `717c9b3` docs: import gitcorpus research + frozen v2 design (live-only freshness, thesis tracks parked)
 - `8947d1a` T000: walking skeleton (validate -> live search -> display -> bundle + CSV)
 - `14ec36c` T001: project structure (src packages, tests tiers, docs) + docker-compose (Postgres 17, Redis 7)
 - `f8cd570` T002: pinned deps + shared GitHub client (env-only tokens, header defaults, fingerprint logging helper)

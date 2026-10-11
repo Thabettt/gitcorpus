@@ -10,7 +10,7 @@
 
 **Spec:** none — decision table inline. Conflicts resolved explicitly (see Task 1).
 
-**Depends on:** current `001-gitcrawl` head. `tests/quarantine_manifest.txt` does **not** exist yet (the test-and-tooling-hardening plan is pending); if that plan lands first, Task 3 must also update the manifest.
+**Depends on:** current `001-gitcorpus` head. `tests/quarantine_manifest.txt` does **not** exist yet (the test-and-tooling-hardening plan is pending); if that plan lands first, Task 3 must also update the manifest.
 
 ## Global Constraints
 
@@ -141,7 +141,7 @@ def test_discovery_reclaims_and_processes_a_dead_consumers_shard(clean_db, monke
     )
     queue = ShardQueue(redis)
     queue.enqueue(shard_id)
-    queue.claim("gitcrawl-dead", count=1)  # delivered to a consumer that died
+    queue.claim("gitcorpus-dead", count=1)  # delivered to a consumer that died
     assert queue.pel_size() == 1
 
     # reclaim immediately in the test instead of waiting the production 60s idle window
@@ -176,7 +176,7 @@ Expected: FAIL (`pel_size` stays 1; the shard is never processed).
 `reclaim_stale` claims entries into the caller's PEL and **returns** them; discarding the return value would strand the shards, so the reclaimed batch must be processed before the new-message loop. In `run_search_discovery`:
 
 ```python
-    consumer = f"gitcrawl-{os.getpid()}"
+    consumer = f"gitcorpus-{os.getpid()}"
     if queue is None:
         while pending:
             process(pending.popleft())

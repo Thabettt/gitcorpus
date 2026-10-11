@@ -413,11 +413,11 @@ def test_model_metadata_indexes_match_contract():
 
 def test_guard_refuses_non_test_database():
     with pytest.raises(UnsafeTestDatabase):
-        assert_test_database("postgresql+psycopg://gitcrawl:pw@localhost:5432/gitcrawl")
+        assert_test_database("postgresql+psycopg://gitcorpus:pw@localhost:5432/gitcorpus")
     with pytest.raises(UnsafeTestDatabase):
-        assert_test_database("postgresql+psycopg://gitcrawl:pw@localhost:5432/gitcrawl_dev")
-    url = "postgresql+psycopg://gitcrawl:pw@localhost:5432/gitcrawl_test"
-    assert assert_test_database(url).endswith("/gitcrawl_test")
+        assert_test_database("postgresql+psycopg://gitcorpus:pw@localhost:5432/gitcorpus_dev")
+    url = "postgresql+psycopg://gitcorpus:pw@localhost:5432/gitcorpus_test"
+    assert assert_test_database(url).endswith("/gitcorpus_test")
 
 
 def test_downgrade_and_upgrade_round_trip(alembic_config, alembic_engine: Engine):

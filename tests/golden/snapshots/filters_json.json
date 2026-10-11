@@ -4,5 +4,5 @@
   "headers": {
     "content-type": "application/json"
   },
-  "body": "{\"filters\":[{\"id\":921,\"name\":\"rust picks\",\"filter_hash\":\"246aaf4a64819cedf3f4caae4bff42dfe23e6d2e72d26cb83964ecc3e77a6e40\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}]}"
+  "body": "{\"filters\":[{\"id\":921,\"name\":\"rust picks\",\"filter_hash\":\"4a08a9ed4365b4801cea33f107ed2a4485aaeae2a59b196ee8c9473db378f0d1\",\"created_at\":\"2026-01-01T00:00:00Z\",\"updated_at\":\"2026-01-01T00:00:00Z\"}]}"
 }

@@ -13,7 +13,7 @@ from limiter.classifier import Action, classify, classify_transport
 
 API_BASE = "https://api.github.com"
 API_VERSION = "2022-11-28"
-USER_AGENT = "gitcrawl/0.0.1"
+USER_AGENT = "gitcorpus/0.0.1"
 ACCEPT = "application/vnd.github+json"
 
 

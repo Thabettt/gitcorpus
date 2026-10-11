@@ -152,7 +152,7 @@ RICH_Q = (
 
 def rich_spec() -> dict:
     return {
-        "gitcrawl_filter": 1,
+        "gitcorpus_filter": 1,
         "q": RICH_Q,
         "sort": "stars",
         "order": "desc",
@@ -264,7 +264,7 @@ def csrf_token(client: TestClient) -> str:
 
 
 def seed_run(engine: Engine, tmp_path) -> tuple[int, str]:
-    filter_spec = {"gitcrawl_filter": 1, "q": "language:rust"}
+    filter_spec = {"gitcorpus_filter": 1, "q": "language:rust"}
     run_id = create_run(engine, filter_spec, api_version=API_VERSION)
     payload = RunPayload(total_count=1, fetched=1, items=[payload_item()])
     execute_run(engine, run_id, runner=lambda _rid, _spec: payload, runs_root=str(tmp_path))
@@ -278,7 +278,7 @@ def seed_run(engine: Engine, tmp_path) -> tuple[int, str]:
 def test_empty_form_builds_a_minimal_spec():
     assert build_query_from_form({}) == ""
     assert build_spec_from_form({}) == {
-        "gitcrawl_filter": 1,
+        "gitcorpus_filter": 1,
         "q": "",
         "page": {"per_page": 20, "max_pages": 3},
     }
@@ -505,7 +505,7 @@ def test_find_action_creates_a_run_and_redirects_to_it(clean: Engine, tmp_path):
         spec_to_dict(
             parse_filter_spec(
                 {
-                    "gitcrawl_filter": 1,
+                    "gitcorpus_filter": 1,
                     "q": "language:rust",
                     "page": {"per_page": 20, "max_pages": 3},
                 }
@@ -551,7 +551,7 @@ def test_upload_action_runs_the_uploaded_spec(clean: Engine, tmp_path):
         files={
             "spec_file": (
                 "spec.json",
-                json.dumps({"gitcrawl_filter": 1, "q": "language:rust"}).encode(),
+                json.dumps({"gitcorpus_filter": 1, "q": "language:rust"}).encode(),
                 "application/json",
             )
         },

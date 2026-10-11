@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# gitcrawl dev launcher: services -> migrations -> detached server.
+# gitcorpus dev launcher: services -> migrations -> detached server.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 PY="$ROOT/.venv/Scripts/python.exe"
-STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/gitcrawl"
+STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/gitcorpus"
 PID_FILE="$STATE_DIR/serve.pid"
 LOG_FILE="$STATE_DIR/serve.log"
 ERR_FILE="$STATE_DIR/serve.err.log"
 PROBE_HOST="127.0.0.1"
-PORT="${GITCRAWL_PORT:-8000}"
+PORT="${GITCORPUS_PORT:-8000}"
 HEALTH="http://$PROBE_HOST:$PORT/health"
 
 say() { printf '%s\n' "$*"; }
@@ -64,7 +64,7 @@ mkdir -p "$STATE_DIR"
 if [[ -f "$PID_FILE" ]]; then
   old_pid="$(tr -d '[:space:]' < "$PID_FILE")"
   if [[ -n "$old_pid" ]] && process_alive "$old_pid"; then
-    say "gitcrawl is already running (pid $old_pid) at http://$PROBE_HOST:$PORT"
+    say "gitcorpus is already running (pid $old_pid) at http://$PROBE_HOST:$PORT"
     say "run ./restart to restart it"
     exit 0
   fi
@@ -72,11 +72,11 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 if port_open "$PORT"; then
-  die "port $PORT is already in use by another process; stop it or set GITCRAWL_PORT"
+  die "port $PORT is already in use by another process; stop it or set GITCORPUS_PORT"
 fi
 
-ensure_service "PostgreSQL" 5433 "gitcrawl-postgres"
-ensure_service "Redis" 6379 "gitcrawl-redis"
+ensure_service "PostgreSQL" 5433 "gitcorpus-postgres"
+ensure_service "Redis" 6379 "gitcorpus-redis"
 
 say "applying migrations ..."
 PYTHONPATH=src "$PY" -m alembic upgrade head
@@ -101,7 +101,7 @@ for _attempt in $(seq 1 30); do
       printf '%s\n' "$listener_pid" > "$PID_FILE"
       pid="$listener_pid"
     fi
-    say "gitcrawl is up at http://$PROBE_HOST:$PORT (pid $pid)"
+    say "gitcorpus is up at http://$PROBE_HOST:$PORT (pid $pid)"
     say "log: $LOG_FILE"
     say "follow: tail -f \"$LOG_FILE\""
     exit 0

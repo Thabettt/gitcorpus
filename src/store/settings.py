@@ -12,16 +12,16 @@ from lib.graphql_batch import MAX_BATCH_SIZE
 from store.models import AppSettings
 
 SETTINGS_ENV: Mapping[str, str] = {
-    "max_shards": "GITCRAWL_MAX_SHARDS",
-    "max_candidates": "GITCRAWL_MAX_CANDIDATES",
-    "max_hydrate": "GITCRAWL_MAX_HYDRATE",
-    "max_enrich": "GITCRAWL_MAX_ENRICH",
-    "request_deadline_seconds": "GITCRAWL_REQUEST_DEADLINE_SECONDS",
-    "graphql_batch": "GITCRAWL_GRAPHQL_BATCH",
-    "graphql_batch_size": "GITCRAWL_GRAPHQL_BATCH_SIZE",
-    "adaptive": "GITCRAWL_ADAPTIVE",
-    "limiter_max_concurrent": "GITCRAWL_MAX_CONCURRENT",
-    "discovery_concurrency": "GITCRAWL_DISCOVERY_CONCURRENCY",
+    "max_shards": "GITCORPUS_MAX_SHARDS",
+    "max_candidates": "GITCORPUS_MAX_CANDIDATES",
+    "max_hydrate": "GITCORPUS_MAX_HYDRATE",
+    "max_enrich": "GITCORPUS_MAX_ENRICH",
+    "request_deadline_seconds": "GITCORPUS_REQUEST_DEADLINE_SECONDS",
+    "graphql_batch": "GITCORPUS_GRAPHQL_BATCH",
+    "graphql_batch_size": "GITCORPUS_GRAPHQL_BATCH_SIZE",
+    "adaptive": "GITCORPUS_ADAPTIVE",
+    "limiter_max_concurrent": "GITCORPUS_MAX_CONCURRENT",
+    "discovery_concurrency": "GITCORPUS_DISCOVERY_CONCURRENCY",
 }
 
 _BOOL_FIELDS = frozenset({"graphql_batch", "adaptive"})

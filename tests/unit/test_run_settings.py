@@ -30,12 +30,12 @@ class _EmptyEngine:
 
 
 def test_settings_env_names_are_stable():
-    assert SETTINGS_ENV["max_shards"] == "GITCRAWL_MAX_SHARDS"
-    assert SETTINGS_ENV["request_deadline_seconds"] == "GITCRAWL_REQUEST_DEADLINE_SECONDS"
-    assert SETTINGS_ENV["graphql_batch"] == "GITCRAWL_GRAPHQL_BATCH"
-    assert SETTINGS_ENV["adaptive"] == "GITCRAWL_ADAPTIVE"
-    assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCRAWL_MAX_CONCURRENT"
-    assert SETTINGS_ENV["discovery_concurrency"] == "GITCRAWL_DISCOVERY_CONCURRENCY"
+    assert SETTINGS_ENV["max_shards"] == "GITCORPUS_MAX_SHARDS"
+    assert SETTINGS_ENV["request_deadline_seconds"] == "GITCORPUS_REQUEST_DEADLINE_SECONDS"
+    assert SETTINGS_ENV["graphql_batch"] == "GITCORPUS_GRAPHQL_BATCH"
+    assert SETTINGS_ENV["adaptive"] == "GITCORPUS_ADAPTIVE"
+    assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCORPUS_MAX_CONCURRENT"
+    assert SETTINGS_ENV["discovery_concurrency"] == "GITCORPUS_DISCOVERY_CONCURRENCY"
 
 
 def test_discovery_concurrency_defaults_to_32():
@@ -51,8 +51,8 @@ def test_adaptive_defaults_to_false():
 
 
 def test_env_pinned_fields_lists_only_set_variables(monkeypatch):
-    monkeypatch.delenv("GITCRAWL_MAX_SHARDS", raising=False)
-    monkeypatch.setenv("GITCRAWL_GRAPHQL_BATCH", "0")
+    monkeypatch.delenv("GITCORPUS_MAX_SHARDS", raising=False)
+    monkeypatch.setenv("GITCORPUS_GRAPHQL_BATCH", "0")
     assert env_pinned_fields() == frozenset({"graphql_batch"})
 
 
@@ -63,10 +63,10 @@ def test_as_dict_round_trips():
 
 @pytest.mark.parametrize("raw", ["65", "999"])
 def test_env_discovery_concurrency_is_clamped_to_the_form_bound(monkeypatch, raw):
-    monkeypatch.setenv("GITCRAWL_DISCOVERY_CONCURRENCY", raw)
+    monkeypatch.setenv("GITCORPUS_DISCOVERY_CONCURRENCY", raw)
     assert load_run_settings(_EmptyEngine()).discovery_concurrency == 64
 
 
 def test_env_discovery_concurrency_within_bounds_is_kept(monkeypatch):
-    monkeypatch.setenv("GITCRAWL_DISCOVERY_CONCURRENCY", "48")
+    monkeypatch.setenv("GITCORPUS_DISCOVERY_CONCURRENCY", "48")
     assert load_run_settings(_EmptyEngine()).discovery_concurrency == 48

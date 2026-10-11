@@ -26,11 +26,11 @@ def _env_seconds(name: str, default: float) -> float:
 
 
 def request_deadline_seconds() -> float:
-    return _env_seconds("GITCRAWL_REQUEST_DEADLINE_SECONDS", DEFAULT_REQUEST_DEADLINE_SECONDS)
+    return _env_seconds("GITCORPUS_REQUEST_DEADLINE_SECONDS", DEFAULT_REQUEST_DEADLINE_SECONDS)
 
 
 def clone_timeout_seconds() -> float:
-    return _env_seconds("GITCRAWL_CLONE_TIMEOUT_SECONDS", DEFAULT_CLONE_TIMEOUT_SECONDS)
+    return _env_seconds("GITCORPUS_CLONE_TIMEOUT_SECONDS", DEFAULT_CLONE_TIMEOUT_SECONDS)
 
 
 class Deadline:

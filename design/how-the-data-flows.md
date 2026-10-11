@@ -3,20 +3,20 @@
 **Date**: 2026-09-29 (updated 2026-10-08). Companion to `spec.md`, `contracts/search-api.md`, and `findings/06-exhaustive-parameters.md`. No prior GitHub API knowledge assumed — every concept is introduced where it's first used.
 
 **The document set** (read together — what it does, how fast it can go, why it exists, and what else is out there):
-- This document — what gitcrawl does and the stages data passes through.
+- This document — what gitcorpus does and the stages data passes through.
 - `corpus-building-efficient-engineering.md` — GitHub's rate meters, the math of what is findable vs. savable, the legal limits, and the designed batching engine.
-- `gitcrawl-vs-seart.md` — how gitcrawl compares to SEART GitHub Search, where each wins, and why gitcrawl fits this project's thesis work.
-- `landscape-comparison.md` — the full adjacent-tool landscape, the capability gap that justifies the build, and the `gitcrawl` name collision.
+- `gitcorpus-vs-seart.md` — how gitcorpus compares to SEART GitHub Search, where each wins, and why gitcorpus fits this project's thesis work.
+- `landscape-comparison.md` — the full adjacent-tool landscape and the capability gap that justifies the build.
 
 ## The one-paragraph version
 
-You describe what you want in a filter file and click **Find**. gitcrawl checks your filters for mistakes, asks GitHub's live search for matching repositories, fetches full details for each match, applies the filters GitHub itself can't express, enriches the survivors, figures out owner countries, merges everything into one result set, shows it to you, and saves a replayable bundle. Each stage exists because of a specific GitHub limitation — this doc explains every stage and its reason.
+You describe what you want in a filter file and click **Find**. gitcorpus checks your filters for mistakes, asks GitHub's live search for matching repositories, fetches full details for each match, applies the filters GitHub itself can't express, enriches the survivors, figures out owner countries, merges everything into one result set, shows it to you, and saves a replayable bundle. Each stage exists because of a specific GitHub limitation — this doc explains every stage and its reason.
 
 ## Cast of characters (the only 5 things you must know)
 
 - **GitHub search** (`GET /search/repositories`): the front door. You send one text string (`q`) with filters inside it (e.g. `language:rust stars:>100`) and get back *thin* repo records: name, description, stars, language, dates, plus a `score`. It returns at most 100 per page and 1000 per query, allows ~30 requests/minute per token, and silently treats typos as plain words instead of erroring. Full reference: `findings/01-search-repos-parameters.md`.
 - **Hydration** (`GET /repos/{owner}/{repo}`, or one batched GraphQL request for up to 20 repos): asking for one repo's *full* record — topics, license, exact counts, flags, dates, language bytes. Costs 1 REST call per repo from a separate budget (5,000/hr per token), or one batched GraphQL call per 20 from the points budget; if a repo fails inside a batch, only that repo falls back to REST. Unchanged repos can be re-fetched nearly free via caching headers (ETag).
-- **Virtual filters**: filters GitHub never built (`has_dockerfile`, `min_commits`, `owner_country`). gitcrawl computes them itself per repo, after hydration.
+- **Virtual filters**: filters GitHub never built (`has_dockerfile`, `min_commits`, `owner_country`). gitcorpus computes them itself per repo, after hydration.
 - **Enrichment**: extra detail fetched per repo beyond the full record — language byte breakdowns, file trees, releases, funding links, discussions. Each costs calls, so it's spent only on repos that survived filtering.
 - **Run bundle**: the saved artifact of one Find — your filters + when it ran + what GitHub said + final results. It's how a second device replays your search and how a thesis proves what was measured.
 
@@ -29,7 +29,7 @@ filters.json → Validate → Live search → Thin matches → Hydrate → Virtu
 
 ### Stage 0 — Your filters (a file, not a form)
 
-Everything starts as a `filter-spec v1` JSON doc: the `q` string GitHub understands, sort/order/page options, and `virtual` filters only gitcrawl understands. Because it's a file, it travels between devices; because it holds no tokens, it's safe to share. Example: the thesis Rust corpus (`language:rust`, not forks, pushed in range, `min_commits: 100`, `min_loc: 5000`). Contract: `contracts/search-api.md`.
+Everything starts as a `filter-spec v1` JSON doc: the `q` string GitHub understands, sort/order/page options, and `virtual` filters only gitcorpus understands. Because it's a file, it travels between devices; because it holds no tokens, it's safe to share. Example: the thesis Rust corpus (`language:rust`, not forks, pushed in range, `min_commits: 100`, `min_loc: 5000`). Contract: `contracts/search-api.md`.
 
 ### Stage 1 — Validation (mistakes die here, free)
 
@@ -43,7 +43,7 @@ The validated `q` goes to GitHub's GraphQL search, in two phases. First a batche
 
 Each surviving match gets its full record — batched by default (up to 20 aliased repos per GraphQL request, bounded concurrency, per-repo REST fallback when one node fails) on a budget separate from search. This is the most expensive stage per repo, so two economies apply: unchanged repos revalidate nearly free (ETag → `304`), and enrichment never starts for repos that later fail virtual filters. A repo renamed since discovery is followed (`301`); a deleted/privatized one becomes a recorded tombstone, not a crash. The same batch already carries the commit count and primary-language bytes, so those filters cost no extra calls.
 
-### Stage 4 — Virtual filters (gitcrawl's own screening room)
+### Stage 4 — Virtual filters (gitcorpus's own screening room)
 
 Now the filters GitHub can't express run per repo, cheapest first: values already carried by hydration (`min_language_bytes`/`max_language_bytes`, `min_commits`/`max_commits`; `min_loc` is accepted but recorded-only until an estimate tier ships — see `loc-dilemma.md`), then file checks (`has_dockerfile` via one file-tree fetch covering all paths — never one call per file; this same machinery later becomes the agent-detection file channel), then `owner_country` via the geo pipeline. Failures drop with a recorded reason and are counted in the run metadata, so "47 repos matched search, 31 survived filters" is always explainable. The full cost-order table (free → mirrors → single-call → batched → deep) lives in `research.md` D12; the scheduler behind it segments candidates across tokens survivors-first, so even a stopped-early run stays useful.
 
@@ -87,5 +87,5 @@ Filters: `language:rust fork:false pushed:>2024-09-29` + virtual `min_commits: 1
 - Understand any attribute: `findings/06-exhaustive-parameters.md` (the master matrix).
 - Know the limits: `findings/05-research-gaps.md` (what breaks, audited).
 - Go faster: `corpus-building-efficient-engineering.md` (meters, the touches rule, strategies, GraphQL batching design).
-- Compare tools: `gitcrawl-vs-seart.md` (shared research catalog vs. live evidence-producing instrument).
-- Survey the market: `landscape-comparison.md` (adjacent tools, the capability gap, and the name collision).
+- Compare tools: `gitcorpus-vs-seart.md` (shared research catalog vs. live evidence-producing instrument).
+- Survey the market: `landscape-comparison.md` (adjacent tools and the capability gap).

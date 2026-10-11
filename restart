@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# gitcrawl dev restart: stop the detached server, then run the full start flow.
+# gitcorpus dev restart: stop the detached server, then run the full start flow.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/gitcrawl"
+STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/gitcorpus"
 PID_FILE="$STATE_DIR/serve.pid"
 
 say() { printf '%s\n' "$*"; }
@@ -18,7 +18,7 @@ process_alive() {
 if [[ -f "$PID_FILE" ]]; then
   pid="$(tr -d '[:space:]' < "$PID_FILE")"
   if [[ -n "$pid" ]] && process_alive "$pid"; then
-    say "stopping gitcrawl (pid $pid) ..."
+    say "stopping gitcorpus (pid $pid) ..."
     powershell.exe -NoProfile -Command "Stop-Process -Id $pid -Force" >/dev/null
     for _attempt in $(seq 1 10); do
       process_alive "$pid" || break

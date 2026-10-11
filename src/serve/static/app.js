@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var applib = window.gitcrawlApp;
+  var applib = window.gitcorpusApp;
   var root = document.documentElement;
   var busyTimer = null;
 
@@ -161,7 +161,7 @@
       return true;
     }
     var current = focusable.indexOf(document.activeElement);
-    var next = window.gitcrawlModalFocus.nextFocusIndex(
+    var next = window.gitcorpusModalFocus.nextFocusIndex(
       current,
       focusable.length,
       event.shiftKey
@@ -197,7 +197,7 @@
         break;
       }
     }
-    var next = window.gitcrawlRowNav.nextIndex(current, delta, rows.length);
+    var next = window.gitcorpusRowNav.nextIndex(current, delta, rows.length);
     var previous = document.querySelector("tr.row-selected");
     if (previous) {
       previous.classList.remove("row-selected");
@@ -336,7 +336,7 @@
 
   function storedRecentFilters() {
     try {
-      return window.gitcrawlRecentFilters.parse(
+      return window.gitcorpusRecentFilters.parse(
         window.localStorage.getItem(RECENT_FILTERS_KEY)
       );
     } catch (error) {
@@ -367,7 +367,7 @@
   }
 
   function recordRecentFilter(form) {
-    if (!window.gitcrawlRecentFilters) {
+    if (!window.gitcorpusRecentFilters) {
       return;
     }
     var fields = formFieldPairs(form);
@@ -375,8 +375,8 @@
       return;
     }
     saveRecentFilters(
-      window.gitcrawlRecentFilters.push(storedRecentFilters(), {
-        label: window.gitcrawlRecentFilters.label(fields),
+      window.gitcorpusRecentFilters.push(storedRecentFilters(), {
+        label: window.gitcorpusRecentFilters.label(fields),
         fields: fields
       })
     );
@@ -385,7 +385,7 @@
   function renderRecentFilters() {
     var container = document.getElementById("recent-filters");
     var list = document.getElementById("recent-filters-list");
-    if (!container || !list || !window.gitcrawlRecentFilters) {
+    if (!container || !list || !window.gitcorpusRecentFilters) {
       return;
     }
     var entries = storedRecentFilters();
@@ -399,7 +399,7 @@
       var link = document.createElement("a");
       link.className = "button ghost";
       link.setAttribute("data-recent-filter", "true");
-      link.href = "/find?" + window.gitcrawlRecentFilters.toQuery(entry.fields);
+      link.href = "/find?" + window.gitcorpusRecentFilters.toQuery(entry.fields);
       link.textContent = entry.label;
       item.appendChild(link);
       list.appendChild(item);
@@ -493,7 +493,7 @@
         var status = error && typeof error.status === "number" ? error.status : 0;
         var body = error && error.body ? error.body : null;
         showToast(
-          window.gitcrawlErrors.apiErrorText(status, body, "Clone request failed"),
+          window.gitcorpusErrors.apiErrorText(status, body, "Clone request failed"),
           function () {
             startClone(button);
           }
@@ -548,7 +548,7 @@
         var status = error && typeof error.status === "number" ? error.status : 0;
         var body = error && error.body ? error.body : null;
         showToast(
-          window.gitcrawlErrors.apiErrorText(status, body, "Cancel request failed"),
+          window.gitcorpusErrors.apiErrorText(status, body, "Cancel request failed"),
           function () {
             cancelClone(button);
           }

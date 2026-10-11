@@ -40,7 +40,7 @@
 | `tests/unit/test_cloner.py` | **modify** — factory wrapper; barrier replaces sleep/peak |
 | `tests/integration/test_executor.py` | **modify** — factory `db` wrapper; event/barrier synchronization; drop `import time` |
 | `src/serve/static/applib.js` | **new** — UMD pure helpers extracted from `app.js` |
-| `src/serve/static/app.js` | **modify** — consume `gitcrawlApp`; identical behavior |
+| `src/serve/static/app.js` | **modify** — consume `gitcorpusApp`; identical behavior |
 | `src/serve/templates/base.html` | **modify** — load `applib.js` before `app.js` |
 | `tests/js/applib.test.mjs` | **new** — Node tests for the extracted helpers |
 | `tests/unit/test_applib_js.py` | **new** — pytest wrapper for the Node test |
@@ -850,8 +850,8 @@ git commit -m "test: replace wall-clock flake assertions with deterministic sync
 - Test: `tests/contract/test_console_pages.py` (new contract assertions)
 
 **Interfaces:**
-- Produces: UMD global/CommonJS `gitcrawlApp` exposing `TOAST_DURATION_MS: number`, `requestErrorMessage(status) -> string`, `cloneErrorMessage() -> string`, `cloneStartedMessage() -> string`, `parseCloneLimit(raw) -> number`, `isEditableTarget(target) -> boolean`, `createRowCache() -> {get(compute), invalidate()}`, `createStartGuard() -> {begin(): boolean, end()}`.
-- Consumes in the browser: `base.html` loads `applib.js` before `app.js`; `app.js` reads `window.gitcrawlApp`.
+- Produces: UMD global/CommonJS `gitcorpusApp` exposing `TOAST_DURATION_MS: number`, `requestErrorMessage(status) -> string`, `cloneErrorMessage() -> string`, `cloneStartedMessage() -> string`, `parseCloneLimit(raw) -> number`, `isEditableTarget(target) -> boolean`, `createRowCache() -> {get(compute), invalidate()}`, `createStartGuard() -> {begin(): boolean, end()}`.
+- Consumes in the browser: `base.html` loads `applib.js` before `app.js`; `app.js` reads `window.gitcorpusApp`.
 
 - [ ] **Step 1: Write the failing Node test and its pytest wrapper**
 
@@ -948,7 +948,7 @@ Expected: FAIL — `applib.js` does not exist.
   if (typeof module === "object" && module.exports) {
     module.exports = factory();
   } else {
-    root.gitcrawlApp = factory();
+    root.gitcorpusApp = factory();
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
@@ -1038,7 +1038,7 @@ Expected: FAIL — `applib.js` does not exist.
 
 `src/serve/static/app.js` edits:
 
-1. After `"use strict";` add `var applib = window.gitcrawlApp;`.
+1. After `"use strict";` add `var applib = window.gitcorpusApp;`.
 2. `showToast` line 39: use `applib.TOAST_DURATION_MS` instead of `6000`.
 3. Delete the `isEditable` function (lines 42-51) and change `handleKeyboard` line 161 to `if (applib.isEditableTarget(event.target)) {`.
 4. Replace lines 89-103 (`rowCache`/`invalidateRowCache`/`selectableRows`) with:
@@ -1097,7 +1097,7 @@ def test_applib_loads_before_app_js(client: TestClient):
 def test_app_js_invalidates_the_row_cache_after_htmx_swaps(client: TestClient):
     script = client.get("/static/app.js").text
 
-    assert "window.gitcrawlApp" in script
+    assert "window.gitcorpusApp" in script
     assert "applib.createRowCache" in script
     assert '"htmx:afterSwap", invalidateRowCache' in script
 ```
@@ -1286,7 +1286,7 @@ def test_build_headers_sends_no_authorization_without_a_token(monkeypatch):
 
     assert "Authorization" not in headers
     assert headers["Accept"] == "application/vnd.github+json"
-    assert headers["User-Agent"] == "gitcrawl/0.0-skeleton"
+    assert headers["User-Agent"] == "gitcorpus/0.0-skeleton"
 
 
 def test_validate_rejects_unknown_qualifiers(capsys):

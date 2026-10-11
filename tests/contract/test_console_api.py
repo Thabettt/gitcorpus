@@ -10,7 +10,7 @@ from serve.app import create_app
 from serve.executor import RunPayload, RunPayloadItem, create_run, execute_run
 from serve.filter_spec import parse_filter_spec, spec_hash
 
-SPEC = {"gitcrawl_filter": 1, "q": "language:rust", "sort": "stars"}
+SPEC = {"gitcorpus_filter": 1, "q": "language:rust", "sort": "stars"}
 ITEM_KEYS = {"id", "name", "filter_hash", "created_at", "updated_at"}
 
 
@@ -121,7 +121,7 @@ def test_create_filter_returns_201_and_list_view_without_spec(client: TestClient
 
 def test_create_filter_invalid_spec_is_400_with_hints(client: TestClient):
     response = client.post(
-        "/filters", json={"name": "broken", "spec": {"gitcrawl_filter": 1, "bogus": 1}}
+        "/filters", json={"name": "broken", "spec": {"gitcorpus_filter": 1, "bogus": 1}}
     )
 
     assert response.status_code == 400

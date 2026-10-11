@@ -50,7 +50,7 @@ def test_lazy_loader_reuses_a_seeded_value():
 def test_create_app_lazy_factories_are_single_flight(monkeypatch):
     captured: dict[str, object] = {}
     monkeypatch.setattr("serve.app.register_pages", lambda app, **kwargs: captured.update(kwargs))
-    monkeypatch.setenv("DATABASE_URL", "postgresql://gitcrawl@localhost/gitcrawl")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://gitcorpus@localhost/gitcorpus")
     engine_calls: list[str] = []
     monkeypatch.setattr("serve.app.create_engine", lambda url: engine_calls.append(url) or object())
     executor_calls: list[object] = []
@@ -72,7 +72,7 @@ def test_create_app_lazy_factories_are_single_flight(monkeypatch):
 
     engines = [engine_factory() for _ in range(2)]
     assert engines[0] is engines[1]
-    assert engine_calls == ["postgresql://gitcrawl@localhost/gitcrawl"]
+    assert engine_calls == ["postgresql://gitcorpus@localhost/gitcorpus"]
 
     runner = runner_factory()
     assert runner_factory() is runner
