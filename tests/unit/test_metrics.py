@@ -94,6 +94,17 @@ def test_severity_thresholds():
     assert severity("shard_coverage", 0.5) == "fail"
 
 
+def test_display_value_formats_numbers_and_ratios():
+    from serve.metrics import display_value
+
+    assert display_value("p95_latency_ms", None) == "n/a"
+    assert display_value("p95_latency_ms", 11203.799999999998) == "11,203.8"
+    assert display_value("shard_coverage", 0.672085201793722) == "67.2%"
+    assert display_value("rate_422", 0.0) == "0.0%"
+    assert display_value("incomplete_results_ratio", 0.5) == "50.0%"
+    assert display_value("graphql_remaining", 4634) == "4,634"
+
+
 def test_metrics_payload_reads_paused_buckets(clean_db, monkeypatch):
     engine = clean_db()
     redis = fakeredis.FakeRedis()

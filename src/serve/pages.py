@@ -35,7 +35,7 @@ from serve.filter_spec import (
 )
 from serve.forms import build_spec_from_form, form_state, spec_to_form_values
 from serve.library import LibraryError, create_filter, get_filter, list_filters
-from serve.metrics import severity
+from serve.metrics import display_value, severity
 from serve.quality import sentence_for
 from serve.runs import (
     CloneRegistry,
@@ -100,6 +100,7 @@ _templates = Jinja2Templates(
     )
 )
 _templates.env.globals["severity"] = severity
+_templates.env.globals["slo_value"] = display_value
 _templates.env.globals["status_label"] = status_label
 _redis_client = None
 logger = logging.getLogger("gitcorpus.serve")

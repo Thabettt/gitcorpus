@@ -3,7 +3,7 @@
     {% for name, value in payload.slo.items() %}
     <article class="card {{ severity(name, value) }}">
       <h3>{{ labels[name] }}</h3>
-      <p>{{ 'n/a' if value is none else value }}</p>
+      <p>{{ slo_value(name, value) }}</p>
     </article>
     {% endfor %}
   </div>

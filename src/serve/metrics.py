@@ -43,6 +43,27 @@ def severity(name: str, value) -> str:
     return "warn" if near else "ok"
 
 
+_RATIO_KEYS = {
+    "incomplete_results_ratio",
+    "rate_422",
+    "rate_403_429",
+    "shard_coverage",
+    "geo_unmatched_rate",
+}
+
+
+def display_value(name: str, value) -> str:
+    if value is None:
+        return "n/a"
+    if name in _RATIO_KEYS and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value * 100:.1f}%"
+    if isinstance(value, float):
+        return f"{value:,.1f}"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
 def _paused(redis_client) -> list[dict]:
     if redis_client is None:
         return []

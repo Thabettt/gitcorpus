@@ -55,7 +55,7 @@
         {% if name in plain %}
         <tr>
           <td>{{ plain[name] }}</td>
-          <td>{{ 'n/a' if value is none else value }}</td>
+          <td>{{ slo_value(name, value) }}</td>
           <td><span class="badge {{ severity(name, value) }}">{{ {'ok': 'fine', 'warn': 'watch', 'fail': 'act', 'na': 'no data'}[severity(name, value)] }}</span></td>
         </tr>
         {% endif %}
