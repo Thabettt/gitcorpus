@@ -317,3 +317,18 @@ def test_detect_prs_unavailable_repo():
 
     result = detect_prs(make_deps(handler), "octo/gone", PACK)
     assert result.status == "unavailable"
+
+
+def test_detect_prs_graphql_errors_with_partial_data_is_partial():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {"repository": {"pullRequests": {"nodes": []}}},
+                "errors": [{"message": "RATE_LIMITED"}],
+            },
+        )
+
+    result = detect_prs(make_deps(handler), "octo/repo", PACK)
+    assert result.status == "partial"
+    assert result.note == "graphql errors"

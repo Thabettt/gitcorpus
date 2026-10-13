@@ -399,6 +399,12 @@ query($owner: String!, $name: String!, $limit: Int!) {
 """
 
 
+def _login(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    return str(value.get("login") or "")
+
+
 def _prs_from_payload(payload: dict) -> tuple[list[dict], str, str | None]:
     repository = (payload.get("data") or {}).get("repository")
     if repository is None:
@@ -415,25 +421,22 @@ def _prs_from_payload(payload: dict) -> tuple[list[dict], str, str | None]:
                 "createdAt": str(node.get("createdAt") or ""),
                 "headRefName": node.get("headRefName"),
                 "body": node.get("bodyText"),
-                "author": str(author.get("login") or "") if isinstance(author, Mapping) else "",
+                "author": _login(author),
                 "labels": [
                     str(label.get("name"))
                     for label in (node.get("labels") or {}).get("nodes") or []
                     if isinstance(label, Mapping)
                 ],
                 "comments": [
-                    str(comment.get("author", {}).get("login") or "")
+                    _login(comment.get("author"))
                     for comment in (node.get("comments") or {}).get("nodes") or []
                     if isinstance(comment, Mapping)
                 ],
                 "commits": [
                     {
                         "oid": str((commit.get("commit") or {}).get("oid") or ""),
-                        "author": str(
-                            ((commit.get("commit") or {}).get("author") or {})
-                            .get("user", {})
-                            .get("login")
-                            or ""
+                        "author": _login(
+                            ((commit.get("commit") or {}).get("author") or {}).get("user")
                         ),
                     }
                     for commit in (node.get("commits") or {}).get("nodes") or []
@@ -468,6 +471,10 @@ def detect_prs(
         if gql_status != "ok":
             return ChannelResult(status="partial", note=gql_note)
         return ChannelResult(status=status, note=note)
+    if gql_status != "ok":
+        status, note = "partial", gql_note
+    else:
+        note = "window: most recent 100 PRs"
     hits = match_pr_metadata(pack, prs, agents) + match_pr_authors(pack, prs, agents)
     if channels is not None:
         hits = [hit for hit in hits if hit.channel in channels]
@@ -481,7 +488,7 @@ def detect_prs(
     return ChannelResult(
         hits=tuple(dedupe_hits([*hits, *propagated])),
         status=status,
-        note="window: most recent 100 PRs",
+        note=note,
         stats={
             "propagated_oids": tuple(sorted({h.evidence["commit"] for h in propagated})),
             "commenter_entries": commenter_entries,
@@ -542,6 +549,6 @@ def detect_issues(
     return ChannelResult(
         hits=tuple(match_issue_participants(pack, entries, agents)),
         status=status,
-        note="window: most recent 100 issues; PR comments included",
+        note=note if status != "ok" else "window: most recent 100 issues; PR comments included",
         stats={"created_at": created_at},
     )
