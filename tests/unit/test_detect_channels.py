@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 
-from detect.channels import detect_files
+from detect.channels import detect_files, detect_history
 from detect.packs import Pack, Pattern
 from discover.pipeline import Deps
 
@@ -97,3 +99,111 @@ def test_detect_files_unavailable_repo():
     result = detect_files(make_deps(handler), "octo/gone", PACK, ref="main")
     assert result.status == "unavailable"
     assert result.hits == ()
+
+
+def history_handler(request: httpx.Request) -> httpx.Response:
+    assert request.url.path == "/graphql"
+    body = json.loads(request.content)
+    assert body["variables"]["limit"] == 100
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "repository": {
+                    "defaultBranchRef": {"name": "main"},
+                    "object": {
+                        "history": {
+                            "nodes": [
+                                {
+                                    "oid": "c1",
+                                    "committedDate": "2026-01-02T00:00:00Z",
+                                    "message": "feat: x\n\nCo-authored-by: Cursor <cursoragent@x>",
+                                    "author": {
+                                        "name": "Jane",
+                                        "email": "noreply@anthropic.com",
+                                        "user": {"login": "jane"},
+                                    },
+                                    "committer": {
+                                        "name": "Jane",
+                                        "email": "noreply@anthropic.com",
+                                        "user": {"login": "jane"},
+                                    },
+                                },
+                                {
+                                    "oid": "c2",
+                                    "message": "chore: bump",
+                                    "author": {
+                                        "name": "bot",
+                                        "email": "b@x",
+                                        "user": {"login": "dependabot[bot]"},
+                                    },
+                                    "committer": {
+                                        "name": "bot",
+                                        "email": "b@x",
+                                        "user": {"login": "dependabot[bot]"},
+                                    },
+                                },
+                                {
+                                    "oid": "c3",
+                                    "message": "Merge branch 'main'",
+                                    "author": {
+                                        "name": "Jane",
+                                        "email": "jane@example.com",
+                                        "user": {"login": "jane"},
+                                    },
+                                    "committer": {
+                                        "name": "Jane",
+                                        "email": "jane@example.com",
+                                        "user": {"login": "jane"},
+                                    },
+                                },
+                                {
+                                    "oid": "c4",
+                                    "message": "fix: human work",
+                                    "author": {
+                                        "name": "Bob",
+                                        "email": "bob@example.com",
+                                        "user": {"login": "bob"},
+                                    },
+                                    "committer": {
+                                        "name": "Bob",
+                                        "email": "bob@example.com",
+                                        "user": {"login": "bob"},
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                }
+            }
+        },
+    )
+
+
+def test_history_channels_share_one_call_and_compute_window_stats():
+    result = detect_history(make_deps(history_handler), "octo/repo", PACK, limit=100)
+    assert [h.agent for h in result["author"].hits] == ["Claude Code"]
+    assert result["author"].hits[0].evidence == {"login": "jane", "commit": "c1", "field": "email"}
+    assert [h.agent for h in result["commit_trailer"].hits] == ["Cursor"]
+    assert [h.agent for h in result["bot"].hits] == ["dependabot"]
+    stats = result["author"].stats
+    assert stats["commits"] == 2  # c1 and c4; c2 is a bot, c3 is noise
+    assert set(stats["ai_oids"]) == {"c1"}
+    assert set(stats["human_oids"]) == {"c4"}
+    assert stats["committed_at"]["c1"] == "2026-01-02T00:00:00Z"
+
+
+def test_history_null_repository_is_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"repository": None}})
+
+    result = detect_history(make_deps(handler), "octo/gone", PACK)
+    assert result["author"].status == "unavailable"
+
+
+def test_history_selection_scopes_matching():
+    result = detect_history(
+        make_deps(history_handler), "octo/repo", PACK, agents=frozenset({"Cursor"})
+    )
+    assert result["author"].hits == ()
+    assert [h.agent for h in result["commit_trailer"].hits] == ["Cursor"]

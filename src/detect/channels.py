@@ -7,10 +7,19 @@ from urllib.parse import quote
 
 import httpx
 
-from detect.attribution import Hit, dedupe_hits, match_files
+from detect.attribution import (
+    Hit,
+    dedupe_hits,
+    is_noise_commit,
+    match_author_identities,
+    match_bots,
+    match_commit_messages,
+    match_files,
+)
 from detect.packs import Pack
 from discover.pipeline import Deps
 from enrich.trees_first import FilePresence, fetch_tree
+from lib import audit
 from lib.gh_client import (
     API_BASE,
     PartialResultsError,
@@ -203,3 +212,141 @@ def detect_files(
         return ChannelResult(status="partial", note=f"tree: {exc.message}")
     except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
         return ChannelResult(status="partial", note=_fault_note(exc))
+
+
+_HISTORY_QUERY = """
+query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
+    object(expression: "HEAD") {
+      ... on Commit {
+        history(first: $limit) {
+          nodes {
+            oid
+            committedDate
+            message
+            author { name email user { login } }
+            committer { name email user { login } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _graphql(
+    deps: Deps, query: str, variables: dict, *, on_response: OnResponse
+) -> tuple[dict | None, str, str | None]:
+    response = request_with_retry(
+        deps.client,
+        "POST",
+        f"{API_BASE}/graphql",
+        json_body={"query": query, "variables": variables},
+        limiter=deps.limiter,
+        token_id=deps.token_fp,
+        on_response=on_response,
+        retry_5xx=False,
+    )
+    if response.status_code != 200:
+        return None, "partial", f"HTTP {response.status_code}"
+    payload = audit.cached_json(response) or response.json()
+    if not isinstance(payload, dict):
+        return None, "partial", "malformed graphql payload"
+    if payload.get("errors"):
+        return payload, "partial", "graphql errors"
+    return payload, "ok", None
+
+
+def _person_entry(person: object, *, commit: str) -> dict[str, str]:
+    if not isinstance(person, Mapping):
+        return {"login": "", "name": "", "email": "", "commit": commit}
+    user = person.get("user")
+    login = ""
+    if isinstance(user, Mapping) and user.get("login"):
+        login = str(user["login"])
+    return {
+        "login": login,
+        "name": str(person.get("name") or ""),
+        "email": str(person.get("email") or ""),
+        "commit": commit,
+    }
+
+
+def detect_history(
+    deps: Deps,
+    full_name: str,
+    pack: Pack,
+    *,
+    limit: int = 100,
+    agents: frozenset[str] | None = None,
+    on_response: OnResponse = None,
+) -> dict[str, ChannelResult]:
+    owner, _, name = full_name.partition("/")
+    try:
+        payload, status, note = _graphql(
+            deps,
+            _HISTORY_QUERY,
+            {"owner": owner, "name": name, "limit": limit},
+            on_response=on_response,
+        )
+    except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
+        return {
+            key: ChannelResult(status="partial", note=_fault_note(exc))
+            for key in ("author", "commit_trailer", "bot")
+        }
+    if payload is None:
+        return {
+            key: ChannelResult(status=status, note=note)
+            for key in ("author", "commit_trailer", "bot")
+        }
+    repository = (payload.get("data") or {}).get("repository")
+    if repository is None:
+        return {
+            key: ChannelResult(status="unavailable", note="repo not found")
+            for key in ("author", "commit_trailer", "bot")
+        }
+    nodes = ((repository.get("object") or {}).get("history") or {}).get("nodes") or []
+    identities: list[dict[str, str]] = []
+    bot_candidates: list[dict[str, str]] = []
+    messages: list[tuple[str, str]] = []
+    committed_at: dict[str, str] = {}
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        oid = str(node.get("oid") or "")
+        message = str(node.get("message") or "")
+        if node.get("committedDate"):
+            committed_at[oid] = str(node["committedDate"])
+        author_entry = _person_entry(node.get("author"), commit=oid)
+        committer_entry = _person_entry(node.get("committer"), commit=oid)
+        bot_candidates.extend((author_entry, committer_entry))
+        if is_noise_commit(message):
+            continue
+        messages.append((oid, message))
+        identities.extend((author_entry, committer_entry))
+    author_hits = match_author_identities(pack, identities, agents)
+    trailer_hits = match_commit_messages(pack, messages, agents)
+    bot_hits = match_bots(pack, bot_candidates)
+    ai_oids = {hit.evidence.get("commit") for hit in (*author_hits, *trailer_hits)}
+    bot_oids = {hit.evidence.get("commit") for hit in bot_hits}
+    commit_oids = {oid for oid, _ in messages} - bot_oids
+    human_oids = commit_oids - ai_oids
+    stats: dict[str, object] = {
+        "commits": len(commit_oids),
+        "ai_oids": tuple(sorted(str(oid) for oid in ai_oids if oid)),
+        "human_oids": tuple(sorted(str(oid) for oid in human_oids if oid)),
+        "committed_at": committed_at,
+    }
+    return {
+        "author": ChannelResult(hits=tuple(author_hits), status=status, note=note, stats=stats),
+        "commit_trailer": ChannelResult(
+            hits=tuple(trailer_hits), status=status, note=note, stats=stats
+        ),
+        "bot": ChannelResult(
+            hits=tuple(bot_hits),
+            status=status,
+            note="window: last 100 commits; generic bot evidence only",
+        ),
+    }
