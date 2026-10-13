@@ -23,6 +23,8 @@ TABLES = {
     "saved_filters",
     "app_settings",
     "corpora",
+    "trace_packs",
+    "detection_evidence",
 }
 
 EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
@@ -150,6 +152,27 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "note": True,
         "repo_count": False,
         "frozen_at": False,
+    },
+    "trace_packs": {
+        "version": False,
+        "authors": False,
+        "files": False,
+        "branches": False,
+        "labels": False,
+        "bots": False,
+        "generic_weights": False,
+        "exclusions": False,
+        "frozen_at": False,
+    },
+    "detection_evidence": {
+        "id": False,
+        "run_id": False,
+        "repo_id": False,
+        "agent": False,
+        "channel": False,
+        "evidence": False,
+        "pack_version": False,
+        "detected_at": False,
     },
 }
 
@@ -425,3 +448,54 @@ def test_downgrade_and_upgrade_round_trip(alembic_config, alembic_engine: Engine
     assert set(inspect(alembic_engine).get_table_names()) == {"alembic_version"}
     command.upgrade(alembic_config, "head")
     assert TABLES <= set(inspect(alembic_engine).get_table_names())
+
+
+def test_detect_rows_round_trip(migrated: Engine):
+    with migrated.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs (version, authors, files, branches, labels)"
+                " VALUES ('rt-1', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)"
+            )
+        )
+        source_id = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version)"
+                " VALUES ('rt-find', '{}'::jsonb, '2022-11-28') RETURNING id"
+            )
+        ).scalar_one()
+        detect_id = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version, kind, source_run_id)"
+                " VALUES ('rt-detect', '{}'::jsonb, '2022-11-28', 'detect', :src) RETURNING id"
+            ),
+            {"src": source_id},
+        ).scalar_one()
+        connection.execute(
+            text("INSERT INTO owners (id, login, type) VALUES (901, 'octo', 'User')")
+        )
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES (901, 'rt-n1', 'octo/rt', 901, 'rt', 'public')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO detection_evidence"
+                " (run_id, repo_id, agent, channel, evidence, pack_version)"
+                " VALUES (:run, 901, 'claude', 'file', '{\"path\": \"CLAUDE.md\"}'::jsonb, 'rt-1')"
+            ),
+            {"run": detect_id},
+        )
+    assert detect_id != source_id
+    with pytest.raises(IntegrityError):
+        with migrated.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO detection_evidence"
+                    " (run_id, repo_id, agent, channel, evidence, pack_version)"
+                    " VALUES (:run, 901, 'claude', 'nope', '{}'::jsonb, 'rt-1')"
+                ),
+                {"run": detect_id},
+            )

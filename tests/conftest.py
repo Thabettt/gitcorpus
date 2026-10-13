@@ -103,6 +103,8 @@ def allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
 CleanDbFactory = Callable[..., Engine]
 
 FULL_TRUNCATE_TABLES = (
+    "detection_evidence",
+    "trace_packs",
     "app_settings",
     "corpora",
     "run_items",

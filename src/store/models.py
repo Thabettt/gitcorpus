@@ -160,11 +160,18 @@ class Runs(Base):
     __table_args__ = (
         Index("runs_created_idx", text("created_at DESC")),
         Index("runs_filter_hash_idx", "filter_hash", text("created_at DESC")),
+        CheckConstraint("kind IN ('find','detect')", name="runs_kind_check"),
+        Index("runs_kind_idx", "kind", text("created_at DESC")),
+        Index(
+            "runs_source_idx", "source_run_id", postgresql_where=text("source_run_id IS NOT NULL")
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     filter_hash: Mapped[str] = mapped_column(Text, nullable=False)
     filter_spec: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'find'"))
+    source_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("runs.id"))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
@@ -183,6 +190,7 @@ class Runs(Base):
     )
     error: Mapped[str | None] = mapped_column(Text)
     bundle_dir: Mapped[str | None] = mapped_column(Text)
+    result_summary: Mapped[dict | None] = mapped_column(JSONB)
     progress_phase: Mapped[str | None] = mapped_column(Text)
     progress_done: Mapped[int | None] = mapped_column(Integer)
     progress_total: Mapped[int | None] = mapped_column(Integer)
@@ -219,6 +227,7 @@ class RunItem(Base):
     country_iso: Mapped[str | None] = mapped_column(CHAR(2))
     geo_confidence: Mapped[str | None] = mapped_column(Text)
     virtuals: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
+    detection: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Corpus(Base):
@@ -230,6 +239,56 @@ class Corpus(Base):
     note: Mapped[str | None] = mapped_column(Text)
     repo_count: Mapped[int] = mapped_column(Integer, nullable=False)
     frozen_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class TracePack(Base):
+    __tablename__ = "trace_packs"
+
+    version: Mapped[str] = mapped_column(Text, primary_key=True)
+    authors: Mapped[list] = mapped_column(JSONB, nullable=False)
+    files: Mapped[list] = mapped_column(JSONB, nullable=False)
+    branches: Mapped[list] = mapped_column(JSONB, nullable=False)
+    labels: Mapped[list] = mapped_column(JSONB, nullable=False)
+    bots: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'"))
+    generic_weights: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'")
+    )
+    exclusions: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[\"CONVENTIONS.md\"]'")
+    )
+    frozen_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class DetectionEvidence(Base):
+    __tablename__ = "detection_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "channel IN ('file','author','branch','label','bot','commit_trailer',"
+            "'pr_metadata','issue')",
+            name="detection_evidence_channel_check",
+        ),
+        Index("de_run_repo_idx", "run_id", "repo_id"),
+        Index("de_run_agent_idx", "run_id", "agent"),
+        Index("de_run_channel_idx", "run_id", "channel"),
+        Index("de_repo_idx", "repo_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    repo_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("repos.id"), nullable=False)
+    agent: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    pack_version: Mapped[str] = mapped_column(
+        Text, ForeignKey("trace_packs.version"), nullable=False
+    )
+    detected_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
 

@@ -24,12 +24,16 @@ ALL_TABLES = {
     "saved_filters",
     "app_settings",
     "corpora",
+    "trace_packs",
+    "detection_evidence",
 }
 
 RUN_COLUMNS: dict[str, bool] = {
     "id": False,
     "filter_hash": False,
     "filter_spec": False,
+    "kind": False,
+    "source_run_id": True,
     "status": False,
     "created_at": False,
     "started_at": True,
@@ -44,6 +48,7 @@ RUN_COLUMNS: dict[str, bool] = {
     "incomplete_shards": False,
     "error": True,
     "bundle_dir": True,
+    "result_summary": True,
     "progress_phase": True,
     "progress_done": True,
     "progress_total": True,
@@ -64,6 +69,7 @@ RUN_ITEM_COLUMNS: dict[str, bool] = {
     "country_iso": True,
     "geo_confidence": True,
     "virtuals": False,
+    "detection": True,
 }
 
 SAVED_FILTER_COLUMNS: dict[str, bool] = {
@@ -108,7 +114,7 @@ def _indexdefs(engine: Engine) -> dict[str, str]:
 
 
 def test_single_alembic_head(alembic_config):
-    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0015"]
+    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0016"]
 
 
 def test_metadata_declares_exactly_the_expected_tables():
@@ -211,7 +217,12 @@ def test_console_indexes_exist(migrated: Engine):
 def test_model_metadata_indexes_match_console_contract():
     runs = {index.name for index in Base.metadata.tables["runs"].indexes}
     run_items = {index.name for index in Base.metadata.tables["run_items"].indexes}
-    assert runs == {"runs_created_idx", "runs_filter_hash_idx"}
+    assert runs == {
+        "runs_created_idx",
+        "runs_filter_hash_idx",
+        "runs_kind_idx",
+        "runs_source_idx",
+    }
     assert run_items == {"run_items_repo_idx", "run_items_stars_idx"}
     assert Base.metadata.tables["saved_filters"].indexes == set()
 
