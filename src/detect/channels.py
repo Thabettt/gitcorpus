@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 
@@ -10,12 +11,19 @@ from detect.attribution import Hit, dedupe_hits, match_files
 from detect.packs import Pack
 from discover.pipeline import Deps
 from enrich.trees_first import FilePresence, fetch_tree
-from lib.gh_client import API_BASE, RequestFailed, request_with_retry
+from lib.gh_client import (
+    API_BASE,
+    PartialResultsError,
+    RequestFailed,
+    ThrottledError,
+    request_with_retry,
+)
 
 OnResponse = Callable[[httpx.Response, float], None] | None
 
 _CONTENT_PROBE_LIMIT = 5
 _TRUNCATED_PROBE_LIMIT = 20
+_FAULT_NOTE_LIMIT = 200
 _RAW_ACCEPT = {"Accept": "application/vnd.github.raw+json"}
 
 
@@ -27,7 +35,18 @@ class ChannelResult:
     stats: Mapping[str, object] = field(default_factory=dict)
 
 
-def _raw_text(deps: Deps, url: str, *, on_response: OnResponse) -> tuple[str | None, str | None]:
+def _fault_note(exc: Exception) -> str:
+    note = f"{type(exc).__name__}: {exc}"
+    if len(note) > _FAULT_NOTE_LIMIT:
+        note = note[:_FAULT_NOTE_LIMIT]
+    return note
+
+
+def _raw_text(
+    deps: Deps, url: str, *, ref: str | None = None, on_response: OnResponse
+) -> tuple[str | None, str | None]:
+    if ref is not None:
+        url = f"{url}?ref={quote(ref)}"
     response = request_with_retry(
         deps.client,
         "GET",
@@ -45,10 +64,13 @@ def _raw_text(deps: Deps, url: str, *, on_response: OnResponse) -> tuple[str | N
 
 
 def _gitignore_paths(
-    deps: Deps, full_name: str, *, on_response: OnResponse
+    deps: Deps, full_name: str, *, ref: str | None = None, on_response: OnResponse
 ) -> tuple[tuple[str, ...], str | None]:
     text, error = _raw_text(
-        deps, f"{API_BASE}/repos/{full_name}/contents/.gitignore", on_response=on_response
+        deps,
+        f"{API_BASE}/repos/{full_name}/contents/.gitignore",
+        ref=ref,
+        on_response=on_response,
     )
     if text is None:
         return (), error
@@ -75,6 +97,7 @@ def _probe_missing_paths(
     pack: Pack,
     presence: FilePresence,
     *,
+    ref: str | None = None,
     on_response: OnResponse,
 ) -> tuple[str, ...]:
     found: list[str] = []
@@ -82,16 +105,29 @@ def _probe_missing_paths(
         if candidate in presence.paths or candidate.rsplit("/", 1)[-1] in pack.exclusions:
             continue
         text, error = _raw_text(
-            deps, f"{API_BASE}/repos/{full_name}/contents/{candidate}", on_response=on_response
+            deps,
+            f"{API_BASE}/repos/{full_name}/contents/{candidate}",
+            ref=ref,
+            on_response=on_response,
         )
         if error is None and text is not None:
             found.append(candidate)
     return tuple(found)
 
 
-def _probe_content(deps: Deps, full_name: str, path: str, *, on_response: OnResponse) -> dict:
+def _probe_content(
+    deps: Deps,
+    full_name: str,
+    path: str,
+    *,
+    ref: str | None = None,
+    on_response: OnResponse,
+) -> dict:
     text, error = _raw_text(
-        deps, f"{API_BASE}/repos/{full_name}/contents/{path}", on_response=on_response
+        deps,
+        f"{API_BASE}/repos/{full_name}/contents/{path}",
+        ref=ref,
+        on_response=on_response,
     )
     if error is not None or text is None:
         return {}
@@ -116,52 +152,54 @@ def detect_files(
             token_id=deps.token_fp,
             on_response=on_response,
         )
+        status = "ok"
+        notes: list[str] = []
+        hits = list(match_files(pack, presence, agents))
+        if presence.truncated:
+            status = "partial"
+            notes.append("tree truncated; literal-path probes used")
+            probed_paths = _probe_missing_paths(
+                deps, full_name, pack, presence, ref=ref, on_response=on_response
+            )
+            if probed_paths:
+                probed_presence = FilePresence(
+                    repo_full_name=full_name,
+                    paths=frozenset(probed_paths),
+                    truncated=False,
+                    source="contents",
+                )
+                hits.extend(match_files(pack, probed_presence, agents))
+        ignored, ignore_error = _gitignore_paths(deps, full_name, ref=ref, on_response=on_response)
+        if ignore_error is not None:
+            status = "partial"
+            notes.append(f"gitignore: {ignore_error}")
+        elif ignored:
+            ignored_presence = FilePresence(
+                repo_full_name=full_name,
+                paths=frozenset(ignored),
+                truncated=False,
+                source="gitignore",
+            )
+            hits.extend(match_files(pack, ignored_presence, agents))
+        hits = dedupe_hits(hits)
+        content_paths = sorted(
+            {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
+        )[:_CONTENT_PROBE_LIMIT]
+        for path in content_paths:
+            info = _probe_content(deps, full_name, path, ref=ref, on_response=on_response)
+            if not info:
+                continue
+            for hit in hits:
+                if hit.evidence.get("path") == path:
+                    hit.evidence.update(info)
+        return ChannelResult(
+            hits=tuple(hits),
+            status=status,
+            note="; ".join(notes) or None,
+        )
     except RequestFailed as exc:
         if exc.status == 404:
             return ChannelResult(status="unavailable", note="repo not found")
         return ChannelResult(status="partial", note=f"tree: {exc.message}")
-    status = "ok"
-    notes: list[str] = []
-    hits = list(match_files(pack, presence, agents))
-    if presence.truncated:
-        status = "partial"
-        notes.append("tree truncated; literal-path probes used")
-        probed_paths = _probe_missing_paths(
-            deps, full_name, pack, presence, on_response=on_response
-        )
-        if probed_paths:
-            probed_presence = FilePresence(
-                repo_full_name=full_name,
-                paths=frozenset(probed_paths),
-                truncated=False,
-                source="contents",
-            )
-            hits.extend(match_files(pack, probed_presence, agents))
-    ignored, ignore_error = _gitignore_paths(deps, full_name, on_response=on_response)
-    if ignore_error is not None:
-        status = "partial"
-        notes.append(f"gitignore: {ignore_error}")
-    elif ignored:
-        ignored_presence = FilePresence(
-            repo_full_name=full_name,
-            paths=frozenset(ignored),
-            truncated=False,
-            source="gitignore",
-        )
-        hits.extend(match_files(pack, ignored_presence, agents))
-    hits = dedupe_hits(hits)
-    content_paths = sorted(
-        {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
-    )[:_CONTENT_PROBE_LIMIT]
-    for path in content_paths:
-        info = _probe_content(deps, full_name, path, on_response=on_response)
-        if not info:
-            continue
-        for hit in hits:
-            if hit.evidence.get("path") == path:
-                hit.evidence.update(info)
-    return ChannelResult(
-        hits=tuple(hits),
-        status=status,
-        note="; ".join(notes) or None,
-    )
+    except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
+        return ChannelResult(status="partial", note=_fault_note(exc))
