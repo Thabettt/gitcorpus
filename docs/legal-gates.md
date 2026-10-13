@@ -17,6 +17,7 @@ If the network check cannot run, write `not run` in the Result column and keep H
 | Date | Command | Result | `/search` directive | Decision |
 |---|---|---|---|---|
 | 2026-09-30 | `curl -s https://github.com/robots.txt` | fetched, HTTP 200 | `User-agent: *` section disallows `/search` (`Disallow: /search$`, `Disallow: /search/advanced`; query URLs also disallowed via `Disallow: /*?q=*`) | HTML fallback stays disabled |
+| 2026-10-14 | `webfetch https://github.com/robots.txt` | fetched, HTTP 200 | unchanged for `/search` (`Disallow: /search$`, `/search/advanced`, `/*?q=*`); repo subpaths also disallowed for all crawlers (`/*/*/commits/`, `/*/*/branches`, `/*/*/contributors`, `/*/tree/`, `/*/blame/`, `/*/raw/`, `/.git/`) | HTML fallback stays disabled |
 
 - [ ] Each future run date has its own row (or `not run`).
 - [ ] Any `Disallow` covering `/search` keeps the HTML fallback disabled.
