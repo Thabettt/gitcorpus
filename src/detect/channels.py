@@ -303,6 +303,11 @@ def detect_history(
         }
     repository = (payload.get("data") or {}).get("repository")
     if repository is None:
+        if status != "ok":
+            return {
+                key: ChannelResult(status="partial", note=note)
+                for key in ("author", "commit_trailer", "bot")
+            }
         return {
             key: ChannelResult(status="unavailable", note="repo not found")
             for key in ("author", "commit_trailer", "bot")

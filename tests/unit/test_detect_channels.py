@@ -207,3 +207,13 @@ def test_history_selection_scopes_matching():
     )
     assert result["author"].hits == ()
     assert [h.agent for h in result["commit_trailer"].hits] == ["Cursor"]
+
+
+def test_history_graphql_errors_with_null_data_is_partial():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": None, "errors": [{"message": "RATE_LIMITED"}]})
+
+    result = detect_history(make_deps(handler), "octo/repo", PACK)
+    for key in ("author", "commit_trailer", "bot"):
+        assert result[key].status == "partial"
+    assert result["author"].note == "graphql errors"
