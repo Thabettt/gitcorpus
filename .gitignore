@@ -32,3 +32,5 @@ repos_rust.csv
 # Overnight queue prompt (operator-only, never committed)
 docs/superpowers/prompts/2026-10-02-overnight-queue-prompt.md
 docs/superpowers/prompts/2026-10-03-overnight-queue-prompt.md
+# Local worktrees (git-ignored by design)
+.worktrees/
