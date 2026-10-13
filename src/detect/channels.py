@@ -15,6 +15,10 @@ from detect.attribution import (
     match_bots,
     match_commit_messages,
     match_files,
+    match_issue_participants,
+    match_pr_authors,
+    match_pr_metadata,
+    propagate_pr_commits,
 )
 from detect.packs import Pack
 from discover.pipeline import Deps
@@ -355,3 +359,189 @@ def detect_history(
             note="window: last 100 commits; generic bot evidence only",
         ),
     }
+
+
+_PR_QUERY = """
+query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: $limit, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        createdAt
+        headRefName
+        bodyText
+        author { login }
+        labels(first: 20) { nodes { name } }
+        comments(first: 50) { nodes { author { login } } }
+        commits(first: 100) {
+          nodes { commit { oid author { user { login } } } }
+        }
+      }
+    }
+  }
+}
+"""
+
+_ISSUE_QUERY = """
+query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    issues(first: $limit, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        createdAt
+        author { login }
+        assignees(first: 10) { nodes { login } }
+        comments(first: 50) { nodes { author { login } } }
+      }
+    }
+  }
+}
+"""
+
+
+def _prs_from_payload(payload: dict) -> tuple[list[dict], str, str | None]:
+    repository = (payload.get("data") or {}).get("repository")
+    if repository is None:
+        return [], "unavailable", "repo not found"
+    nodes = (repository.get("pullRequests") or {}).get("nodes") or []
+    prs: list[dict] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        author = node.get("author")
+        prs.append(
+            {
+                "number": node.get("number"),
+                "createdAt": str(node.get("createdAt") or ""),
+                "headRefName": node.get("headRefName"),
+                "body": node.get("bodyText"),
+                "author": str(author.get("login") or "") if isinstance(author, Mapping) else "",
+                "labels": [
+                    str(label.get("name"))
+                    for label in (node.get("labels") or {}).get("nodes") or []
+                    if isinstance(label, Mapping)
+                ],
+                "comments": [
+                    str(comment.get("author", {}).get("login") or "")
+                    for comment in (node.get("comments") or {}).get("nodes") or []
+                    if isinstance(comment, Mapping)
+                ],
+                "commits": [
+                    {
+                        "oid": str((commit.get("commit") or {}).get("oid") or ""),
+                        "author": str(
+                            ((commit.get("commit") or {}).get("author") or {})
+                            .get("user", {})
+                            .get("login")
+                            or ""
+                        ),
+                    }
+                    for commit in (node.get("commits") or {}).get("nodes") or []
+                    if isinstance(commit, Mapping)
+                ],
+            }
+        )
+    return prs, "ok", None
+
+
+def detect_prs(
+    deps: Deps,
+    full_name: str,
+    pack: Pack,
+    *,
+    limit: int = 100,
+    agents: frozenset[str] | None = None,
+    channels: frozenset[str] | None = None,
+    on_response: OnResponse = None,
+) -> ChannelResult:
+    owner, _, name = full_name.partition("/")
+    try:
+        payload, gql_status, gql_note = _graphql(
+            deps, _PR_QUERY, {"owner": owner, "name": name, "limit": limit}, on_response=on_response
+        )
+    except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
+        return ChannelResult(status="partial", note=_fault_note(exc))
+    if payload is None:
+        return ChannelResult(status=gql_status, note=gql_note)
+    prs, status, note = _prs_from_payload(payload)
+    if status == "unavailable":
+        if gql_status != "ok":
+            return ChannelResult(status="partial", note=gql_note)
+        return ChannelResult(status=status, note=note)
+    hits = match_pr_metadata(pack, prs, agents) + match_pr_authors(pack, prs, agents)
+    if channels is not None:
+        hits = [hit for hit in hits if hit.channel in channels]
+    propagated = propagate_pr_commits(hits, prs)
+    commenter_entries = tuple(
+        {"login": login, "number": pr["number"], "role": "pr_commenter"}
+        for pr in prs
+        for login in pr.get("comments") or []
+        if login
+    )
+    return ChannelResult(
+        hits=tuple(dedupe_hits([*hits, *propagated])),
+        status=status,
+        note="window: most recent 100 PRs",
+        stats={
+            "propagated_oids": tuple(sorted({h.evidence["commit"] for h in propagated})),
+            "commenter_entries": commenter_entries,
+            "created_at": {pr["number"]: pr["createdAt"] for pr in prs if pr.get("createdAt")},
+        },
+    )
+
+
+def detect_issues(
+    deps: Deps,
+    full_name: str,
+    pack: Pack,
+    *,
+    limit: int = 100,
+    agents: frozenset[str] | None = None,
+    on_response: OnResponse = None,
+    extra_entries: tuple[dict, ...] = (),
+) -> ChannelResult:
+    owner, _, name = full_name.partition("/")
+    try:
+        payload, status, note = _graphql(
+            deps,
+            _ISSUE_QUERY,
+            {"owner": owner, "name": name, "limit": limit},
+            on_response=on_response,
+        )
+    except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
+        return ChannelResult(status="partial", note=_fault_note(exc))
+    if payload is None:
+        return ChannelResult(status=status, note=note)
+    repository = (payload.get("data") or {}).get("repository")
+    if repository is None:
+        if status != "ok":
+            return ChannelResult(status="partial", note=note)
+        return ChannelResult(status="unavailable", note="repo not found")
+    entries: list[dict] = list(extra_entries)
+    created_at: dict[object, str] = {}
+    for node in (repository.get("issues") or {}).get("nodes") or []:
+        if not isinstance(node, Mapping):
+            continue
+        number = node.get("number")
+        if node.get("createdAt"):
+            created_at[number] = str(node["createdAt"])
+        author = node.get("author")
+        if isinstance(author, Mapping) and author.get("login"):
+            entries.append({"login": str(author["login"]), "number": number, "role": "author"})
+        for assignee in (node.get("assignees") or {}).get("nodes") or []:
+            if isinstance(assignee, Mapping) and assignee.get("login"):
+                entries.append(
+                    {"login": str(assignee["login"]), "number": number, "role": "assignee"}
+                )
+        for comment in (node.get("comments") or {}).get("nodes") or []:
+            comment_author = comment.get("author") if isinstance(comment, Mapping) else None
+            if isinstance(comment_author, Mapping) and comment_author.get("login"):
+                entries.append(
+                    {"login": str(comment_author["login"]), "number": number, "role": "commenter"}
+                )
+    return ChannelResult(
+        hits=tuple(match_issue_participants(pack, entries, agents)),
+        status=status,
+        note="window: most recent 100 issues; PR comments included",
+        stats={"created_at": created_at},
+    )

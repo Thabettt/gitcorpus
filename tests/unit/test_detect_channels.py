@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from detect.channels import detect_files, detect_history
+from detect.channels import detect_files, detect_history, detect_issues, detect_prs
 from detect.packs import Pack, Pattern
 from discover.pipeline import Deps
 
@@ -217,3 +217,103 @@ def test_history_graphql_errors_with_null_data_is_partial():
     for key in ("author", "commit_trailer", "bot"):
         assert result[key].status == "partial"
     assert result["author"].note == "graphql errors"
+
+
+def pr_handler(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    assert body["variables"]["limit"] == 100
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "repository": {
+                    "pullRequests": {
+                        "nodes": [
+                            {
+                                "number": 7,
+                                "headRefName": "cursor/fix",
+                                "bodyText": "task: https://chatgpt.com/codex/tasks",
+                                "author": {"login": "cursoragent"},
+                                "labels": {"nodes": [{"name": "ai-generated"}]},
+                                "comments": {"nodes": [{"author": {"login": "cursoragent"}}]},
+                                "commits": {
+                                    "nodes": [
+                                        {
+                                            "commit": {
+                                                "oid": "a1",
+                                                "author": {"user": {"login": "cursoragent"}},
+                                            }
+                                        },
+                                        {
+                                            "commit": {
+                                                "oid": "a2",
+                                                "author": {"user": {"login": "human"}},
+                                            }
+                                        },
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+    )
+
+
+def test_detect_prs_matches_propagates_and_collects_commenters():
+    result = detect_prs(make_deps(pr_handler), "octo/repo", PACK, limit=100)
+    assert result.status == "ok"
+    pairs = {(h.agent, h.evidence.get("pr")) for h in result.hits}
+    assert ("Cursor", 7) in pairs and ("Claude Code", 7) in pairs and ("Codex", 7) in pairs
+    propagated = [h for h in result.hits if h.evidence.get("propagated")]
+    assert [(h.agent, h.evidence["commit"]) for h in propagated] == [
+        ("Claude Code", "a1"),
+        ("Codex", "a1"),
+        ("Cursor", "a1"),
+    ]
+    assert result.stats["propagated_oids"] == ("a1",)
+    assert result.stats["commenter_entries"] == (
+        {"login": "cursoragent", "number": 7, "role": "pr_commenter"},
+    )
+
+
+def issue_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "repository": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "number": 12,
+                                "author": {"login": "jane"},
+                                "assignees": {"nodes": [{"login": "cursoragent"}]},
+                                "comments": {"nodes": [{"author": {"login": "jane"}}]},
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+    )
+
+
+def test_detect_issues_matches_roles_and_extra_entries():
+    result = detect_issues(
+        make_deps(issue_handler),
+        "octo/repo",
+        PACK,
+        extra_entries=({"login": "cursoragent", "number": 7, "role": "pr_commenter"},),
+    )
+    roles = {(h.agent, h.evidence["number"], h.evidence["role"]) for h in result.hits}
+    assert roles == {("Cursor", 12, "assignee"), ("Cursor", 7, "pr_commenter")}
+
+
+def test_detect_prs_unavailable_repo():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"repository": None}})
+
+    result = detect_prs(make_deps(handler), "octo/gone", PACK)
+    assert result.status == "unavailable"
