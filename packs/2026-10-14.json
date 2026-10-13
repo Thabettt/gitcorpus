@@ -1,0 +1,1204 @@
+{
+  "version": "2026-10-14",
+  "agents": {
+    "Aider": "https://aider.chat/",
+    "Alibaba Lingma": "https://www.alibabacloud.com/en/product/lingma",
+    "Amp": "https://sourcegraph.com/amp",
+    "Augment Code": "https://www.augmentcode.com/",
+    "Baidu Comate": "https://comate.baidu.com/",
+    "Brokk": "https://brokk.ai/",
+    "ChatGPT": "https://chatgpt.com/",
+    "Claude Code": "https://www.claude.com/product/claude-code",
+    "Cline": "https://cline.bot/",
+    "Codebuddy": "https://www.codebuddy.ai/",
+    "Codegen": "https://codegen.com/",
+    "Coderabbit": "https://coderabbit.ai/",
+    "Codex": "https://openai.com/codex",
+    "Continue": "https://www.continue.dev/",
+    "Copilot": "https://github.com/features/copilot",
+    "CopilotSwe": "https://github.blog/changelog/2025-09-22-copilot-swe-model-rolling-out-to-visual-studio-code-insiders/",
+    "Crush": "https://github.com/charmbracelet/crush",
+    "Cursor": "https://cursor.com/",
+    "Deepsource": "https://deepsource.com/",
+    "Devin": "https://devin.ai/",
+    "Factory": "https://factory.ai/",
+    "Fly": "https://fly.io/",
+    "Gemini": "https://gemini.google.com/",
+    "Generic": "https://agents.md",
+    "Goose": "https://github.com/block/goose",
+    "GPT-Engineer": "https://github.com/AntonOsika/gpt-engineer",
+    "Gru": "https://gru.ai/",
+    "Jules": "https://jules.google/",
+    "Junie": "https://www.jetbrains.com/junie/",
+    "Kilo Code": "https://kilocode.ai/",
+    "Kiro": "https://kiro.dev/",
+    "Langchain Open SWE": "https://github.com/langchain-ai/open-swe",
+    "Ona": "https://ona.com/",
+    "Opencode": "https://opencode.site",
+    "OpenHands": "https://github.com/All-Hands-AI/OpenHands",
+    "Plandex": "https://plandex.ai/",
+    "Phoenix": "https://phoenix.new/",
+    "Qwen Coder": "https://github.com/QwenLM/qwen-code",
+    "Roo Code": "https://github.com/RooCodeInc/Roo-Code",
+    "Sketch": "https://www.sketch.com/",
+    "Sourcery": "https://sourcery.ai/",
+    "Sweep": "https://sweep.dev/",
+    "Taskmaster": "https://github.com/eyaltoledano/claude-task-master",
+    "Trae": "https://www.trae.ai/",
+    "Warp": "https://www.warp.dev/",
+    "Windsurf": "https://windsurf.com/",
+    "Zed": "https://zed.dev/",
+    "SpecKit": "https://github.com/github/spec-kit",
+    "Tessl": "https://tessl.io",
+    "Serena": "https://github.com/oraios/serena",
+    "Rulesync": "https://github.com/dyoshikawa/rulesync/tree/main",
+    "Qodo": "https://qodo.ai",
+    "Verdent": "https://verdent.ai",
+    "AmazonQ": "https://aws.amazon.com/q/",
+    "Charlie": "https://www.charlielabs.ai",
+    "Azad": "https://www.azad.bot",
+    "Letta Code": "https://www.letta.com",
+    "Mistral Vibe": "https://docs.mistral.ai/mistral-vibe/introduction",
+    "Factory Droid": "https://factory.ai",
+    "Microsoft Amplifier": "https://github.com/microsoft/amplifier",
+    "Sentry Seer": "https://sentry.io/product/seer",
+    "Pi": "https://pi.dev/",
+    "Atlassian Rovodev": "https://www.atlassian.com/software/rovo-dev"
+  },
+  "authors": [
+    {
+      "pattern": "aider",
+      "agent": "Aider"
+    },
+    {
+      "pattern": "aider@aider.chat",
+      "agent": "Aider"
+    },
+    {
+      "pattern": "Claude",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "noreply@anthropic.com",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "claude@anthropic.com",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "assistant@anthropic.com",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Copilot",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": "openhands@all-hands.dev",
+      "agent": "OpenHands"
+    },
+    {
+      "pattern": "openhands-agent",
+      "agent": "OpenHands"
+    },
+    {
+      "pattern": "devin-ai-integration",
+      "agent": "Devin"
+    },
+    {
+      "pattern": "google-labs-jules",
+      "agent": "Jules"
+    },
+    {
+      "pattern": "jules@users.noreply.github.com",
+      "agent": "Jules"
+    },
+    {
+      "pattern": "copilot-swe-agent",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": "cline",
+      "agent": "Cline"
+    },
+    {
+      "pattern": "cline@example.com",
+      "agent": "Cline"
+    },
+    {
+      "pattern": "junie",
+      "agent": "Junie"
+    },
+    {
+      "pattern": "jetbrains-junie",
+      "agent": "Junie"
+    },
+    {
+      "pattern": "gru-agent",
+      "agent": "Gru"
+    },
+    {
+      "pattern": "cursor",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": "cursoragent@cursor.com",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": "gemini-code-assist",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": "gemini-cli",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": "sweep-ai",
+      "agent": "Sweep"
+    },
+    {
+      "pattern": "coderabbit",
+      "agent": "Coderabbit"
+    },
+    {
+      "pattern": "sourcery-ai",
+      "agent": "Sourcery"
+    },
+    {
+      "pattern": "deepsource-autofix",
+      "agent": "Deepsource"
+    },
+    {
+      "pattern": "gpt-engineer",
+      "agent": "GPT-Engineer"
+    },
+    {
+      "pattern": "codegen-sh",
+      "agent": "Codegen"
+    },
+    {
+      "pattern": "hello@sketch.dev",
+      "agent": "Sketch"
+    },
+    {
+      "pattern": "windsurf-bot",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": "cascade@windsurf.ai",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": "dev@fly.io",
+      "agent": "Fly"
+    },
+    {
+      "pattern": "ChatGPT",
+      "agent": "ChatGPT"
+    },
+    {
+      "pattern": "chatgpt@chatgpt.com",
+      "agent": "ChatGPT"
+    },
+    {
+      "pattern": "chatgpt@openai.com",
+      "agent": "ChatGPT"
+    },
+    {
+      "pattern": "chatGPT@no-reply.com",
+      "agent": "ChatGPT"
+    },
+    {
+      "pattern": "roomote-agent",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": "roomote@roocode.com",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": "roomote",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": "Roo Code",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": "amp@ampcode.com",
+      "agent": "Amp"
+    },
+    {
+      "pattern": "noreply@opencode.ai",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": "Kilo Code",
+      "agent": "Kilo Code"
+    },
+    {
+      "pattern": "crush@charm.land",
+      "agent": "Crush"
+    },
+    {
+      "pattern": "codex@openai.com",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "Gemini 2.5 Pro",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": "Gemini 2.5 Flash",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": "Qwen-Coder",
+      "agent": "Qwen Coder"
+    },
+    {
+      "pattern": "qwen-coder@alibabacloud.com",
+      "agent": "Qwen Coder"
+    },
+    {
+      "pattern": "open-swe",
+      "agent": "Langchain Open SWE"
+    },
+    {
+      "pattern": "noreply@warp.dev",
+      "agent": "Warp"
+    },
+    {
+      "pattern": "no-reply@ona.com",
+      "agent": "Ona"
+    },
+    {
+      "pattern": "AI [Aa]ssistant",
+      "agent": "Generic"
+    },
+    {
+      "pattern": "seer-by-sentry",
+      "agent": "Sentry Seer"
+    },
+    {
+      "pattern": "agent@abacus.ai",
+      "agent": "Abacus"
+    },
+    {
+      "pattern": "abacus-ai-automation[bot]",
+      "agent": "Abacus"
+    },
+    {
+      "pattern": "vibe@mistral.ai",
+      "agent": "Mistral Vibe"
+    },
+    {
+      "pattern": "noreply@letta.com",
+      "agent": "Letta Code"
+    },
+    {
+      "pattern": "factory-droid[bot]",
+      "agent": "Factory Droid"
+    },
+    {
+      "pattern": "Claude Opus 4.5",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude Opus 4.6",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude Haiku 4.5",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude Sonnet 4.5",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Codex (gpt-5.2-codex)",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "codex@openai.com",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "opencode-agent",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": "Claude (glm-4.7)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (GLM-4.7)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (glm-4.6)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (GLM-4.6)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (kimi-for-coding)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (kimi-k2.5)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "Claude (MiniMax-M2.1)",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "kiro@aws.amazon.com",
+      "agent": "Kiro"
+    },
+    {
+      "pattern": "kiro-noreply@amazon.com",
+      "agent": "Kiro"
+    },
+    {
+      "pattern": "kiro-agent@amazon.com",
+      "agent": "Kiro"
+    },
+    {
+      "pattern": "microsoft-amplifier@users.noreply.github.com",
+      "agent": "Microsoft Amplifier"
+    },
+    {
+      "pattern": "verdent@verdent.ai",
+      "agent": "Verdent"
+    },
+    {
+      "pattern": "noreply@verdent.ai",
+      "agent": "Verd"
+    }
+  ],
+  "files": [
+    {
+      "pattern": "copilot-instructions.md",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": "copilot_instructions.md",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": "copilot-instructions/",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".github/instructions/",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".copilot-*.md",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".copilotignore",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".copilot/",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".github/workflows/copilot/",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": ".cursor/",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": ".cursorrules",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": "CURSOR.md",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": "AGENTS.md",
+      "agent": "Generic"
+    },
+    {
+      "pattern": ".codex/",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "CLAUDE.md",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": ".claude/",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": ".anthropic/",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": ".claudeignore",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": ".github/workflows/claude",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": ".devin/",
+      "agent": "Devin"
+    },
+    {
+      "pattern": ".augment/",
+      "agent": "Augment Code"
+    },
+    {
+      "pattern": ".augmentignore",
+      "agent": "Augment Code"
+    },
+    {
+      "pattern": ".augment-guidelines",
+      "agent": "Augment Code"
+    },
+    {
+      "pattern": ".windsurf/",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": ".windsurfrules",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": ".codeium/",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": ".clinerules",
+      "agent": "Cline"
+    },
+    {
+      "pattern": ".cline/",
+      "agent": "Cline"
+    },
+    {
+      "pattern": "README-task-master.md",
+      "agent": "Taskmaster"
+    },
+    {
+      "pattern": "taskmaster.md",
+      "agent": "Taskmaster"
+    },
+    {
+      "pattern": ".taskmaster/",
+      "agent": "Taskmaster"
+    },
+    {
+      "pattern": "memory-bank/",
+      "agent": "Cline"
+    },
+    {
+      "pattern": "memory_bank/",
+      "agent": "Cline"
+    },
+    {
+      "pattern": ".specify/memory/constitution.md",
+      "agent": "SpecKit"
+    },
+    {
+      "pattern": ".specify",
+      "agent": "SpecKit"
+    },
+    {
+      "pattern": "AGENT.md",
+      "agent": "Amp"
+    },
+    {
+      "pattern": ".sourcegraph/",
+      "agent": "Amp"
+    },
+    {
+      "pattern": "aider.conf.yaml",
+      "agent": "Aider"
+    },
+    {
+      "pattern": "aider.conf.yml",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".aider.conf.yaml",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".aider.conf.yml",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".aiderignore",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".aider/",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".junie/",
+      "agent": "Junie"
+    },
+    {
+      "pattern": ".jetbrains/instructions.md",
+      "agent": "Junie"
+    },
+    {
+      "pattern": ".junieignore",
+      "agent": "Junie"
+    },
+    {
+      "pattern": ".jules/",
+      "agent": "Jules"
+    },
+    {
+      "pattern": ".aiderrules",
+      "agent": "Aider"
+    },
+    {
+      "pattern": ".roo/",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": ".roorules",
+      "agent": "Roo Code"
+    },
+    {
+      "pattern": ".trae/",
+      "agent": "Trae"
+    },
+    {
+      "pattern": ".traerules",
+      "agent": "Trae"
+    },
+    {
+      "pattern": "GEMINI.md",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": ".gemini/",
+      "agent": "Gemini"
+    },
+    {
+      "pattern": ".openhands/",
+      "agent": "OpenHands"
+    },
+    {
+      "pattern": ".openhands_instructions",
+      "agent": "OpenHands"
+    },
+    {
+      "pattern": ".goosehints",
+      "agent": "Goose"
+    },
+    {
+      "pattern": ".plandexignore",
+      "agent": "Plandex"
+    },
+    {
+      "pattern": ".plandex/",
+      "agent": "Plandex"
+    },
+    {
+      "pattern": ".plandex-v2",
+      "agent": "Plandex"
+    },
+    {
+      "pattern": ".continue/",
+      "agent": "Continue"
+    },
+    {
+      "pattern": ".kiro/",
+      "agent": "Kiro"
+    },
+    {
+      "pattern": ".brokk/",
+      "agent": "Brokk"
+    },
+    {
+      "pattern": ".kilocode/",
+      "agent": "Kilo Code"
+    },
+    {
+      "pattern": ".kilocodeignore",
+      "agent": "Kilo Code"
+    },
+    {
+      "pattern": ".opencode/",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": ".opencode.json",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": "opencode.json",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": "WARP.md",
+      "agent": "Warp"
+    },
+    {
+      "pattern": ".warp/",
+      "agent": "Warp"
+    },
+    {
+      "pattern": ".crush/",
+      "agent": "Crush"
+    },
+    {
+      "pattern": ".amazonq/",
+      "agent": "Amazon Q"
+    },
+    {
+      "pattern": "AmazonQ.md",
+      "agent": "Amazon Q"
+    },
+    {
+      "pattern": "AMAZONQ.md",
+      "agent": "Amazon Q"
+    },
+    {
+      "pattern": "CRUSH.md",
+      "agent": "Crush"
+    },
+    {
+      "pattern": "QWEN.md",
+      "agent": "Qwen Coder"
+    },
+    {
+      "pattern": "CODEBUDDY.md",
+      "agent": "Codebuddy"
+    },
+    {
+      "pattern": ".comate/",
+      "agent": "Baidu Comate"
+    },
+    {
+      "pattern": ".lingma/",
+      "agent": "Alibaba Lingma"
+    },
+    {
+      "pattern": ".tessl/",
+      "agent": "Tessl"
+    },
+    {
+      "pattern": ".serena/",
+      "agent": "Serena"
+    },
+    {
+      "pattern": ".rulesync/",
+      "agent": "Rulesync"
+    },
+    {
+      "pattern": ".factory/droids/",
+      "agent": "Factory"
+    },
+    {
+      "pattern": ".factory/commands/",
+      "agent": "Factory"
+    },
+    {
+      "pattern": ".factory/docs/",
+      "agent": "Factory"
+    },
+    {
+      "pattern": ".qodo/",
+      "agent": "Qodo"
+    },
+    {
+      "pattern": ".verdent/",
+      "agent": "Verdent"
+    },
+    {
+      "pattern": ".marscode/",
+      "agent": "Trae"
+    },
+    {
+      "pattern": ".charlie/instructions/",
+      "agent": "Charlie"
+    },
+    {
+      "pattern": ".kimi/",
+      "agent": "Kimi Code"
+    },
+    {
+      "pattern": ".pi/",
+      "agent": "Pi"
+    },
+    {
+      "pattern": ".pi/prompts/",
+      "agent": "Pi"
+    },
+    {
+      "pattern": ".pi/extensions/",
+      "agent": "Pi"
+    },
+    {
+      "pattern": ".rovodev/",
+      "agent": "Atlassian Rovodev"
+    }
+  ],
+  "branches": [
+    {
+      "pattern": "codex/",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "copilot/",
+      "agent": "Copilot"
+    },
+    {
+      "pattern": "jetbrains_junie",
+      "agent": "Junie"
+    },
+    {
+      "pattern": "cursor/",
+      "agent": "Cursor"
+    },
+    {
+      "pattern": "openhands/",
+      "agent": "OpenHands"
+    },
+    {
+      "pattern": "devin/",
+      "agent": "Devin"
+    },
+    {
+      "pattern": "gru/",
+      "agent": "Gru"
+    },
+    {
+      "pattern": "claudecode/",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "claudecode/",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "claude/",
+      "agent": "Claude Code"
+    },
+    {
+      "pattern": "opencode/",
+      "agent": "Opencode"
+    },
+    {
+      "pattern": "jules/",
+      "agent": "Jules"
+    },
+    {
+      "pattern": "sweep/",
+      "agent": "Sweep"
+    },
+    {
+      "pattern": "coderabbit/",
+      "agent": "Coderabbit"
+    },
+    {
+      "pattern": "sourcery-ai/",
+      "agent": "Sourcery"
+    },
+    {
+      "pattern": "windsurf-bot/",
+      "agent": "Windsurf"
+    },
+    {
+      "pattern": "open-swe/",
+      "agent": "Langchain Open SWE"
+    },
+    {
+      "pattern": "codegen-bot/",
+      "agent": "Codegen"
+    },
+    {
+      "pattern": "serena/",
+      "agent": "Serena"
+    },
+    {
+      "pattern": "goose/",
+      "agent": "Goose"
+    }
+  ],
+  "labels": [
+    {
+      "pattern": "ai-generated",
+      "agent": "Generic"
+    },
+    {
+      "pattern": "codex",
+      "agent": "Codex"
+    },
+    {
+      "pattern": "open-swe",
+      "agent": "Langchain Open SWE"
+    },
+    {
+      "pattern": "^amp$",
+      "agent": "Amp"
+    }
+  ],
+  "bots": [
+    {
+      "pattern": "dependabot\\[bot\\]",
+      "agent": "dependabot"
+    },
+    {
+      "pattern": "github-actions\\[bot\\]",
+      "agent": "github actions"
+    },
+    {
+      "pattern": "gh-action-bump-version@users.noreply.github.com",
+      "agent": "github actions"
+    },
+    {
+      "pattern": "microsoft-github-policy-service\\[bot\\]",
+      "agent": "microsoft"
+    },
+    {
+      "pattern": "renovate\\[bot\\]",
+      "agent": "renovate"
+    },
+    {
+      "pattern": "github-actions\\[bot\\]",
+      "agent": "github actions"
+    },
+    {
+      "pattern": "Microsoft Open Source",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "omahs",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "snyk-bot",
+      "agent": "snyk"
+    },
+    {
+      "pattern": "Renovate Bot",
+      "agent": "renovate"
+    },
+    {
+      "pattern": "microsoft-github-operations\\[bot\\]",
+      "agent": "microsoft"
+    },
+    {
+      "pattern": "msftbot\\[bot\\]",
+      "agent": "microsoft"
+    },
+    {
+      "pattern": "Microsoft GitHub User",
+      "agent": "microsoft"
+    },
+    {
+      "pattern": "dotnet-maestro\\[bot\\]",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "dotnet bot",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "dotnet-maestro\\[bot\\]",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "dotnet-policy-service\\[bot\\]",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "Azure SDK Bot",
+      "agent": "azure"
+    },
+    {
+      "pattern": "dotnet-bot",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "GitHub Action",
+      "agent": "github actions"
+    },
+    {
+      "pattern": "dotnet-maestro-bot",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "DotNet Bot",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "dotnet-maestro",
+      "agent": "dotnet"
+    },
+    {
+      "pattern": "github-actions",
+      "agent": "github actions"
+    },
+    {
+      "pattern": "GitStart",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "ImgBotApp",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "github-action-benchmark",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "integration-test@airbyte.io",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "ASP.NET CI",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "PyTorch MergeBot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Mattermost Build",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Fluent UI Build",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Crowdin Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "repo-visualizer",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "dotnet-bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "getsentry-bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "QUIC Dev Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "xerial-bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Azure SDK for Python bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "stainless-app\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Travis CI User",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "octo-sts\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "kodiakhq\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Calypso Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "pytorchbot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "QUIC Dev\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Loc Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "GitHub Actions",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "UI Fabric Build Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Azure CLI Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "semantic-release-bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Turbobot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "getsantry\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "dependabot-preview\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "PyTorch UpdateBot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "microsoft-github-policy-service\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "bott@conexco.com",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "release-please\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "GitHub Actions Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Docusaurus bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "vellum-automation\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "unified-ci-app\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Calcom Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "scala-steward-wvlet\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "mergify\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "WhiteSource Renovate",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "penify-dev\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "enzyme-ci-bot\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "NuGet Team Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "support@kodexa.com",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Bff Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Facebook Community Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "release-automation-rllyy97@microsoft.com",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Mend Renovate",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "fern-api\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "GitHub Design Systems Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "primer\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "pytorchbot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "SXS Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "gcf-owl-bot\\[bot\\]",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Sentry Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "Release Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "ASP.NET Push Bot",
+      "agent": "Bot"
+    },
+    {
+      "pattern": "sentry-autofix\\[bot\\]",
+      "agent": "Bot"
+    }
+  ],
+  "generic_weights": {
+    "AGENTS.md": 0.3
+  },
+  "exclusions": [
+    "CONVENTIONS.md"
+  ]
+}
