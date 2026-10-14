@@ -169,6 +169,39 @@ def make_options(source_id: int, *, agents=None, channels=CHANNELS) -> DetectOpt
     )
 
 
+def test_candidates_top_n_is_deterministic(clean_db):
+    engine = clean_db()
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO owners (id, login, type) VALUES (1, 'octo', 'User')"))
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES (1, 'n1', 'octo/one', 1, 'one', 'public'),"
+                " (2, 'n2', 'octo/two', 1, 'two', 'public'),"
+                " (3, 'n3', 'octo/three', 1, 'three', 'public'),"
+                " (4, 'n4', 'octo/four', 1, 'four', 'public'),"
+                " (5, 'n5', 'octo/five', 1, 'five', 'public')"
+            )
+        )
+    source_id = create_run(engine, {"q": "language:rust"}, api_version="2022-11-28")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers)"
+                " VALUES (:run, 1, 'octo/one', 100), (:run, 2, 'octo/two', 50),"
+                " (:run, 3, 'octo/three', 50), (:run, 4, 'octo/four', NULL),"
+                " (:run, 5, 'octo/five', 10)"
+            ),
+            {"run": source_id},
+        )
+    order = [row["repo_id"] for row in orchestrator_module._candidates(engine, source_id, None)]
+    assert order == [1, 2, 3, 5, 4]  # stargazers DESC, repo_id ASC tie-break, NULLS LAST
+    top_three = [row["repo_id"] for row in orchestrator_module._candidates(engine, source_id, 3)]
+    assert top_three == [1, 2, 3]
+    top_four = [row["repo_id"] for row in orchestrator_module._candidates(engine, source_id, 4)]
+    assert top_four == [1, 2, 3, 5]
+
+
 def test_run_detection_writes_evidence_and_never_searches(clean_db):
     engine = clean_db()
     source_id = seed_source_run(engine)

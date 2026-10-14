@@ -193,6 +193,48 @@ def test_history_channels_share_one_call_and_compute_window_stats():
     assert stats["committed_at"]["c1"] == "2026-01-02T00:00:00Z"
 
 
+def test_history_matches_committer_only_identity():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/graphql"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "object": {
+                            "history": {
+                                "nodes": [
+                                    {
+                                        "oid": "c1",
+                                        "committedDate": "2026-01-02T00:00:00Z",
+                                        "message": "feat: human work with an agent committer",
+                                        "author": {
+                                            "name": "Jane",
+                                            "email": "jane@example.com",
+                                            "user": {"login": "jane"},
+                                        },
+                                        "committer": {
+                                            "name": "Claude",
+                                            "email": "noreply@anthropic.com",
+                                            "user": {"login": "claude-agent"},
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    result = detect_history(make_deps(handler), "octo/repo", PACK, limit=100)
+    hits = result["author"].hits
+    assert [(hit.agent, hit.channel) for hit in hits] == [("Claude Code", "author")]
+    assert hits[0].evidence == {"login": "claude-agent", "commit": "c1", "field": "email"}
+    assert result["author"].stats["ai_oids"] == ("c1",)
+    assert result["author"].stats["human_oids"] == ()
+
+
 def test_history_null_repository_is_unavailable():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": {"repository": None}})
