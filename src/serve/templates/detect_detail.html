@@ -42,8 +42,28 @@
       <a class="button" href="/runs/{{ run.id }}/export?format=csv">Export CSV</a>
     </div>
   </div>
+  <div class="form-actions" id="detection-filters">
+    <label class="field" for="detection-filter-signal">
+      <span class="field-label">Has signal</span>
+      <input type="checkbox" id="detection-filter-signal">
+    </label>
+    <label class="field" for="detection-filter-agent">
+      <span class="field-label">Agent</span>
+      <select class="field-input" id="detection-filter-agent">
+        <option value="">All agents</option>
+        {% for agent in detection.filter_agents %}<option value="{{ agent }}">{{ agent }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="field" for="detection-filter-channel">
+      <span class="field-label">Channel</span>
+      <select class="field-input" id="detection-filter-channel">
+        <option value="">All channels</option>
+        {% for channel in detection.filter_channels %}<option value="{{ channel }}">{{ channel }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
   {% for repo in detection.repos %}
-  <details id="detection-repo-{{ repo.repo_id }}">
+  <details id="detection-repo-{{ repo.repo_id }}" data-agents="{{ repo.agents | join('|') }}" data-channels="{{ repo.channel_names | join('|') }}">
     <summary>{{ repo.full_name }} · {{ repo.agents | join(", ") or "no signals" }}{% if repo.unavailable %} · unavailable{% endif %}</summary>
     {% if repo.notes %}<p class="muted">{{ repo.notes | join("; ") }}</p>{% endif %}
     {% for channel, hits in repo.channels.items() %}
@@ -58,5 +78,40 @@
   {% endfor %}
   {% if not detection.repos %}<p class="muted">No repos were scanned.</p>{% endif %}
 </section>
+<script>
+(function () {
+  "use strict";
+  var signal = document.getElementById("detection-filter-signal");
+  var agent = document.getElementById("detection-filter-agent");
+  var channel = document.getElementById("detection-filter-channel");
+  if (!signal || !agent || !channel) {
+    return;
+  }
+  var repos = Array.prototype.slice.call(
+    document.querySelectorAll("#detection-evidence details")
+  );
+  function values(repo, name) {
+    var raw = repo.getAttribute(name) || "";
+    return raw === "" ? [] : raw.split("|");
+  }
+  function apply() {
+    var wantSignal = signal.checked;
+    var wantAgent = agent.value;
+    var wantChannel = channel.value;
+    repos.forEach(function (repo) {
+      var agents = values(repo, "data-agents");
+      var channels = values(repo, "data-channels");
+      var visible =
+        (!wantSignal || agents.length > 0) &&
+        (!wantAgent || agents.indexOf(wantAgent) !== -1) &&
+        (!wantChannel || channels.indexOf(wantChannel) !== -1);
+      repo.hidden = !visible;
+    });
+  }
+  signal.addEventListener("change", apply);
+  agent.addEventListener("change", apply);
+  channel.addEventListener("change", apply);
+})();
+</script>
 {% endif %}
 {% endblock %}

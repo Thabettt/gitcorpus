@@ -174,6 +174,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "unavailable": bool(rollup.get("unavailable")),
                 "notes": rollup.get("notes", []),
                 "channels": grouped,
+                "channel_names": sorted(grouped),
             }
         )
     spec = row["filter_spec"] or {}
@@ -187,6 +188,10 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "summary": row["result_summary"] or {},
                 "windows": spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100},
                 "repos": repos,
+                "filter_agents": sorted({agent for repo in repos for agent in repo["agents"]}),
+                "filter_channels": sorted(
+                    {channel for repo in repos for channel in repo["channels"]}
+                ),
             },
             "csrf_token": request.state.csrf_token,
         },

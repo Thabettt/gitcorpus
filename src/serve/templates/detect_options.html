@@ -39,6 +39,11 @@
     <fieldset>
       <legend>Agents ({{ roster | length }})</legend>
       <p class="muted">Only the selected agents are matched, counted, and exported. Keep all checked to scan for every agent.</p>
+      <div class="checklist-tools">
+        <input type="search" id="detect-agent-search" class="field-input" aria-label="Search agents" placeholder="Search agents…">
+        <button type="button" id="detect-agents-all" class="button">Select all</button>
+        <button type="button" id="detect-agents-none" class="button">Select none</button>
+      </div>
       <div class="checklist" id="detect-agents">
         {% for agent in roster %}
         <label><input type="checkbox" name="agents" value="{{ agent }}" checked> {{ agent }}</label>
@@ -72,5 +77,39 @@
   <p class="muted">Depth is windowed: last 100 commits, most recent 100 PRs and issues — labelled as windowed, never presented as a census. Tier boundaries are documented in <code>docs/detection-tiers.md</code>. Detection is an undercount: agents that hide their traces are not visible.</p>
   <p><a href="/detections">All detections</a></p>
 </section>
+<script>
+(function () {
+  "use strict";
+  var search = document.getElementById("detect-agent-search");
+  var list = document.getElementById("detect-agents");
+  if (!search || !list) {
+    return;
+  }
+  var labels = Array.prototype.slice.call(list.querySelectorAll("label"));
+  search.addEventListener("input", function () {
+    var term = search.value.trim().toLowerCase();
+    labels.forEach(function (label) {
+      label.hidden = term !== "" && label.textContent.toLowerCase().indexOf(term) === -1;
+    });
+  });
+  function setAll(checked) {
+    labels.forEach(function (label) {
+      label.querySelector("input[type=checkbox]").checked = checked;
+    });
+  }
+  var selectAll = document.getElementById("detect-agents-all");
+  var selectNone = document.getElementById("detect-agents-none");
+  if (selectAll) {
+    selectAll.addEventListener("click", function () {
+      setAll(true);
+    });
+  }
+  if (selectNone) {
+    selectNone.addEventListener("click", function () {
+      setAll(false);
+    });
+  }
+})();
+</script>
 {% endif %}
 {% endblock %}

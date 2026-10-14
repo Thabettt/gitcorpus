@@ -213,6 +213,33 @@ def test_detections_export_renders_evidence_csv(clean):
     assert "Claude Code" in response.text
 
 
+def test_options_page_has_search_and_select_all_controls(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client = make_client(clean)
+    response = client.get(f"/runs/{source}/detect")
+    assert response.status_code == 200
+    assert 'id="detect-agent-search"' in response.text
+    assert 'id="detect-agents-all"' in response.text
+    assert 'id="detect-agents-none"' in response.text
+    assert "Select all" in response.text
+    assert "Select none" in response.text
+
+
+def test_detection_detail_has_filters_and_repo_data_attributes(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+    response = client.get(f"/runs/{detect_id}")
+    assert response.status_code == 200
+    assert 'id="detection-filter-signal"' in response.text
+    assert 'id="detection-filter-agent"' in response.text
+    assert 'id="detection-filter-channel"' in response.text
+    assert 'data-agents="Claude Code"' in response.text
+    assert 'data-channels="file"' in response.text
+
+
 def test_latest_detect_for_run_finds_the_detection(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
