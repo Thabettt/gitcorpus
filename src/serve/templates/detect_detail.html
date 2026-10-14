@@ -80,10 +80,12 @@
       {% if repo.notes %}<p class="muted">{{ repo.notes | join("; ") }}</p>{% endif %}
       {% for channel, hits in repo.channels.items() %}
         {% if hits %}
-        <h4>{{ channel }}</h4>
-        <ul>
-          {% for hit in hits %}<li><strong>{{ hit.agent }}</strong> — {{ hit.summary }}</li>{% endfor %}
-        </ul>
+        <div class="evidence-channel" data-channel="{{ channel }}">
+          <h4>{{ channel }}</h4>
+          <ul>
+            {% for hit in hits %}<li data-agent="{{ hit.agent }}"><strong>{{ hit.agent }}</strong> — {{ hit.summary }}</li>{% endfor %}
+          </ul>
+        </div>
         {% endif %}
       {% endfor %}
     </div>
@@ -108,22 +110,41 @@
   var repos = Array.prototype.slice.call(
     document.querySelectorAll("#detection-evidence details.evidence-repo")
   );
-  function values(repo, name) {
-    var raw = repo.getAttribute(name) || "";
-    return raw === "" ? [] : raw.split("|");
+  function hasSignals(repo) {
+    return repo.querySelector(".evidence-channel") !== null;
   }
   function apply() {
     var wantSignal = signal.checked;
     var wantAgent = agent.value;
     var wantChannel = channel.value;
+    var filteringEvidence = wantAgent !== "" || wantChannel !== "";
     var visible = 0;
     repos.forEach(function (repo) {
-      var agents = values(repo, "data-agents");
-      var channels = values(repo, "data-channels");
-      var show =
-        (!wantSignal || agents.length > 0) &&
-        (!wantAgent || agents.indexOf(wantAgent) !== -1) &&
-        (!wantChannel || channels.indexOf(wantChannel) !== -1);
+      var sectionsShown = 0;
+      Array.prototype.forEach.call(
+        repo.querySelectorAll(".evidence-channel"),
+        function (section) {
+          var channelOk =
+            wantChannel === "" || section.getAttribute("data-channel") === wantChannel;
+          var hits = section.querySelectorAll("li");
+          var hitsShown = 0;
+          Array.prototype.forEach.call(hits, function (hit) {
+            var show =
+              channelOk &&
+              (wantAgent === "" || hit.getAttribute("data-agent") === wantAgent);
+            hit.hidden = !show;
+            if (show) hitsShown += 1;
+          });
+          section.hidden = !channelOk || hitsShown === 0;
+          if (!section.hidden) sectionsShown += 1;
+        }
+      );
+      var show;
+      if (filteringEvidence) {
+        show = sectionsShown > 0;
+      } else {
+        show = !wantSignal || hasSignals(repo);
+      }
       repo.hidden = !show;
       if (show) visible += 1;
     });

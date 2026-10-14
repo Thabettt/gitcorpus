@@ -238,6 +238,8 @@ def test_detection_detail_has_filters_and_repo_data_attributes(clean):
     assert 'id="detection-filter-channel"' in response.text
     assert 'data-agents="Claude Code"' in response.text
     assert 'data-channels="file"' in response.text
+    assert 'class="evidence-channel" data-channel="file"' in response.text
+    assert 'data-agent="Claude Code"' in response.text
 
 
 def test_latest_detect_for_run_finds_the_detection(clean):
