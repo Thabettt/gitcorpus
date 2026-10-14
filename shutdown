@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# gitcorpus dev shutdown: stop the detached server via its PID file, and fall back
+# to whatever process is listening on the port (servers started outside ./start).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/gitcorpus"
+PID_FILE="$STATE_DIR/serve.pid"
+PORT="${GITCORPUS_PORT:-8000}"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+process_alive() {
+  powershell.exe -NoProfile -Command \
+    "if (Get-Process -Id $1 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" \
+    >/dev/null 2>&1
+}
+
+stop_pid() {
+  local pid="$1" label="$2"
+  say "stopping gitcorpus $label (pid $pid) ..."
+  powershell.exe -NoProfile -Command "Stop-Process -Id $pid -Force" >/dev/null
+  local _attempt
+  for _attempt in $(seq 1 10); do
+    process_alive "$pid" || return 0
+    sleep 1
+  done
+  return 1
+}
+
+listener_pid() {
+  powershell.exe -NoProfile -Command \
+    "(Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" \
+    </dev/null | tr -d '[:space:]'
+}
+
+stopped=0
+
+if [[ -f "$PID_FILE" ]]; then
+  pid="$(tr -d '[:space:]' < "$PID_FILE")"
+  rm -f "$PID_FILE"
+  if [[ -n "$pid" ]] && process_alive "$pid"; then
+    stop_pid "$pid" "server" || die "could not stop process $pid"
+    stopped=1
+  fi
+fi
+
+# Anything still listening on the port (e.g. a server started outside ./start).
+listener="$(listener_pid)"
+if [[ -n "$listener" ]] && ! process_alive "$listener"; then
+  listener=""
+fi
+if [[ -n "$listener" ]]; then
+  cmdline="$(powershell.exe -NoProfile -Command \
+    "(Get-CimInstance Win32_Process -Filter 'ProcessId = $listener').CommandLine" \
+    </dev/null | tr -d '\r' | head -n 1)"
+  if [[ "$cmdline" != *python* || "$cmdline" != *"-m serve"* ]]; then
+    die "port $PORT is held by pid $listener (${cmdline:-unknown process}), which does not look like gitcorpus (expected a python -m serve process); stop it yourself or set GITCORPUS_PORT"
+  fi
+  stop_pid "$listener" "port listener" || die "could not stop process $listener"
+  stopped=1
+fi
+
+if [[ "$stopped" -eq 1 ]]; then
+  say "gitcorpus is stopped"
+else
+  say "gitcorpus is not running"
+fi

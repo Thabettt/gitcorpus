@@ -54,6 +54,31 @@ ensure_service() {
   die "$name did not come up on port $port within 30s - see docs/environment.md"
 }
 
+wait_database() {
+  local _attempt
+  for _attempt in $(seq 1 30); do
+    if "$PY" - <<'PYEOF' 2>/dev/null
+import os
+import sys
+
+from sqlalchemy import create_engine, text
+
+try:
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    engine.dispose()
+except Exception:
+    sys.exit(1)
+PYEOF
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  die "PostgreSQL did not accept connections within 30s - see docs/environment.md"
+}
+
 [[ -x "$PY" ]] || die "missing $PY - create the venv and install requirements (docs/environment.md)"
 for _name in DATABASE_URL REDIS_URL GITHUB_TOKEN; do
   [[ -n "${!_name:-}" ]] || die "$_name is not set in this shell (docs/environment.md)"
@@ -72,11 +97,12 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 if port_open "$PORT"; then
-  die "port $PORT is already in use by another process; stop it or set GITCORPUS_PORT"
+  die "port $PORT is already in use by another process; run ./shutdown (or set GITCORPUS_PORT)"
 fi
 
 ensure_service "PostgreSQL" 5433 "gitcorpus-postgres"
 ensure_service "Redis" 6379 "gitcorpus-redis"
+wait_database
 
 say "applying migrations ..."
 PYTHONPATH=src "$PY" -m alembic upgrade head
