@@ -31,7 +31,7 @@ def clean(clean_db):
     )
 
 
-def seed_find_run(engine, status="done") -> int:
+def seed_find_run(engine, status="done", *, with_items=True) -> int:
     with engine.begin() as connection:
         run_id = connection.execute(
             text(
@@ -41,13 +41,14 @@ def seed_find_run(engine, status="done") -> int:
             ),
             {"status": status},
         ).scalar_one()
-        connection.execute(
-            text(
-                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers)"
-                " VALUES (:run, 1, 'octo/one', 10)"
-            ),
-            {"run": run_id},
-        )
+        if with_items:
+            connection.execute(
+                text(
+                    "INSERT INTO run_items (run_id, repo_id, full_name, stargazers)"
+                    " VALUES (:run, 1, 'octo/one', 10)"
+                ),
+                {"run": run_id},
+            )
     return int(run_id)
 
 
@@ -150,6 +151,75 @@ def test_start_detection_creates_run_and_submits_runner(clean):
     assert row["filter_spec"]["agents"] == ["Claude Code", "Codex"]
     assert row["filter_spec"]["channels"] == ["file", "pr_metadata"]
     assert row["filter_spec"]["limit"] == 50
+
+
+def test_start_detection_rejects_empty_source_run(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean, with_items=False)
+    seed_pack(clean)
+    client.get(f"/runs/{source}/detect")
+    response = client.post(
+        f"/runs/{source}/detect",
+        data={"csrf": csrf_token(client), "pack_version": "test-pack", "channels": ["file"]},
+    )
+    assert response.status_code == 400
+    assert "no saved results" in response.text
+    assert "finished search with saved results" in response.text
+    with clean.connect() as connection:
+        count = connection.scalar(text("SELECT count(*) FROM runs WHERE kind = 'detect'"))
+    assert count == 0
+
+
+def test_start_detection_rejects_unknown_agents(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/runs/{source}/detect")
+    response = client.post(
+        f"/runs/{source}/detect",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "agents": ["Not An Agent"],
+            "channels": ["file"],
+        },
+    )
+    assert response.status_code == 400
+    assert "unknown agents" in response.text
+    assert "Not An Agent" in response.text
+    assert "roster" in response.text
+    with clean.connect() as connection:
+        count = connection.scalar(text("SELECT count(*) FROM runs WHERE kind = 'detect'"))
+    assert count == 0
+
+
+def test_start_detection_validates_agents_against_the_submitted_pack(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs (version, authors, files, branches, labels)"
+                " VALUES ('older-pack', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)"
+            )
+        )
+    client.get(f"/runs/{source}/detect")
+    response = client.post(
+        f"/runs/{source}/detect",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "older-pack",
+            "agents": ["Codex"],
+            "channels": ["file"],
+        },
+    )
+    assert response.status_code == 400
+    assert "unknown agents" in response.text
+    assert "Codex" in response.text
+    with clean.connect() as connection:
+        count = connection.scalar(text("SELECT count(*) FROM runs WHERE kind = 'detect'"))
+    assert count == 0
 
 
 def test_start_detection_rejects_empty_selection(clean):

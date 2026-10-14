@@ -306,8 +306,26 @@ def register_detect(
                 },
                 status_code=400,
             )
+        if await run_in_threadpool(_candidate_count, engine, run_id) == 0:
+            return templates.TemplateResponse(
+                request,
+                "detect_options.html",
+                {
+                    **_options_context(
+                        engine,
+                        run_id,
+                        errors_=["source run has no saved results to detect"],
+                        hints=[
+                            "Detection needs a finished search with saved results;"
+                            " run a search first or pick another."
+                        ],
+                    ),
+                    "csrf_token": request.state.csrf_token,
+                },
+                status_code=400,
+            )
         try:
-            await run_in_threadpool(load_frozen, engine, spec.pack_version)
+            pack = await run_in_threadpool(load_frozen, engine, spec.pack_version)
         except KeyError:
             return templates.TemplateResponse(
                 request,
@@ -323,6 +341,29 @@ def register_detect(
                 },
                 status_code=400,
             )
+        if spec.agents is not None:
+            unknown = sorted(set(spec.agents) - set(pack.roster()))
+            if unknown:
+                return templates.TemplateResponse(
+                    request,
+                    "detect_options.html",
+                    {
+                        **_options_context(
+                            engine,
+                            run_id,
+                            errors_=[
+                                f"unknown agents for pack {spec.pack_version!r}:"
+                                f" {', '.join(unknown)}"
+                            ],
+                            hints=[
+                                "Pick agents from the selected pack's roster; the options"
+                                " list may belong to a different pack version."
+                            ],
+                        ),
+                        "csrf_token": request.state.csrf_token,
+                    },
+                    status_code=400,
+                )
         new_id = await run_in_threadpool(
             create_run,
             engine,
