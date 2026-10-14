@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import fakeredis
@@ -78,6 +79,7 @@ def make_client(
     redis_ping=None,
     token_present=None,
     runner_factory=None,
+    detect_runner_factory=None,
 ) -> TestClient:
     application = create_app(
         engine=engine,
@@ -85,6 +87,7 @@ def make_client(
         redis_ping=redis_ping,
         token_present=token_present,
         runner_factory=runner_factory,
+        detect_runner_factory=detect_runner_factory,
     )
     return TestClient(application, raise_server_exceptions=False)
 
@@ -242,3 +245,88 @@ def test_run_detail_shows_resume_for_failed_and_partial(clean, tmp_path, monkeyp
             text("UPDATE runs SET status='partial', error=NULL WHERE id=:id"), {"id": run_id}
         )
     assert "Resume" in client.get(f"/runs/{run_id}").text
+
+
+def test_resume_detect_run_uses_detect_runner_and_clears_evidence(clean):
+    engine = clean
+    with engine.begin() as connection:
+        source = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version, status)"
+                " VALUES ('s', '{}'::jsonb, '2022-11-28', 'done') RETURNING id"
+            )
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs (version, authors, files, branches, labels)"
+                " VALUES ('p1', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO owners (id, login, type) VALUES (1, 'octo', 'User')"
+                " ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES (1, 'n1', 'octo/one', 1, 'one', 'public')"
+            )
+        )
+        detect_id = connection.execute(
+            text(
+                "INSERT INTO runs"
+                " (filter_hash, filter_spec, api_version, status, kind, source_run_id)"
+                " VALUES ('d', :spec, '2022-11-28', 'failed', 'detect', :src) RETURNING id"
+            ),
+            {
+                "spec": json.dumps(
+                    {
+                        "version": 1,
+                        "kind": "detect",
+                        "source_run_id": int(source),
+                        "pack_version": "p1",
+                        "agents": None,
+                        "channels": ["file"],
+                        "limit": None,
+                        "windows": {"commits": 100, "prs": 100, "issues": 100},
+                    }
+                ),
+                "src": source,
+            },
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO detection_evidence"
+                " (run_id, repo_id, agent, channel, evidence, pack_version)"
+                " VALUES (:run, 1, 'claude', 'file', '{}'::jsonb, 'p1')"
+            ),
+            {"run": detect_id},
+        )
+    seen: list[int] = []
+
+    def detect_factory(_engine):
+        def runner(run_id, _spec):
+            seen.append(run_id)
+            from serve.executor import RunPayload
+
+            return RunPayload(total_count=0, items=[], fetched=0)
+
+        return runner
+
+    client = make_client(engine, detect_runner_factory=detect_factory)
+    client.get(f"/runs/{detect_id}")  # CSRF cookie
+    response = client.post(
+        f"/runs/{detect_id}/resume", data={"csrf": csrf_token(client)}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    with engine.connect() as connection:
+        status = connection.execute(
+            text("SELECT status FROM runs WHERE id = :id"), {"id": detect_id}
+        ).scalar_one()
+        evidence = connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :id"), {"id": detect_id}
+        ).scalar_one()
+    assert status in ("queued", "running", "done")
+    assert evidence == 0

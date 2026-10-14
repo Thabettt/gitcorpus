@@ -345,6 +345,7 @@ def create_app(
     *,
     engine: Engine | None = None,
     runner_factory: Callable[[Engine], Runner] | None = None,
+    detect_runner_factory: Callable[[Engine], Runner] | None = None,
     runs_root: str = "runs",
     clone_root: str = "clones",
     clock: Callable[[], float] = time.time,
@@ -406,6 +407,16 @@ def create_app(
             return runner
 
         return cast(Runner, loaders.get("runner", build))
+
+    def detect_runner_for() -> Runner:
+        def build() -> Runner:
+            if detect_runner_factory is not None:
+                return detect_runner_factory(engine_for())
+            from serve.detect import build_detect_runner
+
+            return build_detect_runner(engine_for())
+
+        return cast(Runner, loaders.get("detect_runner", build))
 
     def executor_for() -> RunExecutor:
         def build() -> RunExecutor:
@@ -853,19 +864,7 @@ def create_app(
             )
 
         if row.get("kind") == "detect":
-            from detect.orchestrator import run_detection
-            from detect.packs import load_frozen
-            from serve.detect_spec import parse_detect_spec
-
-            from serve.runner import build_deps
-
-            spec = parse_detect_spec(row["filter_spec"])
-            pack = load_frozen(engine, spec.pack_version)
-
-            def detect_runner(_run_id: int, _spec_doc: dict):
-                return run_detection(build_deps(engine), run_id, spec, pack)
-
-            submit_runner = detect_runner
+            submit_runner = detect_runner_for()
         else:
             submit_runner = runner_for()
 
@@ -1098,6 +1097,15 @@ def create_app(
     )
 
     register_corpora(application, engine_factory=engine_for)
+
+    from serve.detect import register_detect
+
+    register_detect(
+        application,
+        engine_factory=engine_for,
+        executor_factory=executor_for,
+        runner_factory=detect_runner_for,
+    )
 
     return application
 

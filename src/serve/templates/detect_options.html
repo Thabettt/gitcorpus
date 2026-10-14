@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Detect agent use · gitcorpus{% endblock %}
+{% block body %}
+{% if not source %}
+<section class="panel" id="detect-not-found">
+  <h1>Search not found</h1>
+  <p class="muted">No search with this id exists in the database.</p>
+  <p><a href="/runs">All searches</a></p>
+</section>
+{% elif not source.eligible %}
+<section class="panel" id="detect-ineligible">
+  <h1>Detection needs a finished search</h1>
+  <p class="muted">Search #{{ source.id }} is {{ status_label(source.status) }}; detection runs on searches that finished (done or partial).</p>
+  <p><a href="/runs/{{ source.id }}">Back to the search</a></p>
+</section>
+{% else %}
+<section class="panel" id="detect-options" data-run-id="{{ source.id }}">
+  <div class="panel-head">
+    <h1>Detect agent use — search #{{ source.id }}</h1>
+    <p class="muted">Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo. It never calls discovery/search endpoints and never copies code.</p>
+  </div>
+  {% if errors %}
+  <div id="detect-errors" class="empty-state error-state" role="alert">
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    {% for hint in hints %}<p class="muted">{{ hint }}</p>{% endfor %}
+  </div>
+  {% endif %}
+  {% if not packs %}
+  <p id="detect-no-packs" class="flag warn">No trace packs are frozen yet. Build one with <code>python -m detect.packs build</code> and <code>… freeze</code>, then reload this page.</p>
+  {% endif %}
+  <form id="detect-form" action="/runs/{{ source.id }}/detect" method="post">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label class="field" for="detect-pack">
+      <span class="field-label">Pack version</span>
+      <select class="field-input" id="detect-pack" name="pack_version">
+        {% for version in packs %}<option value="{{ version }}">{{ version }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset>
+      <legend>Agents ({{ roster | length }})</legend>
+      <p class="muted">Only the selected agents are matched, counted, and exported. Keep all checked to scan for every agent.</p>
+      <div class="checklist" id="detect-agents">
+        {% for agent in roster %}
+        <label><input type="checkbox" name="agents" value="{{ agent }}" checked> {{ agent }}</label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Channels</legend>
+      <div class="checklist" id="detect-channels">
+        {% for channel in channels %}
+        <label><input type="checkbox" name="channels" value="{{ channel }}" checked> {{ channel }}</label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <label class="field" for="detect-limit">
+      <span class="field-label">Top-N repos (blank = all {{ candidate_count }})</span>
+      <input class="field-input" id="detect-limit" name="limit" type="number" min="1">
+    </label>
+    <div id="detect-estimate"
+         hx-get="/runs/{{ source.id }}/detect-estimate"
+         hx-trigger="load, change from:#detect-form"
+         hx-include="#detect-form"
+         hx-swap="outerHTML">
+      <p class="muted">Estimating…</p>
+    </div>
+    <div class="form-actions">
+      <button id="detect-start" class="button primary" type="submit">Start detection</button>
+      <a class="button" href="/runs/{{ source.id }}">Cancel</a>
+    </div>
+  </form>
+  <p class="muted">Depth is windowed: last 100 commits, most recent 100 PRs and issues — labelled as windowed, never presented as a census. Tier boundaries are documented in <code>docs/detection-tiers.md</code>. Detection is an undercount: agents that hide their traces are not visible.</p>
+  <p><a href="/detections">All detections</a></p>
+</section>
+{% endif %}
+{% endblock %}
