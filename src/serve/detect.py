@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -110,6 +111,22 @@ def _options_context(engine: Engine, run_id: int, *, errors_: list[str], hints: 
     }
 
 
+def _first_signal_label(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return moment.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _ratio_label(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "—"
+    return f"{float(value) * 100:.1f}%"
+
+
 def _evidence_summary(evidence: dict) -> str:
     if "path" in evidence:
         suffix = " (hidden via .gitignore)" if evidence.get("source") == "gitignore" else ""
@@ -178,6 +195,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
             }
         )
     spec = row["filter_spec"] or {}
+    result_summary = row["result_summary"] or {}
     return templates.TemplateResponse(
         request,
         "detect_detail.html",
@@ -185,7 +203,9 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
             "run": summary,
             "detection": {
                 "source_run_id": row["source_run_id"],
-                "summary": row["result_summary"] or {},
+                "summary": result_summary,
+                "first_signal_label": _first_signal_label(result_summary.get("first_signal_at")),
+                "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
                 "windows": spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100},
                 "repos": repos,
                 "filter_agents": sorted({agent for repo in repos for agent in repo["agents"]}),

@@ -275,3 +275,15 @@ def test_detect_status_poll_refreshes_page_when_run_finishes(clean):
     assert "HX-Refresh" not in running.headers
     assert done_poll.headers.get("HX-Refresh") == "true"
     assert "HX-Refresh" not in done_render.headers
+
+
+def test_detection_summary_cards_are_readable(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+    response = client.get(f"/runs/{detect_id}")
+    assert response.status_code == 200
+    assert "2026-01-02 00:00 UTC" in response.text
+    assert "100.0%" in response.text
+    assert "<h3>Pack</h3>" not in response.text

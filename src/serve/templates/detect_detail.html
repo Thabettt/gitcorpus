@@ -30,9 +30,8 @@
     <article class="card"><h3>Repos scanned</h3><p>{{ detection.summary.repos_scanned or 0 }}</p></article>
     <article class="card"><h3>With any signal</h3><p>{{ detection.summary.repos_with_signal or 0 }}</p></article>
     <article class="card"><h3>Unavailable</h3><p>{{ detection.summary.repos_unavailable or 0 }}</p></article>
-    <article class="card"><h3>Windowed commit ratio</h3><p>{{ detection.summary.commit_ratio if detection.summary.commit_ratio is not none else "—" }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p></article>
-    <article class="card"><h3>Pack</h3><p>{{ detection.summary.pack_version or "—" }}</p></article>
-    <article class="card"><h3>First signal</h3><p>{{ detection.summary.first_signal_at or "—" }}</p></article>
+    <article class="card"><h3>Windowed commit ratio</h3><p>{{ detection.ratio_label }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p></article>
+    <article class="card"><h3>First signal</h3><p>{{ detection.first_signal_label or "—" }}</p></article>
   </div>
   {% if detection.summary.agents %}
   <div id="detection-agents" class="run-counts">
@@ -42,6 +41,7 @@
   {% if detection.summary.partial_channels %}
   <p class="flag warn" id="detection-partials">Partial channels: {% for channel, note in detection.summary.partial_channels.items() %}{{ channel }} ({{ note }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
   {% endif %}
+  <p class="muted">Windowed commit ratio: the share of the last {{ detection.windows.commits }} commits attributed to a detected agent (author/committer identity, commit trailer, or PR→commit propagation), rated experimental &lt;1% · limited 1–5% · consistent 5–20% · pervasive &gt;20%. It covers the window only, never the full history.</p>
   <p class="muted">Depth: {{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed). Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount.</p>
 </section>
 <section class="panel" id="detection-evidence">
