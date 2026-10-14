@@ -1603,3 +1603,56 @@ kbd {
 #abort-run {
   margin-top: 0.75rem;
 }
+/* Per-repo evidence blocks (detection pages) */
+#detection-filters {
+  margin-bottom: 0.75rem;
+}
+.evidence-repo {
+  background: var(--gc-surface);
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius);
+  margin-bottom: 0.5rem;
+}
+.evidence-repo > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.86rem;
+  color: var(--gc-heading);
+  border-radius: var(--gc-radius);
+}
+.evidence-repo > summary:hover {
+  background: var(--gc-surface-alt);
+}
+.evidence-repo[open] > summary {
+  border-bottom: 1px solid var(--gc-border);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.evidence-repo .evidence-body {
+  padding: 0.35rem 1rem 0.75rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gc-border-strong) transparent;
+}
+.evidence-repo h4 {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--gc-muted);
+}
+.evidence-repo ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+}

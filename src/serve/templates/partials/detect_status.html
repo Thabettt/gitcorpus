@@ -1,21 +1,27 @@
-<div id="detect-status"{% if run.polling %} hx-get="/partials/runs/{{ run.id }}/detect-status" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
-  <p class="run-status-line">
-    <span class="status-pill status-{{ run.status }}">{{ status_label(run.status) }}</span>
-    {% if run.progress %}<span class="muted">{{ run.progress.label }} — {{ run.progress.done }} / {{ run.progress.total or "?" }}{% if run.progress.eta %} · {{ run.progress.eta }} left{% endif %}</span>{% endif %}
+<div id="detect-status" aria-live="polite" data-status="{{ run.status }}"{% if run.polling %} hx-get="/partials/runs/{{ run.id }}/detect-status" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
+  <div class="run-status-line">
+    <span class="pill {{ run.status }}" data-status="{{ run.status }}">{{ status_label(run.status) }}</span>
+    {% if run.progress %}
+    <span class="muted">{{ run.progress.label }} — {{ run.progress.done }}{% if run.progress.total %} / {{ run.progress.total }}{% endif %}</span>
+    {% if run.progress.percent is not none %}
+    <span class="progress-track" role="progressbar" aria-label="Detection progress" aria-valuenow="{{ run.progress.percent }}" aria-valuemin="0" aria-valuemax="100"><span class="progress-fill" style="width: {{ run.progress.percent }}%"></span></span>
+    {% endif %}
+    {% if run.progress.eta %}<span class="muted">est. {{ run.progress.eta }} left</span>{% endif %}
+    {% endif %}
     {% if run.error %}<span class="flag error">{{ run.error }}</span>{% endif %}
-  </p>
+  </div>
+  {% if result_summary and result_summary.repos_scanned %}
+  <p class="muted">{{ result_summary.repos_scanned }} repos scanned · {{ result_summary.repos_with_signal }} with signals{% if result_summary.repos_unavailable %} · {{ result_summary.repos_unavailable }} unavailable{% endif %}</p>
+  {% endif %}
   {% if run.status in ('queued', 'running') %}
-  <form class="inline-form" method="post" action="/runs/{{ run.id }}/cancel">
+  <form class="inline-form" method="post" action="/runs/{{ run.id }}/cancel" onsubmit="return confirm('Stop this detection? You can resume it later.');">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <button class="button" type="submit">Stop detection</button>
+    <button class="button danger" type="submit">Stop detection</button>
   </form>
   {% elif run.status in ('failed', 'partial', 'cancelled') %}
   <form class="inline-form" method="post" action="/runs/{{ run.id }}/resume">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <button class="button primary" type="submit">Resume</button>
   </form>
-  {% endif %}
-  {% if result_summary and result_summary.repos_scanned %}
-  <p class="muted">{{ result_summary.repos_scanned }} repos scanned · {{ result_summary.repos_with_signal }} with signals{% if result_summary.repos_unavailable %} · {{ result_summary.repos_unavailable }} unavailable{% endif %}</p>
   {% endif %}
 </div>

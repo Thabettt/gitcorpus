@@ -4,5 +4,5 @@
   "headers": {
     "content-type": "text/html; charset=utf-8"
   },
-  "body": "<div id=\"detect-status\">\n  <p class=\"run-status-line\">\n    <span class=\"status-pill status-done\">Finished</span>\n    \n    \n  </p>\n  \n  \n</div>"
+  "body": "<div id=\"detect-status\" aria-live=\"polite\" data-status=\"done\">\n  <div class=\"run-status-line\">\n    <span class=\"pill done\" data-status=\"done\">Finished</span>\n    \n    \n  </div>\n  \n  \n</div>"
 }

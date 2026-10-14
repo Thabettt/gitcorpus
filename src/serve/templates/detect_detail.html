@@ -14,19 +14,30 @@
     <span class="run-hash-wrap"><span class="mono" data-hash="{{ run.filter_hash }}">{{ run.hash_short }}</span></span>
   </div>
   {% include "partials/detect_status.html" %}
+  <details id="run-timestamps">
+    <summary>Technical details</summary>
+    <div class="run-meta">
+      <span id="run-created" data-field="created">created {{ run.created_at }}</span>
+      <span id="run-started" data-field="started">started {{ run.started_at }}</span>
+      <span id="run-finished" data-field="finished">finished {{ run.finished_at }}</span>
+      <span id="run-duration" data-field="duration">duration {{ run.duration }}</span>
+    </div>
+  </details>
 </section>
 <section class="panel" id="detection-summary">
   <div class="panel-head"><h2>Summary</h2></div>
   <div class="cards">
-    <div class="card"><span class="muted">Repos scanned</span><strong>{{ detection.summary.repos_scanned or 0 }}</strong></div>
-    <div class="card"><span class="muted">With any signal</span><strong>{{ detection.summary.repos_with_signal or 0 }}</strong></div>
-    <div class="card"><span class="muted">Unavailable</span><strong>{{ detection.summary.repos_unavailable or 0 }}</strong></div>
-    <div class="card"><span class="muted">Windowed commit ratio</span><strong>{{ detection.summary.commit_ratio if detection.summary.commit_ratio is not none else "—" }}</strong> <span class="muted">{{ detection.summary.adoption_level or "—" }}</span></div>
-    <div class="card"><span class="muted">Pack</span><strong>{{ detection.summary.pack_version or "—" }}</strong></div>
-    <div class="card"><span class="muted">First signal</span><strong>{{ detection.summary.first_signal_at or "—" }}</strong></div>
+    <article class="card"><h3>Repos scanned</h3><p>{{ detection.summary.repos_scanned or 0 }}</p></article>
+    <article class="card"><h3>With any signal</h3><p>{{ detection.summary.repos_with_signal or 0 }}</p></article>
+    <article class="card"><h3>Unavailable</h3><p>{{ detection.summary.repos_unavailable or 0 }}</p></article>
+    <article class="card"><h3>Windowed commit ratio</h3><p>{{ detection.summary.commit_ratio if detection.summary.commit_ratio is not none else "—" }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p></article>
+    <article class="card"><h3>Pack</h3><p>{{ detection.summary.pack_version or "—" }}</p></article>
+    <article class="card"><h3>First signal</h3><p>{{ detection.summary.first_signal_at or "—" }}</p></article>
   </div>
   {% if detection.summary.agents %}
-  <p id="detection-agents">{% for agent, count in detection.summary.agents.items() %}<span class="chip">{{ agent }} · {{ count }}</span> {% endfor %}</p>
+  <div id="detection-agents" class="run-counts">
+    {% for agent, count in detection.summary.agents.items() %}<span class="count">{{ agent }} <strong>{{ count }}</strong></span>{% endfor %}
+  </div>
   {% endif %}
   {% if detection.summary.partial_channels %}
   <p class="flag warn" id="detection-partials">Partial channels: {% for channel, note in detection.summary.partial_channels.items() %}{{ channel }} ({{ note }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
@@ -42,7 +53,7 @@
       <a class="button" href="/runs/{{ run.id }}/export?format=csv">Export CSV</a>
     </div>
   </div>
-  <div class="form-actions" id="detection-filters">
+  <div id="detection-filters" class="filter-row">
     <label class="field" for="detection-filter-signal">
       <span class="field-label">Has signal</span>
       <input type="checkbox" id="detection-filter-signal">
@@ -63,20 +74,26 @@
     </label>
   </div>
   {% for repo in detection.repos %}
-  <details id="detection-repo-{{ repo.repo_id }}" data-agents="{{ repo.agents | join('|') }}" data-channels="{{ repo.channel_names | join('|') }}">
-    <summary>{{ repo.full_name }} · {{ repo.agents | join(", ") or "no signals" }}{% if repo.unavailable %} · unavailable{% endif %}</summary>
-    {% if repo.notes %}<p class="muted">{{ repo.notes | join("; ") }}</p>{% endif %}
-    {% for channel, hits in repo.channels.items() %}
-      {% if hits %}
-      <h4>{{ channel }}</h4>
-      <ul>
-        {% for hit in hits %}<li><strong>{{ hit.agent }}</strong> — {{ hit.summary }}</li>{% endfor %}
-      </ul>
-      {% endif %}
-    {% endfor %}
+  <details class="evidence-repo" id="detection-repo-{{ repo.repo_id }}" data-agents="{{ repo.agents | join('|') }}" data-channels="{{ repo.channel_names | join('|') }}">
+    <summary>{{ repo.full_name }}{% if repo.agents %} · {{ repo.agents | join(", ") }}{% else %} · no signals{% endif %}{% if repo.unavailable %} <span class="badge incomplete">unavailable</span>{% endif %}</summary>
+    <div class="evidence-body">
+      {% if repo.notes %}<p class="muted">{{ repo.notes | join("; ") }}</p>{% endif %}
+      {% for channel, hits in repo.channels.items() %}
+        {% if hits %}
+        <h4>{{ channel }}</h4>
+        <ul>
+          {% for hit in hits %}<li><strong>{{ hit.agent }}</strong> — {{ hit.summary }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+      {% endfor %}
+    </div>
   </details>
   {% endfor %}
-  {% if not detection.repos %}<p class="muted">No repos were scanned.</p>{% endif %}
+  {% if detection.repos %}
+  <p id="detection-no-matches" class="muted" hidden>No repos match these filters.</p>
+  {% else %}
+  <div class="empty-state"><p>No repos were scanned.</p></div>
+  {% endif %}
 </section>
 <script>
 (function () {
@@ -84,11 +101,12 @@
   var signal = document.getElementById("detection-filter-signal");
   var agent = document.getElementById("detection-filter-agent");
   var channel = document.getElementById("detection-filter-channel");
+  var empty = document.getElementById("detection-no-matches");
   if (!signal || !agent || !channel) {
     return;
   }
   var repos = Array.prototype.slice.call(
-    document.querySelectorAll("#detection-evidence details")
+    document.querySelectorAll("#detection-evidence details.evidence-repo")
   );
   function values(repo, name) {
     var raw = repo.getAttribute(name) || "";
@@ -98,15 +116,18 @@
     var wantSignal = signal.checked;
     var wantAgent = agent.value;
     var wantChannel = channel.value;
+    var visible = 0;
     repos.forEach(function (repo) {
       var agents = values(repo, "data-agents");
       var channels = values(repo, "data-channels");
-      var visible =
+      var show =
         (!wantSignal || agents.length > 0) &&
         (!wantAgent || agents.indexOf(wantAgent) !== -1) &&
         (!wantChannel || channels.indexOf(wantChannel) !== -1);
-      repo.hidden = !visible;
+      repo.hidden = !show;
+      if (show) visible += 1;
     });
+    if (empty) empty.hidden = visible > 0;
   }
   signal.addEventListener("change", apply);
   agent.addEventListener("change", apply);
