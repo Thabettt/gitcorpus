@@ -6,5 +6,5 @@
     "content-disposition": "attachment; filename=\"gitcorpus-golden-detect-952.detections\"",
     "x-gitcorpus-regenerated": "true"
   },
-  "body": "full_name,repo_id,agent,channel,evidence,pack_version\n"
+  "body": "full_name,repo_id,agent,channel,evidence,pack_version\nocto/alpha,911,Claude Code,file,\"{\"\"path\"\": \"\"CLAUDE.md\"\"}\",golden-pack\nocto/alpha,911,Codex,pr_metadata,\"{\"\"commit\"\": \"\"a1\"\", \"\"pr\"\": 7, \"\"propagated\"\": true}\",golden-pack\n"
 }

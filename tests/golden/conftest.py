@@ -135,6 +135,15 @@ GOLDEN_SEED_SQL = (
             '2026-01-02T00:06:00Z', '2026-01-02T00:07:00Z', 1, 1)
     """,
     """
+    INSERT INTO run_items (run_id, repo_id, full_name, stargazers, pushed_at, archived,
+        language, license_spdx, country_iso, geo_confidence, virtuals, detection)
+    VALUES (952, 911, 'octo/alpha', 300, '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
+        'name', '{"has_dockerfile": true}'::jsonb,
+        '{"agents": ["Claude Code"], "channels": {"file": "ok"}, "unavailable": false,
+          "first_signal_at": "2026-01-02T00:00:00Z", "commit_ratio": 1.0,
+          "adoption_level": "pervasive", "notes": []}'::jsonb)
+    """,
+    """
     INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence, pack_version)
     VALUES (952, 911, 'Claude Code', 'file', '{"path": "CLAUDE.md"}'::jsonb, 'golden-pack'),
            (952, 911, 'Codex', 'pr_metadata',

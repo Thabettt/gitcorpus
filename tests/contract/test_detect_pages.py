@@ -3,10 +3,17 @@ from __future__ import annotations
 import json
 
 import pytest
+from alembic import command
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from serve.app import create_app
+from serve.detect import latest_detect_for_run
+
+
+@pytest.fixture(scope="module", autouse=True)
+def schema(alembic_config):
+    command.upgrade(alembic_config, "head")
 
 
 @pytest.fixture()
@@ -204,3 +211,10 @@ def test_detections_export_renders_evidence_csv(clean):
     assert response.headers["content-type"].startswith("text/csv")
     assert "full_name,repo_id,agent,channel,evidence,pack_version" in response.text
     assert "Claude Code" in response.text
+
+
+def test_latest_detect_for_run_finds_the_detection(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    assert latest_detect_for_run(clean, source)["id"] == detect_id

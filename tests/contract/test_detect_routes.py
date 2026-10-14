@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from serve.app import create_app
+from serve.detect_spec import detect_spec_to_dict, parse_detect_spec
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -177,3 +178,22 @@ def test_detect_status_partial(clean):
     source = seed_find_run(clean)
     response = client.get(f"/partials/runs/{source}/detect-status")
     assert response.status_code == 200
+
+
+def test_detect_spec_round_trip_canonicalizes_channels():
+    doc = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": ["Codex", "Claude Code"],
+        "channels": ["pr_metadata", "file"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+    }
+    spec = parse_detect_spec(doc)
+    assert spec.channels == frozenset({"file", "pr_metadata"})
+    round_tripped = detect_spec_to_dict(spec)
+    assert round_tripped["channels"] == ["file", "pr_metadata"]
+    assert round_tripped["agents"] == ["Claude Code", "Codex"]
+    assert round_tripped["source_run_id"] == 7
