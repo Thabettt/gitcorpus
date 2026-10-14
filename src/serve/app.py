@@ -367,7 +367,7 @@ def create_app(
     application.add_middleware(
         BodyLimitMiddleware,
         default_limit=JSON_BODY_LIMIT_BYTES,
-        path_limits={"/find": UPLOAD_BODY_LIMIT_BYTES},
+        path_limits={"/find": UPLOAD_BODY_LIMIT_BYTES, "/detections/new": UPLOAD_BODY_LIMIT_BYTES},
     )
 
     def build_engine() -> Engine:

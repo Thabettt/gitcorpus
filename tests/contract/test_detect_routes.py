@@ -269,3 +269,89 @@ def test_detect_spec_round_trip_canonicalizes_channels():
     assert round_tripped["channels"] == ["file", "pr_metadata"]
     assert round_tripped["agents"] == ["Claude Code", "Codex"]
     assert round_tripped["source_run_id"] == 7
+
+
+def test_new_detection_page_renders_sources_and_upload(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    response = client.get("/detections/new")
+    assert response.status_code == 200
+    assert "New detection" in response.text
+    assert "From a finished search" in response.text
+    assert "From a CSV file" in response.text
+    assert f'value="{source}"' in response.text
+
+
+def test_new_detection_from_search_redirects_to_options(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get("/detections/new")
+    response = client.post(
+        "/detections/new",
+        data={"csrf": csrf_token(client), "source": str(source)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{source}/detect"
+
+
+def test_new_detection_from_csv_imports_and_redirects(clean):
+    client = make_client(clean)
+    seed_pack(clean)
+    client.get("/detections/new")
+    response = client.post(
+        "/detections/new",
+        data={"csrf": csrf_token(client)},
+        files={
+            "csv_file": (
+                "repos.csv",
+                "repo,stars\nocto/one,42\nocto/two,7\n",
+                "text/csv",
+            )
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    new_id = int(response.headers["location"].split("/")[2])
+    with clean.connect() as connection:
+        run = (
+            connection.execute(text("SELECT kind, status FROM runs WHERE id = :id"), {"id": new_id})
+            .mappings()
+            .one()
+        )
+        items = connection.scalar(
+            text("SELECT count(*) FROM run_items WHERE run_id = :id"), {"id": new_id}
+        )
+    assert run["kind"] == "find"
+    assert run["status"] == "done"
+    assert items == 2
+
+
+def test_new_detection_rejects_bad_csv_and_unfinished_search(clean):
+    client = make_client(clean)
+    client.get("/detections/new")
+    bad = client.post(
+        "/detections/new",
+        data={"csrf": csrf_token(client)},
+        files={"csv_file": ("bad.csv", "stars,url\n5,https://github.com/x\n", "text/csv")},
+    )
+    assert bad.status_code == 400
+    assert "full_name or repo" in bad.text
+    running = seed_find_run(clean, status="running")
+    not_finished = client.post(
+        "/detections/new",
+        data={"csrf": csrf_token(client), "source": str(running)},
+    )
+    assert not_finished.status_code == 400
+    assert "not a finished search" in not_finished.text
+
+
+def test_options_page_blocks_enter_submit_and_search_hides_labels(clean, repo_root):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    response = client.get(f"/runs/{source}/detect")
+    assert 'event.key === "Enter"' in response.text
+    css = (repo_root / "src/serve/static/app.css").read_text(encoding="utf-8")
+    assert ".checklist .checkbox[hidden]" in css

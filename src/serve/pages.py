@@ -646,14 +646,19 @@ def _raw_query(filter_spec: object) -> str:
 
 
 def _latest_detect_context(engine: Engine, run_id: int) -> dict | None:
-    from serve.detect import latest_detect_for_run
+    from serve.detect import detection_number, latest_detect_for_run
 
     row = latest_detect_for_run(engine, run_id)
     if row is None:
         return None
     summary = row["result_summary"] or {}
     signals = sum((summary.get("agents") or {}).values())
-    return {"id": row["id"], "status": row["status"], "signals": signals}
+    return {
+        "id": row["id"],
+        "number": detection_number(engine, int(row["id"])),
+        "status": row["status"],
+        "signals": signals,
+    }
 
 
 def _int_or_zero(value: object) -> int:

@@ -72,12 +72,16 @@ def _view(row) -> CorpusView:
 
 
 def _last_detection(engine: Engine, source_run_id: int) -> dict | None:
-    from serve.detect import latest_detect_for_run
+    from serve.detect import detection_number, latest_detect_for_run
 
     row = latest_detect_for_run(engine, source_run_id)
     if row is None:
         return None
-    return {"id": row["id"], "status": row["status"]}
+    return {
+        "id": row["id"],
+        "number": detection_number(engine, int(row["id"])),
+        "status": row["status"],
+    }
 
 
 def list_corpora(engine: Engine) -> list[CorpusView]:

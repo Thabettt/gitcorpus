@@ -4,20 +4,21 @@
 <section class="panel" id="detections-header">
   <div class="panel-head">
     <h1>Detections</h1>
-    <p class="muted">Detection runs scan a frozen search through GitHub’s API and store per-repo agent evidence. Start one from a finished search or a corpus.</p>
+    <a id="new-detection" class="button primary" href="/detections/new">New detection</a>
+    <p class="muted">Detection runs scan a frozen search or an imported repo list through GitHub’s API and store per-repo agent evidence. Every run gets its own detection number, independent of search runs.</p>
   </div>
   <div class="table-wrap">
     <table id="detections-table" class="data-table">
       <thead>
-        <tr><th scope="col">Run</th><th scope="col">From search</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Signals</th></tr>
+        <tr><th scope="col">Detection</th><th scope="col">From search</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Signals</th></tr>
       </thead>
       <tbody>
       {% for item in detections %}
         <tr id="detection-{{ item.id }}">
-          <td><a href="/runs/{{ item.id }}">#{{ item.id }}</a></td>
+          <td><a href="/runs/{{ item.id }}">#{{ item.number if item.number else item.id }}</a></td>
           <td><a href="/runs/{{ item.source_run_id }}">#{{ item.source_run_id }}</a></td>
-          <td>{{ status_label(item.status) }}</td>
-          <td>{{ item.created_at }}</td>
+          <td><span class="pill {{ item.status }}">{{ status_label(item.status) }}</span></td>
+          <td>{{ item.started }}</td>
           <td>{% if item.summary.agents %}{{ item.summary.agents | length }} agents · {{ item.summary.repos_with_signal }} repos{% else %}—{% endif %}</td>
         </tr>
       {% endfor %}
@@ -27,8 +28,11 @@
   {% if not detections %}
   <div id="detections-empty" class="empty-state">
     <p>No detections yet</p>
-    <p class="muted">Open a finished search or a corpus and choose “Detect agent use”.</p>
-    <p class="empty-actions"><a class="button ghost" href="/runs">Browse searches</a></p>
+    <p class="muted">Start one from a finished search, a corpus, or an imported repo list.</p>
+    <p class="empty-actions">
+      <a class="button primary" href="/detections/new">New detection</a>
+      <a class="button ghost" href="/runs">Browse searches</a>
+    </p>
   </div>
   {% endif %}
 </section>

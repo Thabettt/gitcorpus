@@ -113,6 +113,13 @@
       form.dispatchEvent(new Event("change", { bubbles: true }));
     }
   }
+  if (form) {
+    form.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && event.target.type !== "submit") {
+        event.preventDefault();
+      }
+    });
+  }
   var agentLabels = [];
   function wireGroup(listId, allId, noneId) {
     var list = document.getElementById(listId);

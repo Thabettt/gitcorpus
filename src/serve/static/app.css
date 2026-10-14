@@ -1754,6 +1754,9 @@ kbd {
 .checklist .checkbox:not(.channel-row) {
   white-space: nowrap;
 }
+.checklist .checkbox[hidden] {
+  display: none;
+}
 .checklist-channels {
   grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
   max-height: none;

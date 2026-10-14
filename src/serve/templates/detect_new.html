@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}New detection · gitcorpus{% endblock %}
+{% block body %}
+<section class="panel" id="detect-new">
+  <div class="panel-head">
+    <h1>New detection</h1>
+    <p class="muted">Detection scans a frozen repo list through GitHub’s API on its own allowance and stores per-repo agent evidence. Pick a finished search, or import a repo list from CSV.</p>
+  </div>
+  {% if errors %}
+  <div id="detect-new-errors" class="empty-state error-state" role="alert">
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+    {% for hint in hints %}<p class="muted">{{ hint }}</p>{% endfor %}
+  </div>
+  {% endif %}
+  <section class="filter-section" id="detect-from-search">
+    <h2>From a finished search</h2>
+    <p class="muted">Uses that search’s frozen repos, in star order. You’ll pick the pack, agents, channels, and a top-N limit on the next page.</p>
+    {% if sources %}
+    <form action="/detections/new" method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <div class="field-grid">
+        <label class="field" for="detect-source">
+          <span class="field-label">Finished search</span>
+          <select class="field-input" id="detect-source" name="source">
+            {% for source in sources %}
+            <option value="{{ source.id }}">#{{ source.id }} · {{ source.hash_short }} · {{ source.repos }} repos · {{ source.when }}{% if source.status == "partial" %} · partial{% endif %}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button id="detect-new-search" class="button primary" type="submit">Continue</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty-state">
+      <p>No finished searches yet</p>
+      <p class="muted">Run a search first, or import a repo list below.</p>
+      <p class="empty-actions"><a class="button ghost" href="/find">New search</a></p>
+    </div>
+    {% endif %}
+  </section>
+  <section class="filter-section" id="detect-from-csv">
+    <h2>From a CSV file</h2>
+    <p class="muted">Accepts this app’s corpus exports (<code>id,full_name,stargazers,…</code>) and plain repo lists with a <code>repo</code> or <code>full_name</code> column plus an optional <code>stars</code>/<code>stargazers</code> column (the shape of <code>repos_rust.csv</code>). Up to {{ "{:,}".format(max_rows) }} rows; duplicates and malformed rows are skipped.</p>
+    <form action="/detections/new" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <div class="field-grid">
+        <label class="field" for="detect-csv">
+          <span class="field-label">Repo list (CSV)</span>
+          <input class="field-input" type="file" id="detect-csv" name="csv_file" accept=".csv,text/csv" required>
+          <span class="field-note muted">The import becomes a frozen search run; you’ll choose the pack and channels on the next page.</span>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button id="detect-new-csv" class="button primary" type="submit">Import and continue</button>
+      </div>
+    </form>
+  </section>
+  <p><a href="/detections">All detections</a></p>
+</section>
+{% endblock %}

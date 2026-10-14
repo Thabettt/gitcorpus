@@ -171,6 +171,7 @@ PATH_PARAMS = {
     "/partials/runs/{run_id}/table": {"run_id": RUN_A},
     "/partials/runs/{run_id}/clone-progress": {"run_id": RUN_A},
     "/detections": {},
+    "/detections/new": {},
     "/runs/{run_id}/detect": {"run_id": RUN_A},
     "/runs/{run_id}/detect-estimate": {"run_id": RUN_A},
     "/partials/runs/{run_id}/detect-status": {"run_id": RUN_A},

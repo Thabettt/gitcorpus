@@ -87,7 +87,7 @@
   {% if save_error %}
   <p id="save-filter-error" class="flag error">Could not save the filter: {% if save_error == 'duplicate_name' %}a saved filter with that name already exists.{% elif save_error == 'invalid_name' %}that name is not valid.{% else %}the stored filter is not valid.{% endif %}</p>
   {% endif %}
-  <p id="detect-agent-use-note" class="muted">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.{% if latest_detect %} Latest: <a href="/runs/{{ latest_detect.id }}">detection #{{ latest_detect.id }}</a> — {{ latest_detect.signals }} agent signal(s).{% endif %}</p>
+  <p id="detect-agent-use-note" class="muted">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.{% if latest_detect %} Latest: <a href="/runs/{{ latest_detect.id }}">detection #{{ latest_detect.number }}</a> — {{ latest_detect.signals }} agent signal(s).{% endif %}</p>
   <p class="muted">Export downloads the frozen result list as JSON or CSV. Clone copies repo contents to this machine — no GitHub API calls; uses disk and time. Search again starts a new search with the same filter; the old results stay frozen.</p>
 {%- if run.status in ('done', 'partial') %}
   <p class="muted">Freeze as corpus records the exact repos and details as of now. No GitHub calls; does not copy code.</p>

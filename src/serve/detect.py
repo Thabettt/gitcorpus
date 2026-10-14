@@ -19,11 +19,18 @@ from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
 from serve.pages import (
     _item_count,
+    _relative_time,
     _run_detail_summary,
     validate_csrf,
 )
 from serve.pages import (
     _templates as templates,
+)
+from serve.repo_import import (
+    MAX_IMPORT_ROWS,
+    RepoImportError,
+    import_repos_as_run,
+    parse_repo_csv,
 )
 from store.models import DetectionEvidence, RunItem, Runs, TracePack
 from store.settings import load_run_settings
@@ -52,6 +59,58 @@ def build_detect_runner(engine: Engine) -> Runner:
             deps.client.close()
 
     return runner
+
+
+def _finished_find_runs(engine: Engine, limit: int = 300) -> list[dict]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(
+                Runs.id,
+                Runs.filter_hash,
+                Runs.status,
+                Runs.created_at,
+                func.count(RunItem.id).label("item_count"),
+            )
+            .select_from(Runs)
+            .outerjoin(RunItem, RunItem.run_id == Runs.id)
+            .where(Runs.kind == "find", Runs.status.in_(("done", "partial")))
+            .group_by(Runs.id)
+            .order_by(Runs.created_at.desc(), Runs.id.desc())
+            .limit(limit)
+        ).mappings()
+        return [
+            {
+                "id": row["id"],
+                "hash_short": str(row["filter_hash"])[:8],
+                "status": row["status"],
+                "repos": int(row["item_count"] or 0),
+                "when": _relative_time(row["created_at"]),
+            }
+            for row in rows
+        ]
+
+
+def _detect_new_response(request: Request, engine: Engine, *, errors_: list[str], hints: list[str]):
+    return templates.TemplateResponse(
+        request,
+        "detect_new.html",
+        {
+            "sources": _finished_find_runs(engine),
+            "max_rows": MAX_IMPORT_ROWS,
+            "errors": errors_,
+            "hints": hints,
+            "csrf_token": request.state.csrf_token,
+        },
+        status_code=400 if errors_ else 200,
+    )
+
+
+def detection_number(engine: Engine, run_id: int) -> int:
+    with engine.connect() as connection:
+        count = connection.scalar(
+            select(func.count()).select_from(Runs).where(Runs.kind == "detect", Runs.id <= run_id)
+        )
+    return int(count or 0)
 
 
 def _run_row(engine: Engine, run_id: int):
@@ -215,6 +274,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
         {
             "run": summary,
             "detection": {
+                "number": detection_number(engine, run_id),
                 "source_run_id": row["source_run_id"],
                 "summary": result_summary,
                 "first_signal_label": _first_signal_label(result_summary.get("first_signal_at")),
@@ -250,6 +310,14 @@ def register_detect(
                     .limit(200)
                 ).mappings()
             )
+            numbers = {
+                int(numbered_id): int(number)
+                for numbered_id, number in connection.execute(
+                    select(Runs.id, func.row_number().over(order_by=Runs.id)).where(
+                        Runs.kind == "detect"
+                    )
+                )
+            }
         return templates.TemplateResponse(
             request,
             "detect_list.html",
@@ -257,9 +325,10 @@ def register_detect(
                 "detections": [
                     {
                         "id": row["id"],
+                        "number": numbers.get(int(row["id"])),
                         "status": row["status"],
                         "source_run_id": row["source_run_id"],
-                        "created_at": row["created_at"],
+                        "started": _relative_time(row["created_at"]),
                         "summary": row["result_summary"] or {},
                     }
                     for row in rows
@@ -267,6 +336,51 @@ def register_detect(
                 "csrf_token": request.state.csrf_token,
             },
         )
+
+    @application.get("/detections/new", response_class=HTMLResponse)
+    def detect_new_page(request: Request):
+        engine = engine_factory()
+        return _detect_new_response(request, engine, errors_=[], hints=[])
+
+    @application.post("/detections/new")
+    async def detect_new_submit(request: Request):
+        if not await validate_csrf(request):
+            return errors.csrf_error_page(request)
+        form = await request.form()
+        engine = engine_factory()
+        upload = form.get("csv_file")
+        if upload is not None and getattr(upload, "filename", ""):
+            raw = await upload.read()
+            try:
+                parsed = parse_repo_csv(raw)
+            except RepoImportError as exc:
+                return _detect_new_response(
+                    request,
+                    engine,
+                    errors_=[exc.message],
+                    hints=[exc.hint] if exc.hint else [],
+                )
+            run_id = await run_in_threadpool(
+                import_repos_as_run, engine, parsed, name=str(upload.filename)
+            )
+            return RedirectResponse(f"/runs/{run_id}/detect", status_code=303)
+        source = str(form.get("source") or "").strip()
+        if not source.isdigit():
+            return _detect_new_response(
+                request,
+                engine,
+                errors_=["pick a finished search or upload a CSV"],
+                hints=[],
+            )
+        row = await run_in_threadpool(_run_row, engine, int(source))
+        if row is None or row["kind"] != "find" or row["status"] not in ("done", "partial"):
+            return _detect_new_response(
+                request,
+                engine,
+                errors_=[f"search #{source} is not a finished search"],
+                hints=["only searches that finished (done or partial) can be detected"],
+            )
+        return RedirectResponse(f"/runs/{row['id']}/detect", status_code=303)
 
     @application.get("/runs/{run_id}/detect", response_class=HTMLResponse)
     def detect_options_page(request: Request, run_id: int):

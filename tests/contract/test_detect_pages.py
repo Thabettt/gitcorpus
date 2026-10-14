@@ -290,3 +290,18 @@ def test_detection_summary_cards_are_readable(clean):
     assert 'class="info-pop"' in response.text
     assert "What the windowed commit ratio means" in response.text
     assert "conservative lower bound" in response.text
+
+
+def test_detections_use_their_own_numbering(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    first = seed_detect_run(clean, source)
+    second = seed_detect_run(clean, source)
+    client = make_client(clean)
+    listing = client.get("/detections").text
+    assert f'href="/runs/{first}">#1</a>' in listing
+    assert f'href="/runs/{second}">#2</a>' in listing
+    detail = client.get(f"/runs/{second}").text
+    assert "Detection #2" in detail
+    assert f"search #{source}" in detail
+    assert f'data-field="run">run {second}</span>' in detail

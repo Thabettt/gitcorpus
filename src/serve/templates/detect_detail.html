@@ -10,13 +10,14 @@
 {% else %}
 <section class="panel" id="run-header" data-run-id="{{ run.id }}">
   <div class="panel-head">
-    <h1>Detection #{{ run.id }} — search #{{ detection.source_run_id }}</h1>
+    <h1>Detection #{{ detection.number }} — search #{{ detection.source_run_id }}</h1>
     <span class="run-hash-wrap"><span class="mono" data-hash="{{ run.filter_hash }}">{{ run.hash_short }}</span></span>
   </div>
   {% include "partials/detect_status.html" %}
   <details id="run-timestamps">
     <summary>Technical details</summary>
     <div class="run-meta">
+      <span id="run-id" data-field="run">run {{ run.id }}</span>
       <span id="run-created" data-field="created">created {{ run.created_at }}</span>
       <span id="run-started" data-field="started">started {{ run.started_at }}</span>
       <span id="run-finished" data-field="finished">finished {{ run.finished_at }}</span>

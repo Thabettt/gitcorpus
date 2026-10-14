@@ -35,7 +35,7 @@
           <td>{{ item.frozen_at }}</td>
           <td class="library-sentence"><a href="/runs/{{ item.source_run_id }}">Search #{{ item.source_run_id }}</a>
             <span class="muted">· {{ item.sentence }}</span></td>
-          <td>{% if item.last_detection %}<a href="/runs/{{ item.last_detection.id }}">#{{ item.last_detection.id }}</a> <span class="muted">{{ status_label(item.last_detection.status) }}</span>{% else %}<span class="muted" data-no-detection="true">Not yet</span>{% endif %}</td>
+          <td>{% if item.last_detection %}<a href="/runs/{{ item.last_detection.id }}">detection #{{ item.last_detection.number }}</a> <span class="muted">{{ status_label(item.last_detection.status) }}</span>{% else %}<span class="muted" data-no-detection="true">Not yet</span>{% endif %}</td>
           <td class="actions-cell">
             <div class="actions-row">
               <a class="button ghost" href="/corpora/{{ item.id }}">Open</a>
