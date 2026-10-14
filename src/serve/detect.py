@@ -27,10 +27,9 @@ from serve.pages import (
     _templates as templates,
 )
 from serve.repo_import import (
-    MAX_IMPORT_ROWS,
     RepoImportError,
     import_repos_as_run,
-    parse_repo_csv,
+    parse_repo_file,
 )
 from store.models import DetectionEvidence, RunItem, Runs, TracePack
 from store.settings import load_run_settings
@@ -96,7 +95,6 @@ def _detect_new_response(request: Request, engine: Engine, *, errors_: list[str]
         "detect_new.html",
         {
             "sources": _finished_find_runs(engine),
-            "max_rows": MAX_IMPORT_ROWS,
             "errors": errors_,
             "hints": hints,
             "csrf_token": request.state.csrf_token,
@@ -348,11 +346,11 @@ def register_detect(
             return errors.csrf_error_page(request)
         form = await request.form()
         engine = engine_factory()
-        upload = form.get("csv_file")
+        upload = form.get("import_file")
         if upload is not None and getattr(upload, "filename", ""):
             raw = await upload.read()
             try:
-                parsed = parse_repo_csv(raw)
+                parsed = parse_repo_file(str(upload.filename), raw)
             except RepoImportError as exc:
                 return _detect_new_response(
                     request,

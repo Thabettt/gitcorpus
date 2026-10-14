@@ -56,6 +56,7 @@ class OriginCsrfMiddleware:
 
 JSON_BODY_LIMIT_BYTES = 1024 * 1024
 UPLOAD_BODY_LIMIT_BYTES = 10 * 1024 * 1024
+UNLIMITED_BODY_LIMIT = 0
 
 
 class BodyLimitMiddleware:
@@ -73,6 +74,7 @@ class BodyLimitMiddleware:
         self.path_limits = dict(path_limits or {})
 
     def limit_for(self, path: str) -> int:
+        """Return the byte cap for a path; 0 (or negative) means no limit."""
         return self.path_limits.get(path, self.default_limit)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -81,7 +83,7 @@ class BodyLimitMiddleware:
             return
         limit = self.limit_for(scope["path"])
         declared = Headers(scope=scope).get("content-length")
-        if declared is not None:
+        if limit > 0 and declared is not None:
             try:
                 if int(declared) > limit:
                     await self._reject(scope, receive, send, limit)
@@ -95,7 +97,7 @@ class BodyLimitMiddleware:
             if message["type"] == "http.disconnect":
                 return
             received += len(message.get("body", b""))
-            if received > limit:
+            if limit > 0 and received > limit:
                 await self._reject(scope, receive, send, limit)
                 return
             buffered.append(message)

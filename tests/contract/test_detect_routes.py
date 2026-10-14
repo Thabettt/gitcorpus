@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
@@ -278,7 +280,7 @@ def test_new_detection_page_renders_sources_and_upload(clean):
     assert response.status_code == 200
     assert "New detection" in response.text
     assert "From a finished search" in response.text
-    assert "From a CSV file" in response.text
+    assert "From a CSV or JSON file" in response.text
     assert f'value="{source}"' in response.text
 
 
@@ -304,7 +306,7 @@ def test_new_detection_from_csv_imports_and_redirects(clean):
         "/detections/new",
         data={"csrf": csrf_token(client)},
         files={
-            "csv_file": (
+            "import_file": (
                 "repos.csv",
                 "repo,stars\nocto/one,42\nocto/two,7\n",
                 "text/csv",
@@ -334,7 +336,7 @@ def test_new_detection_rejects_bad_csv_and_unfinished_search(clean):
     bad = client.post(
         "/detections/new",
         data={"csrf": csrf_token(client)},
-        files={"csv_file": ("bad.csv", "stars,url\n5,https://github.com/x\n", "text/csv")},
+        files={"import_file": ("bad.csv", "stars,url\n5,https://github.com/x\n", "text/csv")},
     )
     assert bad.status_code == 400
     assert "full_name or repo" in bad.text
@@ -355,3 +357,45 @@ def test_options_page_blocks_enter_submit_and_search_hides_labels(clean, repo_ro
     assert 'event.key === "Enter"' in response.text
     css = (repo_root / "src/serve/static/app.css").read_text(encoding="utf-8")
     assert ".checklist .checkbox[hidden]" in css
+
+
+def test_new_detection_from_json_export_imports(clean):
+    client = make_client(clean)
+    seed_pack(clean)
+    client.get("/detections/new")
+    payload = json.dumps(
+        {
+            "filter": {"gitcorpus_filter": 1, "q": "language:rust"},
+            "items": [
+                {"repo_id": 5, "full_name": "octo/one", "stargazers": 9, "virtuals": {}},
+                {"repo_id": 6, "full_name": "octo/two", "stargazers": 2},
+            ],
+            "field_stats": {},
+        }
+    )
+    response = client.post(
+        "/detections/new",
+        data={"csrf": csrf_token(client)},
+        files={"import_file": ("bundle.json", payload, "application/json")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    new_id = int(response.headers["location"].split("/")[2])
+    with clean.connect() as connection:
+        items = (
+            connection.execute(
+                text(
+                    "SELECT repo_id, full_name, stargazers FROM run_items"
+                    " WHERE run_id = :id ORDER BY full_name"
+                ),
+                {"id": new_id},
+            )
+            .mappings()
+            .all()
+        )
+    # octo/one already exists in the seeded fixture (id 1) and is reused;
+    # octo/two keeps the id carried by the export.
+    assert [(int(item["repo_id"]), item["full_name"], item["stargazers"]) for item in items] == [
+        (1, "octo/one", 9),
+        (6, "octo/two", 2),
+    ]

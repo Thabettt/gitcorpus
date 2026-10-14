@@ -54,6 +54,7 @@ from serve.library import (
 )
 from serve.middleware import (
     JSON_BODY_LIMIT_BYTES,
+    UNLIMITED_BODY_LIMIT,
     UPLOAD_BODY_LIMIT_BYTES,
     BodyLimitMiddleware,
     OriginCsrfMiddleware,
@@ -367,7 +368,10 @@ def create_app(
     application.add_middleware(
         BodyLimitMiddleware,
         default_limit=JSON_BODY_LIMIT_BYTES,
-        path_limits={"/find": UPLOAD_BODY_LIMIT_BYTES, "/detections/new": UPLOAD_BODY_LIMIT_BYTES},
+        path_limits={
+            "/find": UPLOAD_BODY_LIMIT_BYTES,
+            "/detections/new": UNLIMITED_BODY_LIMIT,
+        },
     )
 
     def build_engine() -> Engine:

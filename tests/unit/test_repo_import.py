@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import text
 
 from serve.repo_import import (
-    MAX_IMPORT_ROWS,
     RepoImportError,
     import_repos_as_run,
     parse_repo_csv,
+    parse_repo_file,
+    parse_repo_json,
 )
 
 
@@ -50,10 +53,45 @@ def test_parse_rejects_missing_name_column():
         parse_repo_csv("stars,url\n5,https://github.com/x\n")
 
 
-def test_parse_rejects_oversized_files():
-    rows = "\n".join(f"octo/repo{index},1" for index in range(MAX_IMPORT_ROWS + 1))
-    with pytest.raises(RepoImportError, match="more than"):
-        parse_repo_csv(f"full_name,stars\n{rows}\n")
+def test_parse_has_no_row_cap():
+    rows = "\n".join(f"octo/repo{index},1" for index in range(100_001))
+    parsed = parse_repo_csv(f"full_name,stars\n{rows}\n")
+    assert len(parsed.rows) == 100_001
+
+
+def test_parse_search_export_json():
+    payload = json.dumps(
+        {
+            "filter": {"gitcorpus_filter": 1, "q": "language:rust"},
+            "items": [
+                {"repo_id": 101, "full_name": "octo/one", "stargazers": 42, "virtuals": {}},
+                {"id": 102, "full_name": "octo/two", "stargazers": 7},
+                "junk",
+            ],
+            "field_stats": {},
+        }
+    )
+    parsed = parse_repo_json(payload)
+    assert [(row.full_name, row.repo_id, row.stargazers) for row in parsed.rows] == [
+        ("octo/one", 101, 42),
+        ("octo/two", 102, 7),
+    ]
+    assert parsed.skipped == 1
+
+
+def test_parse_json_array_and_file_dispatcher():
+    payload = '[{"full_name": "octo/one", "stars": 3}]'
+    assert parse_repo_file("export.json", payload).rows[0].stargazers == 3
+    assert parse_repo_file("export", payload).rows[0].full_name == "octo/one"
+    csv_rows = parse_repo_file("export.csv", "repo,stars\nocto/one,3\n")
+    assert csv_rows.rows[0].full_name == "octo/one"
+
+
+def test_parse_rejects_bad_or_itemless_json():
+    with pytest.raises(RepoImportError, match="not valid JSON"):
+        parse_repo_json("{nope")
+    with pytest.raises(RepoImportError, match="items list"):
+        parse_repo_json('{"filter": {}}')
 
 
 def test_import_creates_run_items_repos_and_reuses_on_reimport(clean_db):

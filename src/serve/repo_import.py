@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import func, insert, select
@@ -12,8 +13,11 @@ from sqlalchemy.engine import Connection, Engine
 from lib.gh_client import API_VERSION
 from store.models import Owner, Repo, RunItem, Runs
 
-MAX_IMPORT_ROWS = 25000
-_BATCH_SIZE = 2000
+_LOOKUP_BATCH = 5000
+_INSERT_BATCH = 2000
+_NAME_KEYS = ("full_name", "repo", "repository", "name")
+_ID_KEYS = ("repo_id", "id")
+_STARS_KEYS = ("stargazers", "stars")
 
 
 class RepoImportError(ValueError):
@@ -36,18 +40,11 @@ class ParsedRepos:
     skipped: int
 
 
-def _normalized_columns(fieldnames: list[str] | None) -> dict[str, str]:
-    return {name.strip().lower(): name for name in fieldnames or [] if name}
-
-
-def _pick(columns: dict[str, str], *names: str) -> str | None:
-    for name in names:
-        if name in columns:
-            return columns[name]
-    return None
-
-
 def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
     text = str(value or "").strip()
     if not text:
         return None
@@ -58,24 +55,29 @@ def _optional_int(value: object) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def parse_repo_csv(raw: bytes | str) -> ParsedRepos:
-    text = raw.decode("utf-8-sig", errors="replace") if isinstance(raw, bytes) else raw
-    reader = csv.DictReader(io.StringIO(text))
-    columns = _normalized_columns(reader.fieldnames)
-    name_column = _pick(columns, "full_name", "repo", "repository", "name")
-    if name_column is None:
-        raise RepoImportError(
-            "the CSV needs a full_name or repo column",
-            "Export a corpus from a search, or provide rows like owner/repo with an"
-            " optional stars/stargazers column.",
-        )
-    id_column = _pick(columns, "id")
-    stars_column = _pick(columns, "stargazers", "stars")
+def _first_int(record: Mapping, keys: Iterable[str]) -> int | None:
+    for key in keys:
+        if key in record:
+            parsed = _optional_int(record.get(key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _collect(records: Iterable[object]) -> ParsedRepos:
     rows: list[ParsedRepo] = []
     seen: set[str] = set()
     skipped = 0
-    for record in reader:
-        full_name = str(record.get(name_column) or "").strip()
+    for record in records:
+        if not isinstance(record, Mapping):
+            skipped += 1
+            continue
+        full_name = ""
+        for key in _NAME_KEYS:
+            candidate = record.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                full_name = candidate.strip()
+                break
         parts = full_name.split("/")
         if len(parts) != 2 or not all(part.strip() for part in parts):
             skipped += 1
@@ -88,22 +90,75 @@ def parse_repo_csv(raw: bytes | str) -> ParsedRepos:
         rows.append(
             ParsedRepo(
                 full_name=full_name,
-                repo_id=_optional_int(record.get(id_column)) if id_column else None,
-                stargazers=_optional_int(record.get(stars_column)) if stars_column else None,
+                repo_id=_first_int(record, _ID_KEYS),
+                stargazers=_first_int(record, _STARS_KEYS),
             )
         )
-        if len(rows) > MAX_IMPORT_ROWS:
-            raise RepoImportError(
-                f"the CSV has more than {MAX_IMPORT_ROWS:,} repos",
-                "Split the file or run a search instead; large lists are better built"
-                " through discovery.",
-            )
     if not rows:
         raise RepoImportError(
             "no usable rows found",
-            "Every row needs a full_name (owner/repo) in a full_name or repo column.",
+            "Every row needs a full_name (owner/repo) in a full_name or repo field.",
         )
     return ParsedRepos(rows=tuple(rows), skipped=skipped)
+
+
+def parse_repo_csv(raw: bytes | str) -> ParsedRepos:
+    text = raw.decode("utf-8-sig", errors="replace") if isinstance(raw, bytes) else raw
+    reader = csv.DictReader(io.StringIO(text))
+    columns = {
+        original.strip().lower(): original for original in (reader.fieldnames or []) if original
+    }
+    name_keys = [key for key in _NAME_KEYS if key in columns]
+    if not name_keys:
+        raise RepoImportError(
+            "the CSV needs a full_name or repo column",
+            "Export a corpus from a search, or provide rows like owner/repo with an"
+            " optional stars/stargazers column.",
+        )
+
+    def normalized(record: Mapping) -> dict:
+        normalized_record = {}
+        for column, original in columns.items():
+            value = record.get(original)
+            normalized_record[column] = value
+        return normalized_record
+
+    return _collect(normalized(record) for record in reader)
+
+
+def parse_repo_json(raw: bytes | str) -> ParsedRepos:
+    text = raw.decode("utf-8-sig", errors="replace") if isinstance(raw, bytes) else raw
+    try:
+        document = json.loads(text)
+    except ValueError as exc:
+        raise RepoImportError(
+            "the file is not valid JSON",
+            "Use this app's search export (its items array) or a JSON array of"
+            " {full_name, stars} objects.",
+        ) from exc
+    if isinstance(document, Mapping):
+        items = document.get("items")
+        if not isinstance(items, list):
+            raise RepoImportError(
+                "the JSON needs an items list",
+                "This app's search export has an items array; export one from a run"
+                " and upload that file.",
+            )
+        records: Iterable[Mapping] = items
+    elif isinstance(document, list):
+        records = document
+    else:
+        raise RepoImportError("the JSON must be an object or an array")
+    return _collect(records)
+
+
+def parse_repo_file(name: str, raw: bytes | str) -> ParsedRepos:
+    stripped = raw.lstrip()
+    marker = stripped[:1]
+    looks_json = marker in (b"{", b"[") if isinstance(marker, bytes) else marker in ("{", "[")
+    if name.lower().endswith(".json") or looks_json:
+        return parse_repo_json(raw)
+    return parse_repo_csv(raw)
 
 
 def _synthetic_floor(connection: Connection, model) -> int | None:
@@ -119,48 +174,66 @@ def _ensure_owners(connection: Connection, logins: set[str]) -> dict[str, int]:
     wanted = {login.strip().lower(): login.strip() for login in logins if login.strip()}
     if not wanted:
         return {}
-    existing = {
-        str(login).lower(): int(owner_id)
-        for login, owner_id in connection.execute(
-            select(Owner.login, Owner.id).where(Owner.login.in_(list(wanted.values())))
+    existing: dict[str, int] = {}
+    values = list(wanted.values())
+    for start in range(0, len(values), _LOOKUP_BATCH):
+        existing.update(
+            {
+                str(login).lower(): int(owner_id)
+                for login, owner_id in connection.execute(
+                    select(Owner.login, Owner.id).where(
+                        Owner.login.in_(values[start : start + _LOOKUP_BATCH])
+                    )
+                )
+            }
         )
-    }
     missing = sorted(set(wanted) - set(existing))
-    if missing:
-        next_id = _next_synthetic(_synthetic_floor(connection, Owner))
-        rows = [
-            {"id": next_id - index, "login": wanted[login], "type": "User"}
-            for index, login in enumerate(missing)
-        ]
-        connection.execute(insert(Owner), rows)
-        existing.update({str(row["login"]).lower(): int(row["id"]) for row in rows})
+    next_id = _next_synthetic(_synthetic_floor(connection, Owner))
+    pending: list[dict] = []
+    for login in missing:
+        pending.append({"id": next_id, "login": wanted[login], "type": "User"})
+        existing[login] = next_id
+        next_id -= 1
+        if len(pending) >= _INSERT_BATCH:
+            connection.execute(insert(Owner), pending)
+            pending = []
+    if pending:
+        connection.execute(insert(Owner), pending)
     return existing
 
 
 def _ensure_repos(
     connection: Connection, parsed_rows: tuple[ParsedRepo, ...], owner_ids: dict[str, int]
 ) -> dict[str, int]:
-    wanted = {row.full_name.lower(): row.full_name for row in parsed_rows}
-    existing = {
-        str(full_name).lower(): int(repo_id)
-        for full_name, repo_id in connection.execute(
-            select(Repo.full_name, Repo.id).where(Repo.full_name.in_(list(wanted.values())))
+    sources = {row.full_name.lower(): row for row in parsed_rows}
+    existing: dict[str, int] = {}
+    keys = list(sources)
+    for start in range(0, len(keys), _LOOKUP_BATCH):
+        names = [sources[key].full_name for key in keys[start : start + _LOOKUP_BATCH]]
+        existing.update(
+            {
+                str(full_name).lower(): int(repo_id)
+                for full_name, repo_id in connection.execute(
+                    select(Repo.full_name, Repo.id).where(Repo.full_name.in_(names))
+                )
+            }
         )
-    }
-    missing_names = sorted(set(wanted) - set(existing))
-    if not missing_names:
+    missing_keys = sorted(set(sources) - set(existing))
+    if not missing_keys:
         return existing
     candidate_ids = [row.repo_id for row in parsed_rows if row.repo_id is not None]
     taken_ids: set[int] = set()
-    if candidate_ids:
-        taken_ids = {
+    for start in range(0, len(candidate_ids), _LOOKUP_BATCH):
+        taken_ids.update(
             int(repo_id)
-            for (repo_id,) in connection.execute(select(Repo.id).where(Repo.id.in_(candidate_ids)))
-        }
+            for (repo_id,) in connection.execute(
+                select(Repo.id).where(Repo.id.in_(candidate_ids[start : start + _LOOKUP_BATCH]))
+            )
+        )
     next_id = _next_synthetic(_synthetic_floor(connection, Repo))
-    rows: list[dict] = []
-    for full_name_key in missing_names:
-        source = next(row for row in parsed_rows if row.full_name.lower() == full_name_key)
+    pending: list[dict] = []
+    for key in missing_keys:
+        source = sources[key]
         repo_id = (
             source.repo_id
             if source.repo_id is not None and source.repo_id not in taken_ids
@@ -170,11 +243,10 @@ def _ensure_repos(
             repo_id = next_id
             next_id -= 1
         taken_ids.add(repo_id)
-        owner_login = source.full_name.partition("/")[0].lower()
-        owner_id = owner_ids.get(owner_login)
+        owner_id = owner_ids.get(source.full_name.partition("/")[0].lower())
         if owner_id is None:
             continue
-        rows.append(
+        pending.append(
             {
                 "id": repo_id,
                 "node_id": f"import:{source.full_name}",
@@ -185,9 +257,12 @@ def _ensure_repos(
                 "stargazers": source.stargazers or 0,
             }
         )
-        existing[full_name_key] = repo_id
-    for start in range(0, len(rows), _BATCH_SIZE):
-        connection.execute(insert(Repo), rows[start : start + _BATCH_SIZE])
+        existing[key] = repo_id
+        if len(pending) >= _INSERT_BATCH:
+            connection.execute(insert(Repo), pending)
+            pending = []
+    if pending:
+        connection.execute(insert(Repo), pending)
     return existing
 
 
@@ -225,12 +300,12 @@ def import_repos_as_run(engine: Engine, parsed: ParsedRepos, *, name: str) -> in
                 .returning(Runs.id)
             ).scalar_one()
         )
-        items: list[dict] = []
+        pending: list[dict] = []
         for row in parsed.rows:
             repo_id = repo_ids.get(row.full_name.lower())
             if repo_id is None:
                 continue
-            items.append(
+            pending.append(
                 {
                     "run_id": run_id,
                     "repo_id": repo_id,
@@ -238,6 +313,9 @@ def import_repos_as_run(engine: Engine, parsed: ParsedRepos, *, name: str) -> in
                     "stargazers": row.stargazers,
                 }
             )
-        for start in range(0, len(items), _BATCH_SIZE):
-            connection.execute(insert(RunItem), items[start : start + _BATCH_SIZE])
+            if len(pending) >= _INSERT_BATCH:
+                connection.execute(insert(RunItem), pending)
+                pending = []
+        if pending:
+            connection.execute(insert(RunItem), pending)
     return run_id

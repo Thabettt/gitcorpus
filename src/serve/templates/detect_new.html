@@ -41,14 +41,14 @@
     {% endif %}
   </section>
   <section class="filter-section" id="detect-from-csv">
-    <h2>From a CSV file</h2>
-    <p class="muted">Accepts this app’s corpus exports (<code>id,full_name,stargazers,…</code>) and plain repo lists with a <code>repo</code> or <code>full_name</code> column plus an optional <code>stars</code>/<code>stargazers</code> column (the shape of <code>repos_rust.csv</code>). Up to {{ "{:,}".format(max_rows) }} rows; duplicates and malformed rows are skipped.</p>
+    <h2>From a CSV or JSON file</h2>
+    <p class="muted">Accepts this app’s search exports (the JSON <code>items</code> array or a corpus CSV) and plain repo lists with a <code>repo</code> or <code>full_name</code> field plus an optional <code>stars</code>/<code>stargazers</code> field (the shape of <code>repos_rust.csv</code>). No row limit; duplicates and malformed rows are skipped.</p>
     <form action="/detections/new" method="post" enctype="multipart/form-data">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <div class="field-grid">
         <label class="field" for="detect-csv">
-          <span class="field-label">Repo list (CSV)</span>
-          <input class="field-input" type="file" id="detect-csv" name="csv_file" accept=".csv,text/csv" required>
+          <span class="field-label">Repo list (CSV or JSON)</span>
+          <input class="field-input" type="file" id="detect-csv" name="import_file" accept=".csv,.json,text/csv,application/json" required>
           <span class="field-note muted">The import becomes a frozen search run; you’ll choose the pack and channels on the next page.</span>
         </label>
       </div>

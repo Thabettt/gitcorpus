@@ -66,3 +66,30 @@ def test_path_specific_limit_allows_a_larger_upload():
     )
 
     assert sent[0]["status"] == 204
+
+
+def test_unlimited_path_limit_skips_the_body_cap():
+    async def app(scope, receive, send):
+        message = await receive()
+        assert len(message["body"]) == 9
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = BodyLimitMiddleware(app, default_limit=4, path_limits={"/detections/new": 0})
+    sent: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"123456789", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/detections/new", "headers": []},
+            receive,
+            send,
+        )
+    )
+
+    assert sent[0]["status"] == 204
