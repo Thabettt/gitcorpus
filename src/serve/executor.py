@@ -34,6 +34,7 @@ class RunPayloadItem:
     country_iso: str | None = None
     geo_confidence: str | None = None
     virtuals: dict = field(default_factory=dict)
+    detection: dict | None = None
     raw: dict | None = None
 
 
@@ -45,6 +46,8 @@ class RunPayload:
     fetched: int | None = None
     warnings: list[str] = field(default_factory=list)
     field_stats: dict = field(default_factory=dict)
+    result_summary: dict | None = None
+    detections: list[dict] = field(default_factory=list)
     updated: int | None = None
     unchanged: int | None = None
     skipped: int | None = None
@@ -97,6 +100,7 @@ def _snapshot_item(item: RunPayloadItem) -> dict:
         "country_iso": item.country_iso,
         "geo_confidence": item.geo_confidence,
         "virtuals": item.virtuals,
+        "detection": item.detection,
     }
 
 
@@ -104,7 +108,14 @@ def _bundle_item(item: RunPayloadItem) -> dict:
     return item.raw if item.raw is not None else _snapshot_item(item)
 
 
-def create_run(engine: Engine, filter_spec: dict, *, api_version: str) -> int:
+def create_run(
+    engine: Engine,
+    filter_spec: dict,
+    *,
+    api_version: str,
+    kind: str = "find",
+    source_run_id: int | None = None,
+) -> int:
     with engine.begin() as connection:
         run_id = connection.execute(
             insert(Runs)
@@ -112,6 +123,8 @@ def create_run(engine: Engine, filter_spec: dict, *, api_version: str) -> int:
                 filter_hash=_filter_hash(filter_spec),
                 filter_spec=filter_spec,
                 api_version=api_version,
+                kind=kind,
+                source_run_id=source_run_id,
             )
             .returning(Runs.id)
         ).scalar_one()
@@ -193,6 +206,17 @@ def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
             )
 
 
+_DETECTIONS_HEADER = ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+
+
+def _write_detections(path: Path, rows: list[dict]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_DETECTIONS_HEADER)
+        for row in rows:
+            writer.writerow([_csv_cell(row.get(name)) for name in _DETECTIONS_HEADER])
+
+
 def _write_bundle(run: dict, payload: RunPayload, runs_root: str) -> str:
     directory = Path(runs_root) / run["filter_hash"] / str(run["id"])
     directory.mkdir(parents=True, exist_ok=True)
@@ -212,6 +236,8 @@ def _write_bundle(run: dict, payload: RunPayload, runs_root: str) -> str:
     with (directory / "bundle.json").open("w", encoding="utf-8") as handle:
         json.dump(bundle, handle, ensure_ascii=False, indent=2)
     _write_corpus(directory / "corpus.csv", payload.items)
+    if payload.detections:
+        _write_detections(directory / "detections.csv", payload.detections)
     return f"{directory.as_posix()}/"
 
 
@@ -328,6 +354,7 @@ def execute_run(
                     skipped=payload.skipped or 0,
                     incomplete_shards=1 if payload.incomplete else 0,
                     bundle_dir=bundle_dir,
+                    result_summary=payload.result_summary,
                     finished_at=func.now(),
                     error=None,
                     progress_phase=None,

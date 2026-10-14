@@ -101,4 +101,5 @@ def test_bundle_item_prefers_raw_and_falls_back_to_snapshot():
         "country_iso": "US",
         "geo_confidence": "gazetteer-city",
         "virtuals": {"team_topic": True},
+        "detection": None,
     }

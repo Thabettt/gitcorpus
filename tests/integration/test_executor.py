@@ -125,6 +125,7 @@ def _expected_snapshot() -> dict[str, object]:
         "country_iso": "DE",
         "geo_confidence": "name",
         "virtuals": {"has_dockerfile": True},
+        "detection": None,
     }
 
 
@@ -286,6 +287,7 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "country_iso": None,
             "geo_confidence": None,
             "virtuals": {},
+            "detection": None,
         },
     ]
     assert datetime.fromisoformat(bundle["ran_at"]).tzinfo is not None
