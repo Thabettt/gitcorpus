@@ -1243,15 +1243,19 @@ def register_pages(
         row = _run_detail_row(engine, run_id)
         if row is None:
             return _run_not_found(run_id)
-        return templates.TemplateResponse(
+        summary = _run_detail_summary(row, _item_count(engine, run_id))
+        response = templates.TemplateResponse(
             request,
             "partials/status.html",
             {
-                "run": _run_detail_summary(row, _item_count(engine, run_id)),
+                "run": summary,
                 "counts": _run_counts(engine, row),
                 "csrf_token": request.state.csrf_token,
             },
         )
+        if request.headers.get("HX-Request") == "true" and not summary["polling"]:
+            response.headers["HX-Refresh"] = "true"
+        return response
 
     @app.get("/runs/{run_id}/results", response_class=HTMLResponse)
     def run_results_page(

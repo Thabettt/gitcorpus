@@ -356,6 +356,25 @@ def test_status_fragment_polls_while_running_and_stops_when_terminal(clean: Engi
     assert 'id="run-counts"' in done.text
 
 
+def test_status_poll_refreshes_page_when_run_finishes(clean: Engine, tmp_path):
+    run_id = seed_run(clean, tmp_path)
+    with clean.begin() as connection:
+        connection.execute(text("UPDATE runs SET status = 'queued' WHERE id = :id"), {"id": run_id})
+    client = make_client(clean, tmp_path)
+
+    queued = client.get(f"/partials/runs/{run_id}/status", headers=HX)
+    with clean.begin() as connection:
+        connection.execute(
+            text("UPDATE runs SET status = 'done', finished_at = now() WHERE id = :id"),
+            {"id": run_id},
+        )
+    done = client.get(f"/partials/runs/{run_id}/status", headers=HX)
+
+    assert queued.status_code == done.status_code == 200
+    assert "HX-Refresh" not in queued.headers
+    assert done.headers.get("HX-Refresh") == "true"
+
+
 def test_status_fragment_unknown_run_is_404(clean: Engine, tmp_path):
     client = make_client(clean, tmp_path)
 

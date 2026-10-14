@@ -409,12 +409,16 @@ def register_detect(
         row = _run_row(engine, run_id)
         if row is None:
             return HTMLResponse("run not found", status_code=404)
-        return templates.TemplateResponse(
+        summary = _run_detail_summary(row, _item_count(engine, run_id))
+        response = templates.TemplateResponse(
             request,
             "partials/detect_status.html",
             {
-                "run": _run_detail_summary(row, _item_count(engine, run_id)),
+                "run": summary,
                 "result_summary": row["result_summary"] or {},
                 "csrf_token": request.state.csrf_token,
             },
         )
+        if request.headers.get("HX-Request") == "true" and not summary["polling"]:
+            response.headers["HX-Refresh"] = "true"
+        return response

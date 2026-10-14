@@ -245,3 +245,31 @@ def test_latest_detect_for_run_finds_the_detection(clean):
     seed_pack(clean)
     detect_id = seed_detect_run(clean, source)
     assert latest_detect_for_run(clean, source)["id"] == detect_id
+
+
+def test_detect_status_poll_refreshes_page_when_run_finishes(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+    with clean.begin() as connection:
+        connection.execute(
+            text("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = :id"),
+            {"id": detect_id},
+        )
+    running = client.get(
+        f"/partials/runs/{detect_id}/detect-status", headers={"HX-Request": "true"}
+    )
+    with clean.begin() as connection:
+        connection.execute(
+            text("UPDATE runs SET status = 'done', finished_at = now() WHERE id = :id"),
+            {"id": detect_id},
+        )
+    done_poll = client.get(
+        f"/partials/runs/{detect_id}/detect-status", headers={"HX-Request": "true"}
+    )
+    done_render = client.get(f"/partials/runs/{detect_id}/detect-status")
+    assert running.status_code == done_poll.status_code == done_render.status_code == 200
+    assert "HX-Refresh" not in running.headers
+    assert done_poll.headers.get("HX-Refresh") == "true"
+    assert "HX-Refresh" not in done_render.headers
