@@ -95,6 +95,7 @@ Source: the `thisisjustthebeginning` thesis repo (proposal §3, research-notes m
 - **Commit history windowed** (messages/authors/trailers/diffstat; merge-revert-bump + bot filtered; adoption-date + ratios), BigQuery primary + API top-up; **PR channel** (branch/label, merge-type mapping with squash-imprecision rule, outcome/iterations/reverts, Codex rule, 10k cap); **file inventory** (list + `.gitignore` scan — 2–11.8% visible-only-via-ignore — per-file stats, two-clone strategy).
 - **crates.io linkage** (metadata/downloads/yanked/versions, Cargo/workspace parse, hallucination check); **snowball expansion** (user-search seed → frontier queue → org expansion with exclusions → bulk import → geographic fallback); **validation harness** (n=400 stratified samples, double-label κ, Wilson CIs, Chapman matrix, pre-registration freeze).
 - **Known numbers to respect**: ~128k old-bucket / ~13k new-bucket reference scale; 0.5–1% FP + ~3% borderline baseline; 50–100GB/stack storage; Python 3.12+ (plan aligned).
+- Tier boundary: `docs/detection-tiers.md` (what is knowable API-only vs clone/BigQuery).
 
 ## D14. Live-probe API facts (2026-10-06/07)
 

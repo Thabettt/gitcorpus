@@ -390,3 +390,25 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 - Final 403/429 responses keep GitHub's message (`short_message`) into `BatchOutcome.unresolved`; a 200 body carrying rate-limit markers now pauses the bucket (reusing the classifier's header parser) instead of hot-requeueing.
 
 **Verification:** full suite `1514 passed, 1 warning` at this head (total coverage `94.86%`, gate `fail_under = 93`); `ruff check src tests`, `black --check src tests`, and bare `mypy` clean. This entry lands with `docs: sync quota utilization and limiter correctness changes`.
+
+## Coding-agent detection (2026-10-14)
+
+**Scope:** fifteen commits on `main` (base `18a3ba1`): `d8e9708` (migration `0016`), `8728e9d`/`928a4dc` (trace packs; attribution, selection scoping, PR propagation), `4ca03d8`/`5297c05` (file channel + ref-threaded contents fetches), `0589c32`/`223b49f` (author/committer, trailer, and bot history channels + partial-degradation fix), `b4df9f6`/`154ea27` (PR and issue channels with PR→commit propagation + partial fix), `7220717` (call/time estimate), `587294b`/`ff2f527` (orchestrator + detect payloads, inter-repo cancellation), `ae0c303` (detect spec, routes, options page), `bdc65c4`/`877adcf` (console wiring, evidence export, golden coverage, test repairs). Spec: `docs/superpowers/specs/2026-10-02-agent-detection-design.md`; plan: `docs/superpowers/plans/2026-10-02-agent-detection.md`.
+
+**What shipped**
+
+- Migration `0016_detect_runs` (down `0015`): `runs.kind` (`find`/`detect`), `runs.source_run_id`, `runs.result_summary`, `run_items.detection` rollup, `trace_packs`, and `detection_evidence` with four indexes.
+- `src/detect/`: frozen trace packs built from the vendored pattern CSVs under `packs/patterns/` (`packs.py`); attribution, selection scoping, and the redaction contract (`attribution.py`); **eight channels** (`channels.py` — `file`, `author`, `branch`, `label`, `bot`, `commit_trailer`, `pr_metadata`, `issue`); a call/time estimate sourced from live settings (`estimate.py`); and the orchestrator (`orchestrator.py`) with cost-ordered channels, bounded concurrency, per-phase progress, audit `detect:<channel>` phases, and rollup + `result_summary`.
+- Console: `Detections` nav destination (`/detections` list), options page (`/runs/{id}/detect`) with **agent selection** (the pack roster incl. the `Generic` pseudo-agent), channel checkboxes, top-N, and the live estimate partial (`/runs/{id}/detect-estimate`); status partial (`/partials/runs/{id}/detect-status`); entry points wired on finished searches and corpus pages. Detect runs reuse the executor, Stop/resume, replay/diff, and bundle export machinery.
+- **Windowed ratio and labels**: commit ratio + adoption level (Experimental/Limited/Consistent/Pervasive) and adoption date (`first_signal_at`) over the last 100 commits; PR and issue channels over the most recent 100. The UI labels the depth as windowed, never a census.
+- **PR→commit propagation** (the Codex mechanism): commits authored by an agent user whose PR sits in the window inherit that PR's evidence; squash-merge imprecision documented.
+- `detections.csv` evidence export through the existing run export route (`?format=detections`), with golden coverage for the shape.
+- **Redaction guarantee**: no commit-author/committer emails in `detection_evidence`, bundles, exports, or audit — author hits store `{login, commit, field, pattern}` and trailer snippets replace emails with `<email>`; enforced by test across DB, bundle, export, and audit.
+- `docs/detection-tiers.md`: tier boundaries (API-only full vs API-only windowed vs clone-required vs BigQuery-required), linked from the detect options page and `design/research.md` D13.
+
+**Rulings**
+
+- Detection sources the frozen `run_items` of a find run; corpora are an entry point resolved through `corpora.source_run_id`, never an FK target — deleting a corpus cannot orphan detection history.
+- Static limiter only; the adaptive controller stays off for v1.
+
+**Verification:** full suite `1633 passed, 1 failed` (1634 collected; the failure is the pre-existing disk-reserve clone-estimate test on a nearly-full C:, ~1957 MB free < the 2048 MB reserve — environmental, not from this feature); total coverage `94.16%`, gate `fail_under = 93` reached; `ruff check src tests` and `black --check src tests` clean; the live golden-org tests are green with local Redis up. This entry lands with `docs: detection tiers, README, and development log`.

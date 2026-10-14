@@ -126,7 +126,7 @@ The same question has another form: *"why not use the tool that already exists?"
 | Analytics dashboards | OSS Insight, DevStats | Aggregated trends and rankings | Aggregate answers, not frozen per-repo corpora |
 | Thin API wrappers | `gh search repos`, MCP/assistant connectors | Ergonomic pass-through with JSON output | The same 1,000-result cap, no virtual filters, no persistence, no evidence bundle |
 
-gitcorpus targets the intersection none of them covers: **live measurement at a chosen `ran_at`, arbitrary filters including file presence and owner location, coverage below the 10-star floor, frozen per-run evidence with raw upstream responses, audited pacing, and a path to coding-agent detection.** For a standard off-the-shelf sample, SEART is genuinely the better choice; for ecosystem-scale history, use World of Code. The full honest comparison, including a capability matrix and the case for building rather than adopting, lives in [`design/landscape-comparison.md`](design/landscape-comparison.md) and [`design/gitcorpus-vs-seart.md`](design/gitcorpus-vs-seart.md).
+gitcorpus targets the intersection none of them covers: **live measurement at a chosen `ran_at`, arbitrary filters including file presence and owner location, coverage below the 10-star floor, frozen per-run evidence with raw upstream responses, audited pacing, and coding-agent detection.** For a standard off-the-shelf sample, SEART is genuinely the better choice; for ecosystem-scale history, use World of Code. The full honest comparison, including a capability matrix and the case for building rather than adopting, lives in [`design/landscape-comparison.md`](design/landscape-comparison.md) and [`design/gitcorpus-vs-seart.md`](design/gitcorpus-vs-seart.md).
 
 ## What's in the box
 
@@ -463,7 +463,11 @@ Unknown parameters are rejected locally with a `400` and a hint — a typo like 
 | `/runs/{id}` | Run detail: live phase progress + ETA, Stop, counts, warnings, save-filter-to-library, export/replay/resume/clone, compare-with |
 | `/runs/{id}/results` | Full-width result table; page, sort, and page size live in the URL |
 | `/runs/{id}/diff?against={baseline_id}` | Compare with an earlier run (defaults to the previous same-filter run) |
+| `/runs/{id}/detect` | Detection options for a finished search — trace pack, agents, channels, top-N — with a live estimate; submitting starts a detect run |
+| `/runs/{id}/detect-estimate` | Calls/time estimate for the detection options form |
+| `/partials/runs/{id}/detect-status` | Live detect-run progress partial (polled while running) |
 | `/corpora`, `/corpora/{id}` | Frozen corpora and their contents |
+| `/detections` | Detection runs: source search, status, per-agent summary, evidence export |
 | `/filters` | Saved filter library (HTML for browsers, JSON for other clients) |
 | `/system` | Status / Performance / Limits overview |
 | `/settings` | Run limits for new runs (env-pinned fields read-only) |
@@ -501,7 +505,7 @@ Clones land in `clones/<filter_hash>/<run_id>/<owner__repo>/`, and completed dir
 
 ## Testing, linting, and type checking
 
-The suite collects **1,364 tests** across five suites. CI runs it on Ubuntu and Windows against real PostgreSQL and Redis (service containers on Linux, native services on Windows).
+The suite collects **1,634 tests** across five suites. CI runs it on Ubuntu and Windows against real PostgreSQL and Redis (service containers on Linux, native services on Windows).
 
 ```bash
 pytest                                   # all suites; DB-backed suites skip without TEST_DATABASE_URL
@@ -548,16 +552,17 @@ Two pieces of test furniture deserve a sentence each. The `golden/` suite snapsh
 
 **Built and wired** (verifiable in `src/` and in the test suite): GraphQL two-phase live discovery (batched count probes, parallel page fetching from a `discovery_concurrency` worker pool) with the 1,000-cap planner staying inside the filter's own `created:` window; immutable-id storage and lifecycle; per-bucket rate limiting with the failure classifier; REST + GraphQL hydration with bounded batch concurrency; cost-ordered virtual enrichment (`has_dockerfile`, `owner_country` + confidence, `min_commits`/`max_commits`, `min_language_bytes`/`max_language_bytes`); the operator console (find/runs/results/diff/corpora/library/system/settings/health); run controls (Stop/resume, save filter, live phase progress with ETA); filter-spec v1 with replay and hashes; bundles and CSV; quality reports; audit log; SLO metrics; and top-N cloning.
 
+**Coding-agent detection shipped.** A finished search or corpus offers **Detect agent use** (the nav's **Detections** page lists runs): choose a frozen trace pack, the agents to match, and any of the eight channels (file, author, branch, label, bot, commit trailer, PR metadata, issue). The run scans the frozen items API-only — no discovery calls, no cloning — storing per-repo evidence, a summary rollup, and a `detections.csv` export. Depth is windowed (last 100 commits, most recent 100 PRs and issues) and labelled as windowed, never a census; tier boundaries are in [`docs/detection-tiers.md`](docs/detection-tiers.md).
+
 **Designed but not implemented** — the console and docs label these clearly rather than pretending:
 
-- **Coding-agent detection** ("Detection" in the nav, greyed out): scanning a frozen corpus for agent configuration and trace files. Design: [`docs/superpowers/specs/2026-10-02-agent-detection-design.md`](docs/superpowers/specs/2026-10-02-agent-detection-design.md).
 - **`min_loc`/`max_loc`**: accepted and recorded, but full-depth LOC enrichment is not wired; using them flags the run incomplete.
 - **`GET /repositories?since=` bulk enumeration**: the cursor scanner and its tests exist, but the pipeline runner is quarantined (not exposed through the console or API).
 - **Org/user enumeration** (`run_org_enum`): implemented and tested, not yet reachable from a route.
 - **Multi-segment enrichment parallelism**: the executor supports segments, but the runner currently always uses one.
 - **Mid-run checkpointing**: none — resume re-fetches from the start (upserts make that safe, only slower).
 
-Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests/quarantine_manifest.txt) and enforced by tests, so unwired code cannot silently rot. Migrations `0010`–`0011` carry the run progress columns, `0012` adds `app_settings.discovery_concurrency`, and `0013` raises the batch-size cap to 50; the detection feature's tables remain unbuilt and will claim a later revision.
+Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests/quarantine_manifest.txt) and enforced by tests, so unwired code cannot silently rot. Migrations `0010`–`0011` carry the run progress columns, `0012` adds `app_settings.discovery_concurrency`, and `0013` raises the batch-size cap to 50.
 
 **Known operational constraints**: migrations `0005`–`0007` take write-blocking locks; a run occupies the single executor for its whole duration; the default caps are small; the console has no auth (see above).
 
@@ -565,7 +570,7 @@ Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests
 
 - **Search** — one live discovery run. Shown as runs in the console; the noun for one measurement.
 - **Corpus** — a named, immutable snapshot of a finished search.
-- **Detection** — the planned feature that scans a frozen corpus for coding-agent config/trace files. Not implemented yet, by design.
+- **Detection** — a run that scans a frozen search's items (a corpus) through GitHub's API for coding-agent config and trace signals: eight channels, windowed depth, per-repo evidence. See [`docs/detection-tiers.md`](docs/detection-tiers.md).
 - **`ran_at`** — the UTC moment a search measured GitHub. Every bundle records it.
 - **Filter spec (v1)** — the JSON document that fully describes a search: `q`, `sort`, `order`, `virtual`, `page`, optional `frame`, optional `as_of`.
 - **Filter hash** — the SHA-256 of the canonical normalized spec; the identity of a search for replay and caching.
