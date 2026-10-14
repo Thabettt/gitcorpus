@@ -105,10 +105,23 @@ def _options_context(engine: Engine, run_id: int, *, errors_: list[str], hints: 
         "packs": _pack_versions(engine),
         "roster": pack.roster() if pack is not None else (),
         "channels": CHANNELS,
+        "channel_notes": CHANNEL_NOTES,
         "candidate_count": _candidate_count(engine, run_id),
         "errors": errors_,
         "hints": hints,
     }
+
+
+CHANNEL_NOTES = {
+    "file": "Tree + .gitignore + content probes · 2+ REST calls",
+    "author": "Commit author/committer identities · shares the history call",
+    "branch": "PR head branches · shares the PR call",
+    "label": "PR labels · shares the PR call",
+    "bot": "Generic CI bots, QA evidence only · shares the history call",
+    "commit_trailer": "Co-author / generated-by trailers · shares the history call",
+    "pr_metadata": "PR author, body marker, PR→commit propagation · 1 GraphQL call",
+    "issue": "Agent users in issues and PR comments · 1 GraphQL call",
+}
 
 
 def _first_signal_label(value: object) -> str | None:

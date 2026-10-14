@@ -287,3 +287,6 @@ def test_detection_summary_cards_are_readable(clean):
     assert "2026-01-02 00:00 UTC" in response.text
     assert "100.0%" in response.text
     assert "<h3>Pack</h3>" not in response.text
+    assert 'class="info-pop"' in response.text
+    assert "What the windowed commit ratio means" in response.text
+    assert "conservative lower bound" in response.text

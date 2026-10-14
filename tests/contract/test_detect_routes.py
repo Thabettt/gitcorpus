@@ -112,6 +112,8 @@ def test_options_page_requires_finished_find_run(clean):
     assert response.status_code == 200
     assert "Claude Code" in response.text
     assert "test-pack" in response.text
+    assert "shares the history call" in response.text
+    assert 'id="detect-channels-all"' in response.text
 
 
 def test_start_detection_creates_run_and_submits_runner(clean):

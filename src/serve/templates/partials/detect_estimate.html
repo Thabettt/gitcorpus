@@ -2,5 +2,7 @@
   <p><strong>{{ estimate.rest_calls }}</strong> REST calls + <strong>{{ estimate.graphql_calls }}</strong> GraphQL calls ≈ <strong>{{ estimate.hours }}h</strong> for {{ estimate.repos }} repos ({{ estimate.concurrency }} concurrent).</p>
   {% if estimate.deadline_exceeded %}
   <p class="flag warn">This estimate exceeds the request deadline; the run would stop partial. Narrow the top-N or the channels.</p>
+  {% else %}
+  <p class="muted">Agent selection does not change the call count. Estimates assume the steady-state token budget and track actuals within the pilot tolerance.</p>
   {% endif %}
 </div>

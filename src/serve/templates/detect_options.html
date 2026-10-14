@@ -30,49 +30,76 @@
   {% endif %}
   <form id="detect-form" action="/runs/{{ source.id }}/detect" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <label class="field" for="detect-pack">
-      <span class="field-label">Pack version</span>
-      <select class="field-input" id="detect-pack" name="pack_version">
-        {% for version in packs %}<option value="{{ version }}">{{ version }}</option>{% endfor %}
-      </select>
-    </label>
-    <fieldset>
-      <legend>Agents ({{ roster | length }})</legend>
-      <p class="muted">Only the selected agents are matched, counted, and exported. Keep all checked to scan for every agent.</p>
-      <div class="checklist-tools">
-        <input type="search" id="detect-agent-search" class="field-input" aria-label="Search agents" placeholder="Search agents…">
-        <button type="button" id="detect-agents-all" class="button">Select all</button>
-        <button type="button" id="detect-agents-none" class="button">Select none</button>
+    <section class="filter-section" id="detect-pack-section">
+      <h2>Trace pack</h2>
+      <p class="muted">The frozen pattern set used for matching — agent heuristics plus the 63-tool roster. Packs are immutable once frozen, and every stored evidence row carries this version.</p>
+      <div class="field-grid">
+        <label class="field" for="detect-pack">
+          <span class="field-label">Pack version</span>
+          <select class="field-input" id="detect-pack" name="pack_version">
+            {% for version in packs %}<option value="{{ version }}">{{ version }}</option>{% endfor %}
+          </select>
+        </label>
       </div>
+    </section>
+    <section class="filter-section" id="detect-agents-section">
+      <div class="detect-section-head">
+        <h2>Agents ({{ roster | length }})</h2>
+        <div class="checklist-tools">
+          <input type="search" id="detect-agent-search" class="field-input checklist-search" aria-label="Search agents" placeholder="Search agents…">
+          <button type="button" id="detect-agents-all" class="button ghost">Select all</button>
+          <button type="button" id="detect-agents-none" class="button ghost">Select none</button>
+        </div>
+      </div>
+      <p class="muted">Only the selected agents are matched, counted, and exported. Selection narrows matching, not fetching — the same API calls run either way. Keep all checked to scan for every agent.</p>
       <div class="checklist" id="detect-agents">
         {% for agent in roster %}
-        <label><input type="checkbox" name="agents" value="{{ agent }}" checked> {{ agent }}</label>
+        <label class="checkbox"><input type="checkbox" name="agents" value="{{ agent }}" checked> <span>{{ agent }}</span></label>
         {% endfor %}
       </div>
-    </fieldset>
-    <fieldset>
-      <legend>Channels</legend>
-      <div class="checklist" id="detect-channels">
+    </section>
+    <section class="filter-section" id="detect-channels-section">
+      <div class="detect-section-head">
+        <h2>Channels</h2>
+        <div class="checklist-tools">
+          <button type="button" id="detect-channels-all" class="button ghost">Select all</button>
+          <button type="button" id="detect-channels-none" class="button ghost">Select none</button>
+        </div>
+      </div>
+      <p class="muted">Independent heuristics, each run per repo and grouped in the results. Several channels share one API call; the per-repo cost is noted next to each.</p>
+      <div class="checklist checklist-channels" id="detect-channels">
         {% for channel in channels %}
-        <label><input type="checkbox" name="channels" value="{{ channel }}" checked> {{ channel }}</label>
+        <label class="checkbox channel-row">
+          <input type="checkbox" name="channels" value="{{ channel }}" checked>
+          <span class="channel-name">{{ channel }}</span>
+          <span class="channel-note muted">{{ channel_notes.get(channel, "") }}</span>
+        </label>
         {% endfor %}
       </div>
-    </fieldset>
-    <label class="field" for="detect-limit">
-      <span class="field-label">Top-N repos (blank = all {{ candidate_count }})</span>
-      <input class="field-input" id="detect-limit" name="limit" type="number" min="1">
-    </label>
-    <div id="detect-estimate"
-         hx-get="/runs/{{ source.id }}/detect-estimate"
-         hx-trigger="load, change from:#detect-form"
-         hx-include="#detect-form"
-         hx-swap="outerHTML">
-      <p class="muted">Estimating…</p>
-    </div>
+    </section>
+    <section class="filter-section" id="detect-scope-section">
+      <h2>Scope</h2>
+      <p class="muted">Detection walks the frozen result list in star order (most stars first). A top-N limit is useful for pilot runs; the estimate below updates as you change options.</p>
+      <div class="field-grid">
+        <label class="field" for="detect-limit">
+          <span class="field-label">Top-N repos</span>
+          <input class="field-input" id="detect-limit" name="limit" type="number" min="1" placeholder="All {{ candidate_count }}">
+          <span class="field-note muted">Blank = all {{ candidate_count }} frozen repos.</span>
+        </label>
+      </div>
+      <div id="detect-estimate"
+           hx-get="/runs/{{ source.id }}/detect-estimate"
+           hx-trigger="load, change from:#detect-form"
+           hx-include="#detect-form"
+           hx-swap="outerHTML">
+        <p class="muted">Estimating…</p>
+      </div>
+    </section>
     <div class="form-actions">
       <button id="detect-start" class="button primary" type="submit">Start detection</button>
       <a class="button" href="/runs/{{ source.id }}">Cancel</a>
     </div>
+    <p class="muted">Starts a detect run on its own GitHub allowance. Progress, cancel, and resume work like any other run, and results land on the run’s detection page.</p>
   </form>
   <p class="muted">Depth is windowed: last 100 commits, most recent 100 PRs and issues — labelled as windowed, never presented as a census. Tier boundaries are documented in <code>docs/detection-tiers.md</code>. Detection is an undercount: agents that hide their traces are not visible.</p>
   <p><a href="/detections">All detections</a></p>
@@ -80,33 +107,48 @@
 <script>
 (function () {
   "use strict";
+  var form = document.getElementById("detect-form");
+  function notifyChanged() {
+    if (form) {
+      form.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+  var agentLabels = [];
+  function wireGroup(listId, allId, noneId) {
+    var list = document.getElementById(listId);
+    if (!list) {
+      return [];
+    }
+    var labels = Array.prototype.slice.call(list.querySelectorAll("label"));
+    function setAll(checked) {
+      labels.forEach(function (label) {
+        label.querySelector("input[type=checkbox]").checked = checked;
+      });
+      notifyChanged();
+    }
+    var selectAll = document.getElementById(allId);
+    var selectNone = document.getElementById(noneId);
+    if (selectAll) {
+      selectAll.addEventListener("click", function () {
+        setAll(true);
+      });
+    }
+    if (selectNone) {
+      selectNone.addEventListener("click", function () {
+        setAll(false);
+      });
+    }
+    return labels;
+  }
+  agentLabels = wireGroup("detect-agents", "detect-agents-all", "detect-agents-none");
+  wireGroup("detect-channels", "detect-channels-all", "detect-channels-none");
   var search = document.getElementById("detect-agent-search");
-  var list = document.getElementById("detect-agents");
-  if (!search || !list) {
-    return;
-  }
-  var labels = Array.prototype.slice.call(list.querySelectorAll("label"));
-  search.addEventListener("input", function () {
-    var term = search.value.trim().toLowerCase();
-    labels.forEach(function (label) {
-      label.hidden = term !== "" && label.textContent.toLowerCase().indexOf(term) === -1;
-    });
-  });
-  function setAll(checked) {
-    labels.forEach(function (label) {
-      label.querySelector("input[type=checkbox]").checked = checked;
-    });
-  }
-  var selectAll = document.getElementById("detect-agents-all");
-  var selectNone = document.getElementById("detect-agents-none");
-  if (selectAll) {
-    selectAll.addEventListener("click", function () {
-      setAll(true);
-    });
-  }
-  if (selectNone) {
-    selectNone.addEventListener("click", function () {
-      setAll(false);
+  if (search) {
+    search.addEventListener("input", function () {
+      var term = search.value.trim().toLowerCase();
+      agentLabels.forEach(function (label) {
+        label.hidden = term !== "" && label.textContent.toLowerCase().indexOf(term) === -1;
+      });
     });
   }
 })();

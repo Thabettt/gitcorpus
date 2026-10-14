@@ -27,11 +27,57 @@
 <section class="panel" id="detection-summary">
   <div class="panel-head"><h2>Summary</h2></div>
   <div class="cards">
-    <article class="card"><h3>Repos scanned</h3><p>{{ detection.summary.repos_scanned or 0 }}</p></article>
-    <article class="card"><h3>With any signal</h3><p>{{ detection.summary.repos_with_signal or 0 }}</p></article>
-    <article class="card"><h3>Unavailable</h3><p>{{ detection.summary.repos_unavailable or 0 }}</p></article>
-    <article class="card"><h3>Windowed commit ratio</h3><p>{{ detection.ratio_label }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p></article>
-    <article class="card"><h3>First signal</h3><p>{{ detection.first_signal_label or "—" }}</p></article>
+    <article class="card">
+      <details class="info-pop">
+        <summary aria-label="What repos scanned means">i</summary>
+        <div class="info-pop-body">
+          <p>Repos from search #{{ detection.source_run_id }}’s frozen result list that this run processed — every item unless a top-N limit was set.</p>
+          <p>Membership is frozen at search time; signal content is fetched live per repo at detection time. Repos the API could not read are counted as unavailable, never dropped.</p>
+        </div>
+      </details>
+      <h3>Repos scanned</h3><p>{{ detection.summary.repos_scanned or 0 }}</p>
+    </article>
+    <article class="card">
+      <details class="info-pop">
+        <summary aria-label="What with any signal means">i</summary>
+        <div class="info-pop-body">
+          <p>Scanned repos with at least one piece of evidence for a selected agent, in any selected channel.</p>
+          <p>This counts repos, not signals — a repo with 200 trailer hits still counts once here. The per-agent totals below show where the evidence lands.</p>
+        </div>
+      </details>
+      <h3>With any signal</h3><p>{{ detection.summary.repos_with_signal or 0 }}</p>
+    </article>
+    <article class="card">
+      <details class="info-pop">
+        <summary aria-label="What unavailable means">i</summary>
+        <div class="info-pop-body">
+          <p>Repos the GitHub API could not read during the run: deleted or renamed (404), private without access, or a transport/GraphQL failure that survived retries.</p>
+          <p>They contribute no evidence and are never presented as clean. Resume the run to pick them up; the count also appears in the run summary.</p>
+        </div>
+      </details>
+      <h3>Unavailable</h3><p>{{ detection.summary.repos_unavailable or 0 }}</p>
+    </article>
+    <article class="card">
+      <details class="info-pop">
+        <summary aria-label="What the windowed commit ratio means">i</summary>
+        <div class="info-pop-body">
+          <p>The share of the last {{ detection.windows.commits }} commits on the default branch attributed to a detected agent — via author/committer identity match, a matching commit trailer, or PR→commit propagation (a detected PR tagging its author’s commits).</p>
+          <p>Levels, per the papers: experimental &lt;1% · limited 1–5% · consistent 5–20% · pervasive &gt;20%.</p>
+          <p>Windowed, not full history: older adoption is invisible. Merge/revert/version-bump noise and generic CI bots are excluded from both sides, so treat it as a conservative lower bound.</p>
+        </div>
+      </details>
+      <h3>Windowed commit ratio</h3><p>{{ detection.ratio_label }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p>
+    </article>
+    <article class="card">
+      <details class="info-pop">
+        <summary aria-label="What first signal means">i</summary>
+        <div class="info-pop-body">
+          <p>The earliest date in the window with agent-attributed evidence: the committed date of the oldest matched commit, or the creation date of the oldest matched PR.</p>
+          <p>Because it comes from the {{ detection.windows.commits }}-commit and most-recent {{ detection.windows.prs }}-PR windows, it is a lower bound — real adoption may predate it. Full-history dating is the clone tier.</p>
+        </div>
+      </details>
+      <h3>First signal</h3><p>{{ detection.first_signal_label or "—" }}</p>
+    </article>
   </div>
   {% if detection.summary.agents %}
   <div id="detection-agents" class="run-counts">
@@ -41,8 +87,7 @@
   {% if detection.summary.partial_channels %}
   <p class="flag warn" id="detection-partials">Partial channels: {% for channel, note in detection.summary.partial_channels.items() %}{{ channel }} ({{ note }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
   {% endif %}
-  <p class="muted">Windowed commit ratio: the share of the last {{ detection.windows.commits }} commits attributed to a detected agent (author/committer identity, commit trailer, or PR→commit propagation), rated experimental &lt;1% · limited 1–5% · consistent 5–20% · pervasive &gt;20%. It covers the window only, never the full history.</p>
-  <p class="muted">Depth: {{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed). Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount.</p>
+  <p class="muted">Depth: {{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed). Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount. Hover or tap the ⓘ on any card for details.</p>
 </section>
 <section class="panel" id="detection-evidence">
   <div class="panel-head">
