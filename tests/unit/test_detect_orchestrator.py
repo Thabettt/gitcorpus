@@ -6,12 +6,15 @@ import re
 from pathlib import Path
 
 import httpx
+import pytest
 from sqlalchemy import text
 
 from detect import orchestrator as orchestrator_module
 from detect.orchestrator import CHANNELS, DetectConfig, DetectOptions, run_detection
 from detect.packs import Pack, Pattern, freeze_pack
 from discover.pipeline import Deps
+from lib import cancellation
+from lib.cancellation import RunCancelled
 from serve.executor import create_run, execute_run
 
 PACK = Pack(
@@ -329,6 +332,35 @@ def test_run_detection_isolates_one_repo_failure(clean_db, monkeypatch):
         "octo/two: RuntimeError: boom in file channel",
     ]
     assert payload.detections == []
+
+
+def test_run_detection_cancelled_before_start_writes_nothing(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    seen: list[str] = []
+    queries: list[str] = []
+    deps = make_deps(engine, make_handler(seen, queries))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, agents=["Claude Code", "Codex"])
+    token = cancellation.bind(lambda: True)
+    try:
+        with pytest.raises(RunCancelled):
+            run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+    finally:
+        cancellation.reset(token)
+    with engine.connect() as connection:
+        count = connection.scalar(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"), {"run": run_id}
+        )
+    assert count == 0
+    assert seen == []
+    assert queries == []
 
 
 def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path):

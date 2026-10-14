@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import httpx
@@ -14,6 +14,7 @@ from detect.channels import ChannelResult, detect_files, detect_history, detect_
 from detect.packs import Pack
 from discover.pipeline import Deps
 from lib import audit, cancellation, progress
+from lib.cancellation import RunCancelled
 from lib.deadlines import Deadline, request_deadline_seconds
 from serve.executor import RunPayload, RunPayloadItem
 from store.models import DetectionEvidence, Repo, RunItem
@@ -291,20 +292,34 @@ def run_detection(
     scans: list[_RepoScan] = []
     failures: list[str] = []
     try:
-        with ThreadPoolExecutor(max_workers=max(1, cfg.concurrency)) as pool:
-            futures = {
-                pool.submit(_scan_repo, deps, pack, spec, run_id, ledger, candidate): candidate
-                for candidate in candidates
-            }
+        max_workers = max(1, cfg.concurrency)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            pending = iter(candidates)
+            in_flight: dict[Future, Mapping] = {}
+            exhausted = False
             done = 0
-            for future in as_completed(futures):
+            while True:
+                while not exhausted and len(in_flight) < max_workers:
+                    cancellation.check()
+                    candidate = next(pending, None)
+                    if candidate is None:
+                        exhausted = True
+                        break
+                    future = pool.submit(_scan_repo, deps, pack, spec, run_id, ledger, candidate)
+                    in_flight[future] = candidate
+                if not in_flight:
+                    break
+                future = next(as_completed(in_flight))
                 cancellation.check()
+                candidate = in_flight.pop(future)
                 synthetic: _RepoScan | None = None
                 try:
                     scan = future.result()
                     scan.document = _repo_document(scan)
+                except RunCancelled:
+                    raise
                 except Exception as exc:
-                    scan = _failed_scan(futures[future], exc)
+                    scan = _failed_scan(candidate, exc)
                     synthetic = scan
                 scans.append(scan)
                 if synthetic is not None:
