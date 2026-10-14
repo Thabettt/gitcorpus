@@ -720,3 +720,41 @@ def test_run_table_header_is_sticky(repo_root: Path):
     css = (repo_root / "src/serve/static/app.css").read_text(encoding="utf-8")
     assert "#run-table thead th" in css
     assert "position: sticky" in css
+
+
+def test_detect_runs_stay_out_of_the_search_history(client: TestClient, clean: Engine, tmp_path):
+    find_id = seed_run(clean, tmp_path)
+    detect_id = create_run(
+        clean,
+        {"kind": "detect", "source_run_id": find_id},
+        api_version=API_VERSION,
+        kind="detect",
+        source_run_id=find_id,
+    )
+
+    history = client.get("/runs").text
+    assert f'id="history-run-{find_id}"' in history
+    assert f'id="history-run-{detect_id}"' not in history
+
+    dashboard = client.get("/").text
+    assert f'id="run-{find_id}"' in dashboard
+    assert f'id="run-{detect_id}"' not in dashboard
+
+    detections = client.get("/detections").text
+    assert f'href="/runs/{detect_id}"' in detections
+
+
+def test_detect_entry_links_open_the_detection_page(client: TestClient, clean: Engine, tmp_path):
+    find_id = seed_run(clean, tmp_path)
+    detect_id = create_run(
+        clean,
+        {"kind": "detect", "source_run_id": find_id},
+        api_version=API_VERSION,
+        kind="detect",
+        source_run_id=find_id,
+    )
+
+    response = client.get(f"/runs/{detect_id}")
+    assert response.status_code == 200
+    assert "Detection #" in response.text
+    assert "Search #" not in response.text.split("<main", 1)[-1].split("</main>", 1)[0]

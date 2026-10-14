@@ -290,7 +290,10 @@ def _recent_runs(engine: Engine, limit: int = RECENT_RUNS_LIMIT) -> list[dict]:
     with engine.connect() as connection:
         rows = (
             connection.execute(
-                select(Runs).order_by(Runs.created_at.desc(), Runs.id.desc()).limit(limit)
+                select(Runs)
+                .where(Runs.kind == "find")
+                .order_by(Runs.created_at.desc(), Runs.id.desc())
+                .limit(limit)
             )
             .mappings()
             .all()
@@ -316,7 +319,7 @@ def _history_summary(row) -> dict:
 
 
 def _history_page(engine: Engine, *, status: str, hash_prefix: str, page: int) -> dict:
-    statement = select(Runs)
+    statement = select(Runs).where(Runs.kind == "find")
     if status:
         statement = statement.where(Runs.status == status)
     if hash_prefix:
