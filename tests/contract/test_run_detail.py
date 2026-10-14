@@ -687,7 +687,7 @@ def test_run_detail_shows_filter_sentence_and_explained_counts(clean, tmp_path, 
     ):
         assert line in body
     assert "View all results" in body
-    assert "Detect agent use" in body and "disabled" in body
+    assert 'href="/runs/' in body and "Detect agent use" in body and "Coming soon" not in body
 
 
 def test_quality_panel_uses_sentences(clean, tmp_path, monkeypatch):

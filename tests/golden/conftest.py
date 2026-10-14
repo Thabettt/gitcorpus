@@ -44,7 +44,8 @@ FILTER_SPEC_JSON = '{"gitcorpus_filter": 1, "q": "language:rust", "sort": "stars
 
 GOLDEN_SEED_SQL = (
     "TRUNCATE TABLE app_settings, corpora, run_items, runs, saved_filters, audit_log, shards, "
-    "geo_cache, owners, repos, full_name_history RESTART IDENTITY CASCADE",
+    "geo_cache, owners, repos, full_name_history, detection_evidence, trace_packs "
+    "RESTART IDENTITY CASCADE",
     "INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
     """
     INSERT INTO owners (id, login, type, location_raw, country_iso, geo_confidence, company)
@@ -109,6 +110,36 @@ GOLDEN_SEED_SQL = (
     INSERT INTO corpora (id, name, source_run_id, note, repo_count, frozen_at)
     VALUES (951, 'rust thesis frame', 931, 'thesis frame', 3, '2026-01-02T00:06:00Z')
     """,
+    """
+    INSERT INTO trace_packs (version, authors, files, branches, labels)
+    VALUES ('golden-pack',
+            '[{"pattern": "noreply@anthropic\\\\.com", "agent": "Claude Code"}]'::jsonb,
+            '[{"pattern": "CLAUDE\\\\.md", "agent": "Claude Code"}]'::jsonb,
+            '[{"pattern": "codex/", "agent": "Codex"}]'::jsonb,
+            '[]'::jsonb)
+    """,
+    """
+    INSERT INTO runs (id, filter_hash, filter_spec, api_version, status, kind, source_run_id,
+                      result_summary, created_at, finished_at, fetched, inserted)
+    VALUES (952, 'golden-detect',
+            '{"version": 1, "kind": "detect", "source_run_id": 931, "pack_version": "golden-pack",
+              "agents": null, "channels": ["file", "pr_metadata"], "limit": null,
+              "windows": {"commits": 100, "prs": 100, "issues": 100}}'::jsonb,
+            '2022-11-28', 'done', 'detect', 931,
+            '{"repos_scanned": 1, "repos_with_signal": 1, "repos_unavailable": 0,
+              "agents": {"Claude Code": 1, "Codex": 1}, "channels": {"file": 1, "pr_metadata": 1},
+              "pack_version": "golden-pack", "agents_selected": "all",
+              "windows": {"commits": 100, "prs": 100, "issues": 100},
+              "commit_ratio": 1.0, "adoption_level": "pervasive",
+              "first_signal_at": "2026-01-02T00:00:00Z", "partial_channels": {}}'::jsonb,
+            '2026-01-02T00:06:00Z', '2026-01-02T00:07:00Z', 1, 1)
+    """,
+    """
+    INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence, pack_version)
+    VALUES (952, 911, 'Claude Code', 'file', '{"path": "CLAUDE.md"}'::jsonb, 'golden-pack'),
+           (952, 911, 'Codex', 'pr_metadata',
+            '{"pr": 7, "commit": "a1", "propagated": true}'::jsonb, 'golden-pack')
+    """,
 )
 
 PATH_PARAMS = {
@@ -130,6 +161,10 @@ PATH_PARAMS = {
     "/partials/runs/{run_id}/quality": {"run_id": RUN_A},
     "/partials/runs/{run_id}/table": {"run_id": RUN_A},
     "/partials/runs/{run_id}/clone-progress": {"run_id": RUN_A},
+    "/detections": {},
+    "/runs/{run_id}/detect": {"run_id": RUN_A},
+    "/runs/{run_id}/detect-estimate": {"run_id": RUN_A},
+    "/partials/runs/{run_id}/detect-status": {"run_id": RUN_A},
 }
 QUERY = {
     "/vsearch/repos": "?q=language:rust&sort=stars&order=desc",
@@ -141,6 +176,8 @@ EXTRA_CASES = (
     ("static_css", "/static/app.css", {}),
     ("static_js", "/static/app.js", {}),
     ("filters_json", "/filters", {}),
+    ("runs_detect", "/runs/952", {}),
+    ("runs_detect_export", "/runs/952/export?format=detections", {}),
 )
 
 

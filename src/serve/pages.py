@@ -642,6 +642,17 @@ def _raw_query(filter_spec: object) -> str:
     return ""
 
 
+def _latest_detect_context(engine: Engine, run_id: int) -> dict | None:
+    from serve.detect import latest_detect_for_run
+
+    row = latest_detect_for_run(engine, run_id)
+    if row is None:
+        return None
+    summary = row["result_summary"] or {}
+    signals = sum((summary.get("agents") or {}).values())
+    return {"id": row["id"], "status": row["status"], "signals": signals}
+
+
 def _int_or_zero(value: object) -> int:
     try:
         return int(value or 0)
@@ -1159,6 +1170,10 @@ def register_pages(
             return templates.TemplateResponse(
                 request, "run_detail.html", {"run": None}, status_code=404
             )
+        if row["kind"] == "detect":
+            from serve.detect import detect_detail_response
+
+            return detect_detail_response(request, engine, row)
         item_count = _item_count(engine, run_id)
         table = results_context(
             engine,
@@ -1194,6 +1209,7 @@ def register_pages(
                 "clone_root": clone_root,
                 "csrf_token": request.state.csrf_token,
                 "estimate": estimate,
+                "latest_detect": _latest_detect_context(engine, run_id),
                 "progress": progress,
                 "save_notice": request.query_params.get("saved"),
                 "save_error": request.query_params.get("save_error"),

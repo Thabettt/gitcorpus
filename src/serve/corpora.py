@@ -71,6 +71,15 @@ def _view(row) -> CorpusView:
     )
 
 
+def _last_detection(engine: Engine, source_run_id: int) -> dict | None:
+    from serve.detect import latest_detect_for_run
+
+    row = latest_detect_for_run(engine, source_run_id)
+    if row is None:
+        return None
+    return {"id": row["id"], "status": row["status"]}
+
+
 def list_corpora(engine: Engine) -> list[CorpusView]:
     with engine.connect() as connection:
         rows = connection.execute(
@@ -183,6 +192,7 @@ def _render_list(
             "frozen_at": pages._relative_time(view.frozen_at),
             "source_run_id": view.source_run_id,
             "sentence": view.sentence,
+            "last_detection": _last_detection(engine, view.source_run_id),
         }
         for view in views
     ]
@@ -229,6 +239,7 @@ def _render_detail(request: Request, engine: Engine, corpus_id: int, *, status_c
                 "source_run_id": view.source_run_id,
                 "sentence": view.sentence,
                 "status": view.status,
+                "last_detection": _last_detection(engine, view.source_run_id),
             },
             "preview_page_size": pages.PREVIEW_PAGE_SIZE,
             "csrf_token": request.state.csrf_token,

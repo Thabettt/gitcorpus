@@ -35,12 +35,11 @@
           <td>{{ item.frozen_at }}</td>
           <td class="library-sentence"><a href="/runs/{{ item.source_run_id }}">Search #{{ item.source_run_id }}</a>
             <span class="muted">· {{ item.sentence }}</span></td>
-          <td><span class="muted" data-no-detection="true">Not yet</span></td>
+          <td>{% if item.last_detection %}<a href="/runs/{{ item.last_detection.id }}">#{{ item.last_detection.id }}</a> <span class="muted">{{ status_label(item.last_detection.status) }}</span>{% else %}<span class="muted" data-no-detection="true">Not yet</span>{% endif %}</td>
           <td class="actions-cell">
             <div class="actions-row">
               <a class="button ghost" href="/corpora/{{ item.id }}">Open</a>
-              <button id="corpora-detect-{{ item.id }}" class="button" type="button" disabled
-                      title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect</button>
+              <a id="corpora-detect-{{ item.id }}" class="button" href="/runs/{{ item.source_run_id }}/detect" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect</a>
             </div>
           </td>
         </tr>
@@ -56,7 +55,6 @@
     <p class="empty-actions"><a class="button ghost" href="/runs">Browse searches</a></p>
   </div>
   {% endif %}
-  <p class="muted" id="corpora-detect-note">Detect agent use scans the frozen corpus through
-    GitHub’s API on its own allowance and stores evidence per repo. Coming soon.</p>
+  <p class="muted" id="corpora-detect-note">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.</p>
 </section>
 {% endblock %}

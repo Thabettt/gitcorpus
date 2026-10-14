@@ -1,0 +1,8 @@
+{
+  "path": "/partials/runs/931/detect-status",
+  "status": 200,
+  "headers": {
+    "content-type": "text/html; charset=utf-8"
+  },
+  "body": "<div id=\"detect-status\">\n  <p class=\"run-status-line\">\n    <span class=\"status-pill status-done\">Finished</span>\n    \n    \n  </p>\n  \n  \n</div>"
+}

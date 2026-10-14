@@ -23,8 +23,7 @@
     <a id="corpus-export-json" class="button" href="/runs/{{ corpus.source_run_id }}/export?format=json">Export JSON</a>
     <a id="corpus-export-csv" class="button" href="/runs/{{ corpus.source_run_id }}/export?format=csv">Export CSV</a>
     <a id="corpus-view-all" class="button" href="/runs/{{ corpus.source_run_id }}/results">View all results</a>
-    <button id="corpus-detect" class="button" type="button" disabled
-            title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</button>
+    <a id="corpus-detect" class="button" href="/runs/{{ corpus.source_run_id }}/detect" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</a>
     <button id="corpus-delete-open" class="button danger" type="button"
             data-open="corpus-delete-modal">Delete corpus</button>
     <noscript>
@@ -34,8 +33,7 @@
       </form>
     </noscript>
   </div>
-  <p class="muted" id="corpus-detect-note">Detect agent use scans the frozen corpus through GitHub’s
-    API on its own allowance and stores evidence per repo. Coming soon.</p>
+  <p class="muted" id="corpus-detect-note">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.</p>
   <p class="muted">Export downloads the frozen result list as JSON or CSV. Deleting a corpus never affects its source search — the search and its results stay exactly as they are.</p>
   <p><a href="/corpora">All corpora</a></p>
 </section>

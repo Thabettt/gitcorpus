@@ -1,0 +1,10 @@
+{
+  "path": "/runs/952/export?format=detections",
+  "status": 200,
+  "headers": {
+    "content-type": "text/csv; charset=utf-8",
+    "content-disposition": "attachment; filename=\"gitcorpus-golden-detect-952.detections\"",
+    "x-gitcorpus-regenerated": "true"
+  },
+  "body": "full_name,repo_id,agent,channel,evidence,pack_version\n"
+}

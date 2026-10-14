@@ -30,10 +30,10 @@ from enrich.cloner import (
 )
 from lib.deadlines import clone_timeout_seconds
 from serve.executor import _CSV_HEADER, _csv_cell
-from store.models import Repo, RunItem, Runs
+from store.models import DetectionEvidence, Repo, RunItem, Runs
 
-_MEDIA_TYPES = {"json": "application/json", "csv": "text/csv"}
-_BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv"}
+_MEDIA_TYPES = {"json": "application/json", "csv": "text/csv", "detections": "text/csv"}
+_BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv", "detections": "detections.csv"}
 
 
 def run_bundle_dir(runs_root: str, filter_hash: str, run_id: int) -> Path:
@@ -172,6 +172,41 @@ def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
         yield buffer.getvalue().encode("utf-8")
 
 
+def _detections_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
+    header_buffer = io.StringIO()
+    csv.writer(header_buffer).writerow(
+        ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+    )
+    yield header_buffer.getvalue().encode("utf-8")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(
+                RunItem.full_name,
+                DetectionEvidence.repo_id,
+                DetectionEvidence.agent,
+                DetectionEvidence.channel,
+                DetectionEvidence.evidence,
+                DetectionEvidence.pack_version,
+            )
+            .join(RunItem, RunItem.repo_id == DetectionEvidence.repo_id)
+            .where(DetectionEvidence.run_id == run_id, RunItem.run_id == run_id)
+            .order_by(DetectionEvidence.repo_id, DetectionEvidence.agent, DetectionEvidence.channel)
+        ).all()
+    for row in rows:
+        buffer = io.StringIO()
+        csv.writer(buffer).writerow(
+            [
+                _csv_cell(row.full_name),
+                _csv_cell(row.repo_id),
+                _csv_cell(row.agent),
+                _csv_cell(row.channel),
+                _csv_cell(json.dumps(row.evidence, sort_keys=True)),
+                _csv_cell(row.pack_version),
+            ]
+        )
+        yield buffer.getvalue().encode("utf-8")
+
+
 def export_bundle(
     engine: Engine, run_id: int, *, format: str, runs_root: str = "runs"
 ) -> tuple[Iterator[bytes], str]:
@@ -179,6 +214,10 @@ def export_bundle(
         raise ValueError("format", "format must be one of: json, csv")
     run_row = _row_for_run(engine, run_id)
     path = bundle_file(runs_root, run_row["filter_hash"], run_id, format)
+    if format == "detections":
+        if path.is_file():
+            return _file_chunks(path), _MEDIA_TYPES[format]
+        return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
     if path.is_file():
         return _file_chunks(path), _MEDIA_TYPES[format]
     if format == "json":

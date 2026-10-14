@@ -958,13 +958,13 @@ def create_app(
 
     @application.get("/runs/{run_id}/export")
     def export_run_route(run_id: int, format: str = "json"):
-        if format not in ("json", "csv"):
+        if format not in ("json", "csv", "detections"):
             return JSONResponse(
                 status_code=400,
                 content={
                     "error": "invalid_param",
                     "param": "format",
-                    "hint": "format must be one of: json, csv",
+                    "hint": "format must be one of: json, csv, detections",
                 },
             )
         try:
