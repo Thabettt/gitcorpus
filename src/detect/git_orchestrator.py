@@ -29,7 +29,7 @@ from detect.orchestrator import (
     _summary,
 )
 from detect.packs import Pack
-from enrich.cloner import LOW_DISK_THRESHOLD_MB, free_disk_mb
+from enrich.cloner import LOW_DISK_THRESHOLD_MB, MARKER_NAME, free_disk_mb
 from lib import cancellation, progress
 from lib.cancellation import RunCancelled
 from serve.executor import RunPayload, RunPayloadItem
@@ -90,8 +90,10 @@ def run_git_detection(
     def scan_repo(candidate: Mapping) -> _RepoScan:
         full_name = str(candidate["full_name"])
         dest = run_dir / full_name.replace("/", "__")
-        shutil.rmtree(dest, ignore_errors=True)
-        clone_one(full_name, dest)
+        if not (cfg.keep and (dest / MARKER_NAME).exists()):
+            shutil.rmtree(dest, ignore_errors=True)
+            clone_one(full_name, dest)
+            (dest / MARKER_NAME).write_text("", encoding="utf-8")
         repo = make_repo(dest)
         results: dict[str, ChannelResult] = {}
         history_stats: Mapping[str, object] = {}

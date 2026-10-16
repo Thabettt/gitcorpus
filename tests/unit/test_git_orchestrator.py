@@ -11,6 +11,7 @@ from detect.git_orchestrator import GitScanConfig, run_git_detection
 from detect.gitio import GitError, GitRepo
 from detect.orchestrator import DetectOptions
 from detect.packs import Pack, Pattern, freeze_pack
+from enrich.cloner import MARKER_NAME
 from lib import cancellation
 from lib.cancellation import RunCancelled
 from serve.executor import create_run
@@ -166,6 +167,52 @@ def test_run_git_detection_keep_retains_scan_dir(clean_db, tmp_path, monkeypatch
         repo_factory=lambda dest: FakeRepo(happy_handler),
     )
     assert (tmp_path / "clones" / f"detect-{detect_run}").exists()
+
+
+def test_run_git_detection_keep_reuses_marked_clones_on_rerun(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    clones: list[str] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        clones.append(full_name)
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    config = GitScanConfig(depth=100, keep=True, scan_root=str(tmp_path / "clones"), workers=1)
+    spec = make_spec(source_id, frozenset({"file"}))
+    run_git_detection(
+        engine,
+        detect_run,
+        spec,
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    run_dir = tmp_path / "clones" / f"detect-{detect_run}"
+    assert sorted(clones) == ["octo/one", "octo/two"]
+    assert (run_dir / "octo__one" / MARKER_NAME).exists()
+    assert (run_dir / "octo__two" / MARKER_NAME).exists()
+
+    clones.clear()
+    run_git_detection(
+        engine,
+        detect_run,
+        spec,
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert clones == []
 
 
 def test_run_git_detection_refuses_on_low_disk(clean_db, tmp_path, monkeypatch):

@@ -55,7 +55,7 @@ To detect coding-agent traces across 17,757 repositories there were exactly thre
 
 **What it can't get.** Labels and comment threads (API-only; together they produced **one** evidence row in the entire API run) and squash-merged branch names (the 0.5% above). Both are stated in the rollup notes and window labels rather than silently corrected, consistent with `docs/detection-tiers.md`.
 
-**Politeness and failure handling.** Git isn't rate-limited, but the pace stays civil (16–32 parallel clones), reuses the cloner's timeouts, markers and retry conventions, and treats a failed clone as one `unavailable` repo rather than an aborted run. Scan-and-delete keeps disk bounded; `keep: true` allows offline re-scans with future packs — something the API route can never offer.
+**Politeness and failure handling.** Git isn't rate-limited, but the pace stays civil (16–32 parallel clones), reuses the cloner's timeouts, markers and retry conventions, and treats a failed clone as one `unavailable` repo rather than an aborted run. Scan-and-delete keeps disk bounded; `keep: true` allows interrupted runs to resume offline without re-cloning — something the API route can never offer.
 
 ## Head-to-head (the numbers side by side)
 

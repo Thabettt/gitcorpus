@@ -87,7 +87,7 @@ def make_client(engine):
     )
 
 
-def seed_detect_run(engine, source_id: int) -> int:
+def seed_detect_run(engine, source_id: int, spec_override: dict | None = None) -> int:
     spec = {
         "version": 1,
         "kind": "detect",
@@ -98,6 +98,8 @@ def seed_detect_run(engine, source_id: int) -> int:
         "limit": None,
         "windows": {"commits": 100, "prs": 100, "issues": 100},
     }
+    if spec_override:
+        spec.update(spec_override)
     summary = {
         "repos_scanned": 1,
         "repos_with_signal": 1,
@@ -292,6 +294,21 @@ def test_detection_summary_cards_are_readable(clean):
     assert "What the windowed commit ratio means" in response.text
     assert "conservative lower bound" in response.text
     assert "source api" in response.text
+
+
+def test_git_detection_detail_reports_clone_depth(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(
+        clean,
+        source,
+        spec_override={"source": "git", "clone": {"depth": 250, "keep": False}},
+    )
+    client = make_client(clean)
+    response = client.get(f"/detections/{detect_id}")
+    assert response.status_code == 200
+    assert "250 commits" in response.text
+    assert "Depth: 250 commits · 250 PRs" in response.text
 
 
 def test_detections_use_their_own_numbering(clean):

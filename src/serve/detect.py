@@ -282,6 +282,11 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
         )
     spec = row["filter_spec"] or {}
     result_summary = row["result_summary"] or {}
+    windows = spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100}
+    clone = spec.get("clone") or {}
+    depth = clone.get("depth")
+    if spec.get("source") == "git" and isinstance(depth, int) and not isinstance(depth, bool):
+        windows = {**windows, "commits": depth, "prs": depth}
     return templates.TemplateResponse(
         request,
         "detect_detail.html",
@@ -293,7 +298,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "summary": result_summary,
                 "first_signal_label": _first_signal_label(result_summary.get("first_signal_at")),
                 "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
-                "windows": spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100},
+                "windows": windows,
                 "repos": repos,
                 "filter_agents": sorted({agent for repo in repos for agent in repo["agents"]}),
                 "filter_channels": sorted(
