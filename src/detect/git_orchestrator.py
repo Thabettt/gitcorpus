@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import contextvars
 import json
+import os
 import shutil
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from detect.attribution import dedupe_hits
 from detect.channels import ChannelResult
-from detect.gitio import GitRepo, clone_lean
+from detect.gitio import GitRepo, clone_lean, retry_call
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
@@ -33,7 +36,7 @@ from enrich.cloner import LOW_DISK_THRESHOLD_MB, MARKER_NAME, free_disk_mb
 from lib import cancellation, progress
 from lib.cancellation import RunCancelled
 from serve.executor import RunPayload, RunPayloadItem
-from store.models import DetectionEvidence
+from store.models import DetectionEvidence, RunItem
 
 LOCAL_CHANNELS = (
     "file",
@@ -45,7 +48,7 @@ LOCAL_CHANNELS = (
 )
 API_ONLY_CHANNELS = ("label", "issue")
 _HISTORY_KEYS = ("author", "commit_trailer", "bot")
-_CANCEL_POLL_SECONDS = 1.0
+_CANCEL_POLL_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,18 @@ class GitScanConfig:
     scan_root: str = "clones"
     timeout: float | None = None
     workers: int = 16
+    attempts: int = 4
+    retry_delay: float = 1.0
+    walk_workers: int = 8
+
+
+def _remove_tree(path: Path) -> None:
+    for delay in (0.0, 0.2, 1.0):
+        if delay:
+            time.sleep(delay)
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return
 
 
 def run_git_detection(
@@ -68,12 +83,7 @@ def run_git_detection(
     repo_factory: Callable[[Path], GitRepo] | None = None,
 ) -> RunPayload:
     cfg = config or GitScanConfig()
-    free = free_disk_mb(cfg.scan_root)
-    if free < LOW_DISK_THRESHOLD_MB:
-        raise RuntimeError(
-            f"low disk: {free:.0f} MB free under {cfg.scan_root!r};"
-            f" reserve {LOW_DISK_THRESHOLD_MB:.0f} MB before a local scan"
-        )
+    scan_root = Path(os.path.abspath(cfg.scan_root))
     clone_one = clone_fn or (
         lambda full_name, dest: clone_lean(full_name, dest, depth=cfg.depth, timeout=cfg.timeout)
     )
@@ -82,18 +92,24 @@ def run_git_detection(
     skipped = sorted(channel for channel in spec.channels if channel not in LOCAL_CHANNELS)
     candidates = _candidates(engine, spec.source_run_id, spec.limit)
     total = len(candidates)
-    run_dir = Path(cfg.scan_root) / f"detect-{run_id}"
+    run_dir = scan_root / f"detect-{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
     scans: list[_RepoScan] = []
     failures: list[str] = []
+    warnings: list[str] = []
+    stopped_for_disk = False
 
     def scan_repo(candidate: Mapping) -> _RepoScan:
         full_name = str(candidate["full_name"])
         dest = run_dir / full_name.replace("/", "__")
         if not (cfg.keep and (dest / MARKER_NAME).exists()):
-            shutil.rmtree(dest, ignore_errors=True)
-            clone_one(full_name, dest)
-            (dest / MARKER_NAME).write_text("", encoding="utf-8")
+
+            def clone_attempt() -> None:
+                shutil.rmtree(dest, ignore_errors=True)
+                clone_one(full_name, dest)
+                (dest / MARKER_NAME).write_text("", encoding="utf-8")
+
+            retry_call(clone_attempt, attempts=cfg.attempts, base_delay=cfg.retry_delay)
         repo = make_repo(dest)
         results: dict[str, ChannelResult] = {}
         history_stats: Mapping[str, object] = {}
@@ -107,7 +123,15 @@ def run_git_detection(
             history_stats = history["author"].stats
         pr_result: ChannelResult | None = None
         if "pr_metadata" in active:
-            pr_result = detect_pr_commits_local(repo, pack, spec.agents, depth=cfg.depth)
+            pr_result = detect_pr_commits_local(
+                repo,
+                pack,
+                spec.agents,
+                depth=cfg.depth,
+                attempts=cfg.attempts,
+                retry_delay=cfg.retry_delay,
+                walk_workers=cfg.walk_workers,
+            )
             results["pr_metadata"] = pr_result
         if "branch" in active:
             results["branch"] = detect_branch_local(repo, pack, spec.agents, limit=cfg.depth)
@@ -134,6 +158,16 @@ def run_git_detection(
             while True:
                 while not exhausted and len(in_flight) < max_workers:
                     cancellation.check()
+                    free = free_disk_mb(scan_root)
+                    if free < LOW_DISK_THRESHOLD_MB:
+                        stopped_for_disk = True
+                        exhausted = True
+                        warnings.append(
+                            f"low disk: only {free:.0f} MB free under {str(scan_root)!r}"
+                            f" (reserve {LOW_DISK_THRESHOLD_MB:.0f} MB); stopped scheduling"
+                            f" after {done} of {total} repos"
+                        )
+                        break
                     candidate = next(pending, None)
                     if candidate is None:
                         exhausted = True
@@ -172,11 +206,29 @@ def run_git_detection(
                     }
                     for hit in scan.hits
                 ]
-                if rows:
-                    with engine.begin() as connection:
+                with engine.begin() as connection:
+                    if rows:
                         connection.execute(insert(DetectionEvidence), rows)
+                    connection.execute(
+                        pg_insert(RunItem)
+                        .values(
+                            run_id=run_id,
+                            repo_id=scan.repo_id,
+                            full_name=scan.full_name,
+                            stargazers=scan.stargazers,
+                            detection=scan.document,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["run_id", "repo_id"],
+                            set_={
+                                "full_name": scan.full_name,
+                                "stargazers": scan.stargazers,
+                                "detection": scan.document,
+                            },
+                        )
+                    )
                 if not cfg.keep:
-                    shutil.rmtree(run_dir / scan.full_name.replace("/", "__"), ignore_errors=True)
+                    _remove_tree(run_dir / scan.full_name.replace("/", "__"))
                 done += 1
                 progress.report("detecting", done, total)
         except RunCancelled:
@@ -185,13 +237,19 @@ def run_git_detection(
         finally:
             pool.shutdown(wait=not cancelled, cancel_futures=True)
     finally:
-        if not cfg.keep:
-            shutil.rmtree(run_dir, ignore_errors=True)
+        # On a stop, skip the sweep so the status flips immediately; the
+        # leftovers are reclaimed by the console's flush action or the resume.
+        if not cfg.keep and not cancelled:
+            _remove_tree(run_dir)
 
-    partial = bool(failures) or any(
-        result.status in ("partial", "unavailable")
-        for scan in scans
-        for result in scan.results.values()
+    partial = (
+        stopped_for_disk
+        or bool(failures)
+        or any(
+            result.status in ("partial", "unavailable")
+            for scan in scans
+            for result in scan.results.values()
+        )
     )
     items = [
         RunPayloadItem(
@@ -217,7 +275,7 @@ def run_git_detection(
     summary = _summary(scans, spec, pack)
     summary["source"] = "git"
     summary["skipped_channels"] = skipped
-    warnings = list(failures)
+    warnings.extend(failures)
     if skipped:
         warnings.append(f"local scan skipped API-only channels: {', '.join(skipped)}")
     return RunPayload(

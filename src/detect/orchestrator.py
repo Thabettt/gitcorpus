@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 import httpx
 from sqlalchemy import insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from detect.attribution import Hit, adoption_level, dedupe_hits
@@ -25,7 +26,7 @@ _HISTORY_KEYS = ("author", "commit_trailer", "bot")
 _PR_KEYS = ("branch", "label", "pr_metadata")
 _BOT_CHANNEL = "bot"
 _FAILURE_NOTE_LIMIT = 300
-_CANCEL_POLL_SECONDS = 1.0
+_CANCEL_POLL_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -352,9 +353,27 @@ def run_detection(
                     }
                     for hit in scan.hits
                 ]
-                if rows:
-                    with deps.engine.begin() as connection:
+                with deps.engine.begin() as connection:
+                    if rows:
                         connection.execute(insert(DetectionEvidence), rows)
+                    connection.execute(
+                        pg_insert(RunItem)
+                        .values(
+                            run_id=run_id,
+                            repo_id=scan.repo_id,
+                            full_name=scan.full_name,
+                            stargazers=scan.stargazers,
+                            detection=scan.document,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["run_id", "repo_id"],
+                            set_={
+                                "full_name": scan.full_name,
+                                "stargazers": scan.stargazers,
+                                "detection": scan.document,
+                            },
+                        )
+                    )
                 done += 1
                 progress.report("detecting", done, total)
         except RunCancelled:

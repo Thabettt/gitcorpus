@@ -36,10 +36,15 @@ def test_settings_env_names_are_stable():
     assert SETTINGS_ENV["adaptive"] == "GITCORPUS_ADAPTIVE"
     assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCORPUS_MAX_CONCURRENT"
     assert SETTINGS_ENV["discovery_concurrency"] == "GITCORPUS_DISCOVERY_CONCURRENCY"
+    assert SETTINGS_ENV["detect_concurrency"] == "GITCORPUS_DETECT_CONCURRENCY"
 
 
 def test_discovery_concurrency_defaults_to_32():
     assert RunSettings().discovery_concurrency == 32
+
+
+def test_detect_concurrency_defaults_to_32():
+    assert RunSettings().detect_concurrency == 32
 
 
 def test_graphql_batch_size_defaults_to_29():
@@ -70,3 +75,14 @@ def test_env_discovery_concurrency_is_clamped_to_the_form_bound(monkeypatch, raw
 def test_env_discovery_concurrency_within_bounds_is_kept(monkeypatch):
     monkeypatch.setenv("GITCORPUS_DISCOVERY_CONCURRENCY", "48")
     assert load_run_settings(_EmptyEngine()).discovery_concurrency == 48
+
+
+@pytest.mark.parametrize("raw", ["65", "999"])
+def test_env_detect_concurrency_is_clamped_to_the_form_bound(monkeypatch, raw):
+    monkeypatch.setenv("GITCORPUS_DETECT_CONCURRENCY", raw)
+    assert load_run_settings(_EmptyEngine()).detect_concurrency == 64
+
+
+def test_env_detect_concurrency_within_bounds_is_kept(monkeypatch):
+    monkeypatch.setenv("GITCORPUS_DETECT_CONCURRENCY", "48")
+    assert load_run_settings(_EmptyEngine()).detect_concurrency == 48

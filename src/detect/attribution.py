@@ -93,7 +93,8 @@ def clear_matcher_cache() -> None:
 
 def _cache_key(pack: Pack, agents: frozenset[str] | None) -> str:
     suffix = "*" if agents is None else ",".join(sorted(agents))
-    return f"{pack.version}|{suffix}"
+    content = (pack.files, pack.authors, pack.branches, pack.labels, pack.bots)
+    return f"{pack.version}|{hash(content)}|{suffix}"
 
 
 def matchers_for(pack: Pack, agents: frozenset[str] | None = None) -> dict[str, ChannelRegex]:

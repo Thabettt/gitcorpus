@@ -68,7 +68,7 @@ def seed_pack(engine) -> None:
         )
 
 
-def make_client(engine, *, detect_runner=None):
+def make_client(engine, *, detect_runner=None, clone_root="clones"):
     def runner_factory(_engine):
         def runner(_run_id, _spec):
             raise AssertionError("find runner must not run in detect tests")
@@ -84,11 +84,93 @@ def make_client(engine, *, detect_runner=None):
             runner_factory=runner_factory,
             detect_runner_factory=detect_factory,
             runs_root="runs",
-            clone_root="clones",
+            clone_root=clone_root,
             redis_ping=lambda: True,
             token_present=lambda: True,
         )
     )
+
+
+def seed_detect_run(engine, status="running") -> int:
+    with engine.begin() as connection:
+        return int(
+            connection.execute(
+                text(
+                    "INSERT INTO runs (filter_hash, filter_spec, api_version, kind, status)"
+                    " VALUES ('detect-hash', '{\"kind\": \"detect\"}'::jsonb,"
+                    " '2022-11-28', 'detect', :status) RETURNING id"
+                ),
+                {"status": status},
+            ).scalar_one()
+        )
+
+
+def test_cancel_detect_run_redirects_to_its_detection_page(clean):
+    client = make_client(clean)
+    client.get("/detections")
+    run_id = seed_detect_run(clean, status="running")
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        data={"csrf": csrf_token(client)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/detections/{run_id}"
+
+
+def test_cancel_find_run_still_redirects_to_the_run_page(clean):
+    client = make_client(clean)
+    client.get("/detections")
+    source = seed_find_run(clean, status="running")
+    response = client.post(
+        f"/runs/{source}/cancel",
+        data={"csrf": csrf_token(client)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{source}"
+
+
+def test_detect_status_partial_shows_stopping_after_cancel_request(clean):
+    client = make_client(clean)
+    client.get("/detections")
+    run_id = seed_detect_run(clean, status="running")
+    before = client.get(f"/partials/detections/{run_id}/status")
+    assert "Stop detection" in before.text
+    assert "Stopping" not in before.text
+    client.post(f"/runs/{run_id}/cancel", data={"csrf": csrf_token(client)})
+    after = client.get(f"/partials/detections/{run_id}/status")
+    assert "Stopping" in after.text
+    assert "Stop detection" not in after.text
+
+
+def test_detections_list_has_a_flush_repos_button(clean):
+    client = make_client(clean)
+    body = client.get("/detections").text
+    assert 'action="/detections/flush"' in body
+    assert "Flush repos" in body
+
+
+def test_flush_repos_removes_leftover_detect_clones_but_keeps_active_ones(clean, tmp_path):
+    clone_root = tmp_path / "clones"
+    (clone_root / "detect-41" / "octo__one").mkdir(parents=True)
+    (clone_root / "detect-41" / "octo__one" / ".git").mkdir()
+    (clone_root / "detect-41" / "detect-41").mkdir()
+    active = seed_detect_run(clean, status="running")
+    (clone_root / f"detect-{active}").mkdir()
+    (clone_root / "find-hash").mkdir()
+    client = make_client(clean, clone_root=str(clone_root))
+    client.get("/detections")
+    response = client.post(
+        "/detections/flush",
+        data={"csrf": csrf_token(client)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/detections"
+    assert not (clone_root / "detect-41").exists()
+    assert (clone_root / f"detect-{active}").exists()
+    assert (clone_root / "find-hash").exists()
 
 
 def csrf_token(client: TestClient) -> str:

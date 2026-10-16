@@ -252,6 +252,38 @@ def test_run_detection_writes_evidence_and_never_searches(clean_db):
     assert all("search(" not in query for query in queries)
 
 
+def test_run_detection_checkpoints_run_items_per_repo(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    seen: list[str] = []
+    deps = make_deps(engine, make_handler(seen, []))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, agents=["Claude Code", "Codex"])
+    run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+
+    with engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT repo_id, full_name, detection FROM run_items"
+                    " WHERE run_id = :run ORDER BY repo_id"
+                ),
+                {"run": run_id},
+            )
+            .mappings()
+            .all()
+        )
+    assert [row["repo_id"] for row in rows] == [1, 2]
+    assert rows[0]["full_name"] == "octo/one"
+    assert rows[0]["detection"]["agents"] == ["Claude Code", "Codex"]
+
+
 def test_run_detection_never_persists_emails(clean_db):
     engine = clean_db()
     source_id = seed_source_run(engine)

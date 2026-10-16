@@ -5,6 +5,10 @@
   <div class="panel-head">
     <h1>Detections</h1>
     <a id="new-detection" class="button primary" href="/detections/new">New detection</a>
+    <form class="inline-form" method="post" action="/detections/flush" onsubmit="return confirm('Delete all leftover cloned repos from detection scans? Active detections are left untouched.');">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button id="flush-repos" class="button ghost" type="submit">Flush repos</button>
+    </form>
     <p class="muted">Detection runs scan a frozen search or an imported repo list through GitHub’s API and store per-repo agent evidence. Every run gets its own detection number, independent of search runs.</p>
   </div>
   <div class="table-wrap">

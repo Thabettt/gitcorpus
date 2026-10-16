@@ -55,6 +55,12 @@ def test_env_overrides_discovery_concurrency(clean, monkeypatch):
     assert load_run_settings(clean).discovery_concurrency == 8
 
 
+def test_env_overrides_detect_concurrency(clean, monkeypatch):
+    update_run_settings(clean, {"detect_concurrency": 8})
+    monkeypatch.setenv("GITCORPUS_DETECT_CONCURRENCY", "64")
+    assert load_run_settings(clean).detect_concurrency == 64
+
+
 def test_invalid_env_value_falls_back_to_the_row(clean, monkeypatch):
     update_run_settings(clean, {"max_shards": 25})
     monkeypatch.setenv("GITCORPUS_MAX_SHARDS", "not-a-number")

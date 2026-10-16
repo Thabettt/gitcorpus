@@ -1,6 +1,6 @@
 <div id="detect-status" aria-live="polite" data-status="{{ run.status }}"{% if run.polling %} hx-get="/partials/detections/{{ run.id }}/status" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
   <div class="run-status-line">
-    <span class="pill {{ run.status }}" data-status="{{ run.status }}">{{ status_label(run.status) }}</span>
+    <span class="pill {{ run.status }}" data-status="{{ run.status }}">{% if cancelling and run.status in ('queued', 'running') %}Stopping…{% else %}{{ status_label(run.status) }}{% endif %}</span>
     {% if run.progress %}
     <span class="muted">{{ run.progress.label }} — {{ run.progress.done }}{% if run.progress.total %} / {{ run.progress.total }}{% endif %}</span>
     {% if run.progress.percent is not none %}
@@ -14,10 +14,14 @@
   <p class="muted">{{ result_summary.repos_scanned }} repos scanned · {{ result_summary.repos_with_signal }} with signals{% if result_summary.repos_unavailable %} · {{ result_summary.repos_unavailable }} unavailable{% endif %}</p>
   {% endif %}
   {% if run.status in ('queued', 'running') %}
+  {% if cancelling %}
+  <p class="muted">Stopping — finishing the current repos…</p>
+  {% else %}
   <form class="inline-form" method="post" action="/runs/{{ run.id }}/cancel" onsubmit="return confirm('Stop this detection? You can resume it later.');">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <button class="button danger" type="submit">Stop detection</button>
   </form>
+  {% endif %}
   {% elif run.status in ('failed', 'partial', 'cancelled') %}
   <form class="inline-form" method="post" action="/runs/{{ run.id }}/resume">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">

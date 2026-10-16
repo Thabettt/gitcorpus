@@ -99,6 +99,7 @@ def valid_form(**overrides: str) -> dict[str, str]:
         "adaptive": "on",
         "limiter_max_concurrent": "4",
         "discovery_concurrency": "32",
+        "detect_concurrency": "32",
     }
     data.update(overrides)
     return data
@@ -111,8 +112,10 @@ def test_settings_page_renders_current_values(clean, tmp_path, monkeypatch):
     assert "max_hydrate" in response.text
     assert "limiter_max_concurrent" in response.text
     assert "discovery_concurrency" in response.text
+    assert "detect_concurrency" in response.text
     assert 'name="adaptive"' in response.text
     assert "Discovery workers" in response.text
+    assert "Detection workers" in response.text
     assert "Run limits for new searches" in response.text
     assert "Part of System" in response.text
     assert "Search breadth (slices)" in response.text
@@ -134,7 +137,7 @@ def test_post_saves_values_and_redirects(clean, tmp_path, monkeypatch):
     token = csrf_token(client)
     response = client.post(
         "/settings",
-        data=valid_form(discovery_concurrency="48"),
+        data=valid_form(discovery_concurrency="48", detect_concurrency="64"),
         headers={"x-csrf-token": token},
         follow_redirects=False,
     )
@@ -146,6 +149,7 @@ def test_post_saves_values_and_redirects(clean, tmp_path, monkeypatch):
     assert saved.adaptive is True
     assert saved.limiter_max_concurrent == 4
     assert saved.discovery_concurrency == 48
+    assert saved.detect_concurrency == 64
 
 
 def test_unchecked_adaptive_checkbox_saves_false(clean, tmp_path, monkeypatch):
@@ -211,6 +215,20 @@ def test_discovery_concurrency_out_of_range_is_a_local_400(clean, tmp_path, monk
     assert "discovery_concurrency" in response.text
 
 
+@pytest.mark.parametrize("value", ["0", "65"])
+def test_detect_concurrency_out_of_range_is_a_local_400(clean, tmp_path, monkeypatch, value):
+    client = healthy_client(clean, tmp_path, monkeypatch)
+    token = csrf_token(client)
+    response = client.post(
+        "/settings",
+        data=valid_form(detect_concurrency=value),
+        headers={"x-csrf-token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    assert "detect_concurrency" in response.text
+
+
 def test_missing_csrf_is_403(clean, tmp_path, monkeypatch):
     client = healthy_client(clean, tmp_path, monkeypatch)
     response = client.post("/settings", data={"max_shards": "5"}, follow_redirects=False)
@@ -231,6 +249,7 @@ def test_save_writes_an_audit_row(clean, tmp_path, monkeypatch):
             graphql_batch_size="20",
             limiter_max_concurrent="10",
             discovery_concurrency="32",
+            detect_concurrency="32",
         ),
         headers={"x-csrf-token": token},
         follow_redirects=False,
@@ -329,6 +348,7 @@ def test_set_to_corpus_build_limits_saves_the_profile(clean, tmp_path, monkeypat
         adaptive=False,
         limiter_max_concurrent=32,
         discovery_concurrency=32,
+        detect_concurrency=64,
     )
     with clean.connect() as connection:
         params = connection.scalar(

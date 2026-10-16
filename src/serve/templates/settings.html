@@ -124,6 +124,16 @@
             Allowed: {{ ranges["discovery_concurrency"] }}.</span>
           {% if "discovery_concurrency" in pinned %}<span class="badge">set by environment</span>{% endif %}
         </label>
+        <label class="field">
+          <span class="field-label">Detection workers</span>
+          <input class="field-input" type="number" name="detect_concurrency"
+                 value="{{ values["detect_concurrency"] }}"
+                 {% if "detect_concurrency" in pinned %}readonly{% endif %}>
+          <span class="muted">How many repos a detection run scans at once — git runs clone this many
+            in parallel. Detection only; searches are unaffected.
+            Allowed: {{ ranges["detect_concurrency"] }}.</span>
+          {% if "detect_concurrency" in pinned %}<span class="badge">set by environment</span>{% endif %}
+        </label>
       </div>
     </section>
     <div class="form-actions">
@@ -133,8 +143,9 @@
     </div>
     <p class="muted" id="limits-corpus-note">Set to corpus-build limits picks a coherent overnight
       profile — 1,000 slices, 100,000 repos per stage, a 24-hour deadline, batching on, adaptive
-      pacing off, 29 repos per call, 32 simultaneous requests — not the largest value of every
-      field; environment-pinned fields are left unchanged. The math behind it lives in <code>design/run-limits.md</code>.</p>
+      pacing off, 29 repos per call, 32 simultaneous requests, 64 detection workers — not the
+      largest value of every field; environment-pinned fields are left unchanged. The math behind
+      it lives in <code>design/run-limits.md</code>.</p>
   </form>
 </section>
 {% endblock %}

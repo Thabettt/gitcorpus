@@ -319,6 +319,10 @@ class AppSettings(Base):
             "discovery_concurrency BETWEEN 1 AND 64",
             name="app_settings_discovery_concurrency",
         ),
+        CheckConstraint(
+            "detect_concurrency BETWEEN 1 AND 64",
+            name="app_settings_detect_concurrency",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
@@ -340,6 +344,9 @@ class AppSettings(Base):
         Integer, nullable=False, server_default=text("10")
     )
     discovery_concurrency: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("32")
+    )
+    detect_concurrency: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("32")
     )
     updated_at: Mapped[datetime] = mapped_column(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from detect.gitio import GitError, GitRepo
@@ -36,8 +37,12 @@ class FakeRepo(GitRepo):
     def __init__(self, handler):
         super().__init__(Path())
         self._handler = handler
+        self.calls: list[tuple[str, ...]] = []
+        self.stdins: list[bytes | None] = []
 
-    def git(self, *args: str) -> str:
+    def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+        self.calls.append(args)
+        self.stdins.append(stdin.read() if stdin is not None else None)
         result = self._handler(args)
         if result is None:
             raise GitError(list(args), 128, "fake")
@@ -53,18 +58,30 @@ def _tree(handler_args_value: str):
     return handler
 
 
+_FILE_OIDS = {
+    "CLAUDE.md": "a" * 40,
+    ".cursor/rules/x.md": "b" * 40,
+    "AGENTS.md": "c" * 40,
+    "CONVENTIONS.md": "d" * 40,
+    ".gitignore": "e" * 40,
+}
+
+
 def test_detect_files_local_matches_tree_gitignore_and_probes_content():
-    files = ["CLAUDE.md", ".cursor/rules/x.md", "AGENTS.md", "CONVENTIONS.md"]
+    files = ["CLAUDE.md", ".cursor/rules/x.md", "AGENTS.md", "CONVENTIONS.md", ".gitignore"]
     blobs = {".gitignore": ".cursor/\n# comment\n", "CLAUDE.md": "# guidance\n"}
 
     def handler(args):
         if args[0] == "ls-tree":
-            return "".join(f"{path}\n" for path in files)
+            return "".join(f"100644 blob {_FILE_OIDS[path]}\t{path}\n" for path in files)
         if args[0] == "show":
             return blobs.get(args[1][5:])
+        if "fetch" in args:
+            return ""
         return None
 
-    result = detect_files_local(FakeRepo(handler), PACK)
+    repo = FakeRepo(handler)
+    result = detect_files_local(repo, PACK)
     assert result.status == "ok"
     by_key = {(h.agent, h.evidence["path"]): h for h in result.hits}
     assert ("Claude Code", "CLAUDE.md") in by_key
@@ -75,6 +92,29 @@ def test_detect_files_local_matches_tree_gitignore_and_probes_content():
     assert by_key[("Cursor", ".cursor/")].evidence["source"] == "gitignore"
     assert by_key[("Claude Code", "CLAUDE.md")].evidence["size"] == len("# guidance\n")
     assert by_key[("Claude Code", "CLAUDE.md")].evidence["empty"] is False
+    batched = [stdin for stdin in repo.stdins if stdin is not None]
+    assert len(batched) == 1
+    assert set(batched[0].decode().split()) == {
+        _FILE_OIDS[".gitignore"],
+        _FILE_OIDS[".cursor/rules/x.md"],
+        _FILE_OIDS["AGENTS.md"],
+        _FILE_OIDS["CLAUDE.md"],
+    }
+
+
+def test_detect_files_local_fetch_failure_falls_back_to_lazy_reads():
+    def handler(args):
+        if args[0] == "ls-tree":
+            return f"100644 blob {'a' * 40}\tCLAUDE.md\n"
+        if args[0] == "fetch":
+            return None
+        if args[0] == "show":
+            return "# guidance\n" if args[1] == "HEAD:CLAUDE.md" else None
+        return None
+
+    result = detect_files_local(FakeRepo(handler), PACK)
+    assert result.status == "ok"
+    assert {h.evidence["path"] for h in result.hits} == {"CLAUDE.md"}
 
 
 def test_detect_files_local_reports_empty_repository():
@@ -126,17 +166,19 @@ _PR_LOG = (
 
 def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes():
     def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\n"
         if args[0] == "fetch":
             return ""
         if args[0] == "for-each-ref":
             return "refs/gc/pr/7 aaa\nrefs/gc/pr/9 bbb\n"
         if args[0] == "rev-list":
             return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[3]]
-        if args[0] == "show":
+        if args[0] == "log":
             return _PR_LOG
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100, walk_workers=2)
     assert result.status == "ok"
     assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
     assert all(h.evidence["propagated"] is True for h in result.hits)
@@ -149,6 +191,92 @@ def test_detect_pr_commits_local_without_refs_is_ok():
     result = detect_pr_commits_local(repo, PACK)
     assert result.status == "ok"
     assert result.hits == ()
+    assert result.stats["propagated_oids"] == ()
+
+
+def test_detect_pr_commits_local_retries_a_transient_fetch_failure():
+    fetches: list[int] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            fetches.append(1)
+            if len(fetches) == 1:
+                raise GitError(list(args), 128, "fatal: connection reset")
+            return ""
+        if args[0] == "for-each-ref":
+            return "refs/gc/pr/7 aaa\n"
+        if args[0] == "rev-list":
+            return "s1\n"
+        if args[0] == "log":
+            return _PR_LOG
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100, retry_delay=0.0)
+    assert result.status == "ok"
+    assert len(fetches) == 2
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
+
+
+def test_detect_pr_commits_local_reports_the_fetch_error_tail():
+    fetches: list[int] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            fetches.append(1)
+            raise GitError(
+                list(args),
+                128,
+                "remote: hangup\nfatal: unable to access 'https://github.com/o/r.git/':"
+                " Failed to connect to github.com",
+            )
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    assert result.status == "partial"
+    assert result.note == (
+        "pull refs fetch failed: fatal: unable to access 'https://github.com/o/r.git/':"
+        " Failed to connect to github.com"
+    )
+    assert result.stats["propagated_oids"] == ()
+    assert len(fetches) == 4
+
+
+def test_detect_pr_commits_local_degrades_a_fetch_timeout_to_partial():
+    fetches: list[int] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            fetches.append(1)
+            raise subprocess.TimeoutExpired(list(args), timeout=600)
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    assert result.status == "partial"
+    assert result.note.startswith("pull refs fetch failed: ")
+    assert len(fetches) == 4
+
+
+def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial():
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "for-each-ref":
+            return "refs/gc/pr/7 aaa\n"
+        if args[0] == "rev-list":
+            raise GitError(list(args), 128, "fatal: bad object aaa")
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    assert result.status == "partial"
+    assert result.note == "pull refs walk failed: fatal: bad object aaa"
     assert result.stats["propagated_oids"] == ()
 
 

@@ -921,6 +921,8 @@ def create_app(
                     )
 
             await run_in_threadpool(mark_stopped)
+        if row["kind"] == "detect":
+            return RedirectResponse(f"/detections/{run_id}", status_code=303)
         return RedirectResponse(f"/runs/{run_id}", status_code=303)
 
     @application.post("/runs/{run_id}/save-filter")
@@ -1110,6 +1112,7 @@ def create_app(
         executor_factory=executor_for,
         runner_factory=detect_runner_for,
         clone_disk_free=clone_disk_free,
+        clone_root=clone_root,
     )
 
     return application

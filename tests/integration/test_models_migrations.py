@@ -143,6 +143,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "adaptive": False,
         "limiter_max_concurrent": False,
         "discovery_concurrency": False,
+        "detect_concurrency": False,
         "updated_at": False,
     },
     "corpora": {
@@ -322,6 +323,7 @@ def test_server_defaults(migrated: Engine):
         ("audit_log", "ts"): "now()",
         ("corpora", "frozen_at"): "now()",
         ("app_settings", "discovery_concurrency"): "32",
+        ("app_settings", "detect_concurrency"): "32",
         ("app_settings", "graphql_batch_size"): "29",
         ("app_settings", "adaptive"): "false",
     }
@@ -344,6 +346,25 @@ def test_discovery_concurrency_check_constraint(migrated: Engine):
             with migrated.begin() as connection:
                 connection.execute(
                     text("UPDATE app_settings SET discovery_concurrency = :value WHERE id = 1"),
+                    {"value": value},
+                )
+
+
+def test_detect_concurrency_check_constraint(migrated: Engine):
+    with migrated.begin() as connection:
+        connection.execute(
+            text("INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        )
+    with migrated.connect() as connection:
+        transaction = connection.begin()
+        connection.execute(text("UPDATE app_settings SET detect_concurrency = 1 WHERE id = 1"))
+        connection.execute(text("UPDATE app_settings SET detect_concurrency = 64 WHERE id = 1"))
+        transaction.rollback()
+    for value in (0, 65):
+        with pytest.raises(IntegrityError):
+            with migrated.begin() as connection:
+                connection.execute(
+                    text("UPDATE app_settings SET detect_concurrency = :value WHERE id = 1"),
                     {"value": value},
                 )
 

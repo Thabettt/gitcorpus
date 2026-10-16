@@ -72,6 +72,27 @@ def test_match_files_maps_regexes_and_weights():
     assert "claude.md" not in by_path  # case-sensitive, like the replication package
 
 
+def test_matcher_cache_distinguishes_packs_with_the_same_version():
+    clear_matcher_cache()
+    cursor_only = Pack(
+        version="v1",
+        agents={"Cursor": "https://cursor.com"},
+        authors=(),
+        files=(Pattern(r"\.cursor/", "Cursor"),),
+        branches=(),
+        labels=(),
+        bots=(),
+        generic_weights={},
+        exclusions=frozenset(),
+    )
+    assert {h.agent for h in match_files(PACK, presence([".cursor/rules/x.md"]))} == {"Cursor"}
+    assert {h.agent for h in match_files(cursor_only, presence([".cursor/rules/x.md"]))} == {
+        "Cursor"
+    }
+    assert {h.agent for h in match_files(PACK, presence(["CLAUDE.md"]))} == {"Claude Code"}
+    assert match_files(cursor_only, presence(["CLAUDE.md"])) == []
+
+
 def test_selection_scopes_matching():
     clear_matcher_cache()
     hits = match_files(

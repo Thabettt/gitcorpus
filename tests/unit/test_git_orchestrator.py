@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from detect.git_orchestrator import GitScanConfig, run_git_detection
+from detect.channels import ChannelResult
+from detect.git_orchestrator import GitScanConfig, _remove_tree, run_git_detection
 from detect.gitio import GitError, GitRepo
 from detect.orchestrator import DetectOptions
 from detect.packs import Pack, Pattern, freeze_pack
@@ -23,8 +25,10 @@ class FakeRepo(GitRepo):
     def __init__(self, handler):
         super().__init__(Path())
         self._handler = handler
+        self.calls: list[tuple[str, ...]] = []
 
-    def git(self, *args: str) -> str:
+    def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+        self.calls.append(args)
         result = self._handler(args)
         if result is None:
             raise GitError(list(args), 128, "fake")
@@ -33,11 +37,13 @@ class FakeRepo(GitRepo):
 
 def happy_handler(args):
     if args[0] == "ls-tree":
-        return "CLAUDE.md\n"
+        return f"100644 blob {'a' * 40}\tCLAUDE.md\n"
     if args[0] == "show":
         return "# guidance\n"
     if args[0] == "log":
         return _LOG
+    if args[0] == "fetch":
+        return ""
     return None
 
 
@@ -215,7 +221,7 @@ def test_run_git_detection_keep_reuses_marked_clones_on_rerun(clean_db, tmp_path
     assert clones == []
 
 
-def test_run_git_detection_refuses_on_low_disk(clean_db, tmp_path, monkeypatch):
+def test_run_git_detection_resolves_the_default_relative_scan_root(clean_db, tmp_path, monkeypatch):
     engine = clean_db()
     source_id = seed_source(engine)
     detect_run = create_run(
@@ -225,15 +231,314 @@ def test_run_git_detection_refuses_on_low_disk(clean_db, tmp_path, monkeypatch):
         kind="detect",
         source_run_id=source_id,
     )
+    dests: list[Path] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        dests.append(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    monkeypatch.chdir(tmp_path)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert dests
+    assert all(dest.is_absolute() for dest in dests)
+    assert dests[0] == tmp_path / "clones" / f"detect-{detect_run}" / "octo__one"
+    assert payload.result_summary["repos_scanned"] == 2
+    assert not (tmp_path / "clones" / f"detect-{detect_run}").exists()
+
+
+def test_run_git_detection_retries_a_failed_clone(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    attempts: list[str] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        attempts.append(full_name)
+        if full_name == "octo/two" and attempts.count("octo/two") == 1:
+            raise GitError(["git", "clone"], 128, "fatal: connection reset")
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1, retry_delay=0.0),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert attempts.count("octo/two") == 2
+    assert payload.result_summary["repos_unavailable"] == 0
+    assert payload.incomplete is False
+
+
+def test_run_git_detection_stops_before_scanning_when_the_disk_reserve_is_hit(
+    clean_db, tmp_path, monkeypatch
+):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    clones: list[str] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        clones.append(full_name)
+
     monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10.0)
-    with pytest.raises(RuntimeError, match="low disk"):
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert clones == []
+    assert payload.items == []
+    assert payload.incomplete is True
+    assert payload.result_summary["repos_scanned"] == 0
+    assert any("low disk" in warning for warning in payload.warnings)
+
+
+def test_run_git_detection_stops_scheduling_when_disk_drops_mid_run(
+    clean_db, tmp_path, monkeypatch
+):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    readings: list[int] = []
+
+    def free(path) -> float:
+        readings.append(1)
+        return 10_000.0 if len(readings) == 1 else 10.0
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", free)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert payload.result_summary["repos_scanned"] == 1
+    assert payload.incomplete is True
+    assert any("low disk" in warning for warning in payload.warnings)
+    assert len(readings) >= 2
+
+
+def test_run_git_detection_checkpoints_run_items_per_repo(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file", "commit_trailer"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    with engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT repo_id, full_name, detection FROM run_items"
+                    " WHERE run_id = :run ORDER BY repo_id"
+                ),
+                {"run": detect_run},
+            )
+            .mappings()
+            .all()
+        )
+    assert [row["repo_id"] for row in rows] == [1, 2]
+    assert rows[0]["detection"]["agents"] == ["Claude Code"]
+
+
+def test_cancelled_git_detection_leaves_checkpointed_items(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    def repo_factory(dest: Path):
+        if dest.name == "octo__two":
+            raise RunCancelled()
+        return FakeRepo(happy_handler)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    with pytest.raises(RunCancelled):
         run_git_detection(
             engine,
             detect_run,
             make_spec(source_id, frozenset({"file"})),
             PACK,
             config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+            clone_fn=clone,
+            repo_factory=repo_factory,
         )
+    with engine.connect() as connection:
+        names = (
+            connection.execute(
+                text("SELECT full_name FROM run_items WHERE run_id = :run ORDER BY repo_id"),
+                {"run": detect_run},
+            )
+            .scalars()
+            .all()
+        )
+    assert names == ["octo/one"]
+    # Cancellation skips the final sweep so the stop lands immediately; the
+    # leftovers are reclaimed by the console's flush action.
+    assert (tmp_path / "clones" / f"detect-{detect_run}").exists()
+
+
+def test_run_git_detection_reads_the_commit_window_once_per_repo(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    log_calls: list[int] = []
+
+    def handler(args):
+        if args[0] == "log":
+            log_calls.append(1)
+        return happy_handler(args)
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"author", "branch"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(handler),
+    )
+    assert len(log_calls) == 2  # one per repo, shared by history and branch
+
+
+def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    captured: dict[str, int] = {}
+
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, walk_workers):
+        captured.update(
+            depth=depth,
+            attempts=attempts,
+            retry_delay=retry_delay,
+            walk_workers=walk_workers,
+        )
+        return ChannelResult(status="ok")
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"pr_metadata"})),
+        PACK,
+        config=GitScanConfig(
+            scan_root=str(tmp_path / "clones"),
+            workers=1,
+            attempts=2,
+            retry_delay=0.5,
+            walk_workers=3,
+        ),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5, "walk_workers": 3}
+
+
+def test_remove_tree_retries_after_a_transient_failure(tmp_path, monkeypatch):
+    target = tmp_path / "run"
+    target.mkdir()
+    (target / "pack").write_text("x", encoding="utf-8")
+    real = shutil.rmtree
+    calls: list[Path] = []
+
+    def flaky(path, *args, **kwargs):
+        calls.append(Path(path))
+        if len(calls) == 1:
+            return
+        real(path, *args, **kwargs)
+
+    monkeypatch.setattr("detect.git_orchestrator.shutil.rmtree", flaky)
+    monkeypatch.setattr("detect.git_orchestrator.time.sleep", lambda _: None)
+    _remove_tree(target)
+    assert len(calls) == 2
+    assert not target.exists()
 
 
 def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monkeypatch):
@@ -253,7 +558,7 @@ def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monke
     seen_cancel = threading.Event()
 
     class CancellableRepo(FakeRepo):
-        def git(self, *args: str) -> str:
+        def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
                 try:
@@ -306,7 +611,7 @@ def test_run_git_detection_cancel_returns_promptly_with_wedged_scans(
     started = threading.Event()
 
     class WedgedRepo(FakeRepo):
-        def git(self, *args: str) -> str:
+        def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
             started.set()
             release.wait()
             return happy_handler(args)

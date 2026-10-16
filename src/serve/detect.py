@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,7 +12,7 @@ from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
 from detect.estimate import estimate
-from detect.git_orchestrator import GitScanConfig, run_git_detection
+from detect.git_orchestrator import GitScanConfig, _remove_tree, run_git_detection
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
 from detect.packs import load_frozen
 from enrich.cloner import CloneMode, estimate_clone, free_disk_mb
@@ -53,7 +54,7 @@ def build_detect_runner(engine: Engine) -> Runner:
                     depth=spec.clone_depth,
                     keep=spec.clone_keep,
                     timeout=clone_timeout_seconds(),
-                    workers=min(settings.limiter_max_concurrent, 32),
+                    workers=settings.detect_concurrency,
                 ),
             )
         from serve.runner import build_deps
@@ -67,7 +68,7 @@ def build_detect_runner(engine: Engine) -> Runner:
                 pack,
                 config=DetectConfig(
                     deadline_seconds=float(settings.request_deadline_seconds),
-                    concurrency=min(settings.limiter_max_concurrent, 32),
+                    concurrency=min(settings.detect_concurrency, settings.limiter_max_concurrent),
                 ),
             )
         finally:
@@ -317,6 +318,7 @@ def register_detect(
     executor_factory: Callable[[], RunExecutor],
     runner_factory: Callable[[], Runner],
     clone_disk_free: Callable[[str], float] | None = None,
+    clone_root: str = "clones",
 ) -> None:
     @application.get("/detections", response_class=HTMLResponse)
     def detections_page(request: Request):
@@ -356,6 +358,31 @@ def register_detect(
                 "csrf_token": request.state.csrf_token,
             },
         )
+
+    @application.post("/detections/flush")
+    async def detections_flush(request: Request):
+        if not await validate_csrf(request):
+            return errors.csrf_error_page(request)
+        engine = engine_factory()
+
+        def flush() -> None:
+            with engine.connect() as connection:
+                active = {
+                    int(run_id)
+                    for run_id in connection.execute(
+                        select(Runs.id).where(
+                            Runs.kind == "detect", Runs.status.in_(("queued", "running"))
+                        )
+                    ).scalars()
+                }
+            for path in sorted(Path(clone_root).glob("detect-*")):
+                suffix = path.name[len("detect-") :]
+                if not suffix.isdigit() or int(suffix) in active:
+                    continue
+                _remove_tree(path)
+
+        await run_in_threadpool(flush)
+        return RedirectResponse("/detections", status_code=303)
 
     @application.get("/detections/new", response_class=HTMLResponse)
     def detect_new_page(request: Request):
@@ -588,7 +615,7 @@ def register_detect(
             repos,
             channels,
             tokens=max(1, len(load_tokens())),
-            concurrency=settings.limiter_max_concurrent,
+            concurrency=min(settings.detect_concurrency, settings.limiter_max_concurrent),
             deadline_seconds=float(settings.request_deadline_seconds),
         )
         free_mb = (
@@ -601,7 +628,7 @@ def register_detect(
             mode=CloneMode.DETECT,
             disk_free_mb=free_mb,
         )
-        workers = max(1, min(settings.limiter_max_concurrent, 32))
+        workers = max(1, settings.detect_concurrency)
         git_estimate = {
             "repos": clone_estimate.repos,
             "estimated_mb": round(clone_estimate.estimated_mb, 1),
@@ -635,6 +662,7 @@ def register_detect(
             {
                 "run": summary,
                 "result_summary": row["result_summary"] or {},
+                "cancelling": executor_factory().is_cancelled(run_id),
                 "csrf_token": request.state.csrf_token,
             },
         )

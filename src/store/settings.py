@@ -22,10 +22,12 @@ SETTINGS_ENV: Mapping[str, str] = {
     "adaptive": "GITCORPUS_ADAPTIVE",
     "limiter_max_concurrent": "GITCORPUS_MAX_CONCURRENT",
     "discovery_concurrency": "GITCORPUS_DISCOVERY_CONCURRENCY",
+    "detect_concurrency": "GITCORPUS_DETECT_CONCURRENCY",
 }
 
 _BOOL_FIELDS = frozenset({"graphql_batch", "adaptive"})
 _DISCOVERY_CONCURRENCY_MAX = 64
+_DETECT_CONCURRENCY_MAX = 64
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class RunSettings:
     adaptive: bool = False
     limiter_max_concurrent: int = 10
     discovery_concurrency: int = 32
+    detect_concurrency: int = 32
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -103,6 +106,9 @@ def load_run_settings(engine: Engine) -> RunSettings:
     clamped = min(_DISCOVERY_CONCURRENCY_MAX, max(1, resolved.discovery_concurrency))
     if clamped != resolved.discovery_concurrency:
         resolved = replace(resolved, discovery_concurrency=clamped)
+    clamped = min(_DETECT_CONCURRENCY_MAX, max(1, resolved.detect_concurrency))
+    if clamped != resolved.detect_concurrency:
+        resolved = replace(resolved, detect_concurrency=clamped)
     return resolved
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 
 from detect.attribution import (
     Hit,
@@ -17,19 +18,23 @@ from detect.gitio import (
     CommitRecord,
     GitError,
     GitRepo,
+    fetch_blobs,
     fetch_pr_refs,
+    git_error_tail,
     list_pr_refs,
-    list_tree,
+    list_tree_entries,
     parse_merge_branches,
     read_blob,
     read_commits,
     read_log,
+    retry_call,
     walk_pr_shas,
 )
 from detect.packs import Pack
 from enrich.trees_first import FilePresence
 
 CONTENT_PROBE_LIMIT = 5
+_GIT_FAILURES = (GitError, subprocess.TimeoutExpired)
 _NOREPLY = re.compile(r"^(?:\d+\+)?(?P<login>[^@+]+)@users\.noreply\.github\.com$")
 
 
@@ -53,13 +58,33 @@ def detect_files_local(
     repo: GitRepo, pack: Pack, agents: frozenset[str] | None = None
 ) -> ChannelResult:
     try:
-        paths = list_tree(repo)
-    except GitError:
+        entries = list_tree_entries(repo)
+    except _GIT_FAILURES:
         return ChannelResult(status="unavailable", note="empty repository")
+    paths = [path for path, _oid in entries]
+    by_path = dict(entries)
     presence = FilePresence(
         repo_full_name="", paths=frozenset(paths), truncated=False, source="tree"
     )
     hits = list(match_files(pack, presence, agents))
+    probe_order = sorted(
+        {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
+    )[:CONTENT_PROBE_LIMIT]
+    needed: list[str] = []
+    ignore_oid = by_path.get(".gitignore")
+    if ignore_oid is not None:
+        needed.append(ignore_oid)
+    for path in probe_order:
+        oid = by_path.get(path)
+        if oid is not None and oid not in needed:
+            needed.append(oid)
+    if needed:
+        # One round trip for .gitignore plus the content probes; a failure
+        # degrades to the per-read lazy fetches rather than losing the channel.
+        try:
+            fetch_blobs(repo, needed)
+        except _GIT_FAILURES:
+            pass
     ignore_text = read_blob(repo, ".gitignore")
     if ignore_text:
         ignored = tuple(
@@ -99,7 +124,7 @@ def detect_history_local(
     keys = ("author", "commit_trailer", "bot")
     try:
         records = read_log(repo, limit=limit)
-    except GitError:
+    except _GIT_FAILURES:
         return {key: ChannelResult(status="unavailable", note="empty repository") for key in keys}
     identities: list[dict[str, str]] = []
     bot_candidates: list[dict[str, str]] = []
@@ -147,16 +172,34 @@ def detect_pr_commits_local(
     agents: frozenset[str] | None = None,
     *,
     depth: int = 100,
+    attempts: int = 4,
+    retry_delay: float = 1.0,
+    walk_workers: int = 8,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
-    try:
+
+    def fetch_and_list() -> dict[int, str]:
         fetch_pr_refs(repo, depth=depth)
-        refs = list_pr_refs(repo)
-    except GitError:
-        return ChannelResult(status="partial", note="pull refs fetch failed", stats=empty_stats)
+        return list_pr_refs(repo)
+
+    try:
+        refs = retry_call(fetch_and_list, attempts=attempts, base_delay=retry_delay)
+    except _GIT_FAILURES as exc:
+        return ChannelResult(
+            status="partial",
+            note=f"pull refs fetch failed: {git_error_tail(exc)}",
+            stats=empty_stats,
+        )
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
-    walks = walk_pr_shas(repo, refs, depth=depth)
+    try:
+        walks = walk_pr_shas(repo, refs, depth=depth, workers=walk_workers)
+    except _GIT_FAILURES as exc:
+        return ChannelResult(
+            status="partial",
+            note=f"pull refs walk failed: {git_error_tail(exc)}",
+            stats=empty_stats,
+        )
     sha_to_pr: dict[str, int] = {}
     for number in sorted(walks):
         for sha in walks[number]:
@@ -195,7 +238,7 @@ def detect_branch_local(
 ) -> ChannelResult:
     try:
         records = read_log(repo, limit=limit)
-    except GitError:
+    except _GIT_FAILURES:
         return ChannelResult(status="unavailable", note="empty repository")
     pairs = parse_merge_branches((record.sha, record.message) for record in records)
     hits: list[Hit] = []

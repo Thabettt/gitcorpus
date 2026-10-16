@@ -17,6 +17,7 @@ def form(**overrides: str) -> dict[str, str]:
         "adaptive": "on",
         "limiter_max_concurrent": "10",
         "discovery_concurrency": "32",
+        "detect_concurrency": "32",
     }
     values.update(overrides)
     return values
@@ -64,6 +65,17 @@ def test_discovery_concurrency_out_of_bounds_is_rejected(value):
     assert any("discovery_concurrency" in error for error in excinfo.value.errors)
 
 
+@pytest.mark.parametrize("value", ["0", "65"])
+def test_detect_concurrency_out_of_bounds_is_rejected(value):
+    with pytest.raises(SettingsError) as excinfo:
+        parse_settings_form(form(detect_concurrency=value))
+    assert any("detect_concurrency" in error for error in excinfo.value.errors)
+
+
+def test_detect_concurrency_accepts_64():
+    assert parse_settings_form(form(detect_concurrency="64"))["detect_concurrency"] == 64
+
+
 def test_hydrate_above_candidates_is_rejected():
     with pytest.raises(SettingsError) as excinfo:
         parse_settings_form(form(max_candidates="100", max_hydrate="200"))
@@ -89,6 +101,7 @@ def test_corpus_preset_returns_the_coherent_profile():
         "graphql_batch_size": 29,
         "limiter_max_concurrent": 32,
         "discovery_concurrency": 32,
+        "detect_concurrency": 64,
         "graphql_batch": True,
         "adaptive": False,
     }
@@ -112,5 +125,6 @@ def test_bounds_text_lists_every_bounded_field():
     assert text["graphql_batch_size"] == "1–50"
     assert text["limiter_max_concurrent"] == "1–100"
     assert text["discovery_concurrency"] == "1–64"
+    assert text["detect_concurrency"] == "1–64"
     assert "graphql_batch" not in text
     assert "adaptive" not in text

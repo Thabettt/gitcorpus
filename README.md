@@ -367,11 +367,12 @@ Everything is read from the environment only. Secrets are never stored in the re
 | `GITCORPUS_GRAPHQL_BATCH_SIZE` | `20` | Aliases per GraphQL request (1–50); env overrides are clamped into range at load. |
 | `GITCORPUS_MAX_CONCURRENT` | `10` | Max in-flight requests per endpoint/token. |
 | `GITCORPUS_DISCOVERY_CONCURRENCY` | `32` | Discovery worker pool size (1–64); one GraphQL search connection per page. |
+| `GITCORPUS_DETECT_CONCURRENCY` | `32` | Detection scan workers (1–64); git-source detection runs clone this many repos in parallel. Detection only — searches are unaffected. |
 | `TEST_DATABASE_URL` | — | Test database; its name must end in `_test` (destructive-safe). Suites skip without it. |
 | `GITCORPUS_REQUIRE_TEST_DB` | unset | `1` turns a missing test database into a failure instead of a skip (used in CI). |
 | `UPDATE_GOLDEN` | unset | `1` regenerates the golden snapshots. |
 
-The default run caps are intentionally small — laptop-friendly, interactive. Raise them at **System → Limits** (`/settings`) for corpus builds — the **Set to corpus-build limits** button applies 1,000 shards; 100,000 candidates/hydrate/enrich; a 24 h deadline; batch 20; concurrency 10; discovery workers 32 — or pin them from the environment; the settings page renders env-pinned fields as read-only.
+The default run caps are intentionally small — laptop-friendly, interactive. Raise them at **System → Limits** (`/settings`) for corpus builds — the **Set to corpus-build limits** button applies 1,000 shards; 100,000 candidates/hydrate/enrich; a 24 h deadline; batch 20; concurrency 10; discovery workers 32; detection workers 64 — or pin them from the environment; the settings page renders env-pinned fields as read-only.
 
 ### Database migrations
 
