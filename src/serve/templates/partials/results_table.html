@@ -4,10 +4,10 @@
 <a class="sort-link{% if sort == key %} active{% endif %}" data-sort="{{ key }}" data-dir="{{ next_dir }}"
    href="{{ table_url }}?sort={{ key }}&dir={{ next_dir }}&page=1"
    hx-get="{{ table_url }}?sort={{ key }}&dir={{ next_dir }}&page=1"
-   hx-target="#run-table" hx-indicator="#table-loading" hx-push-url="false">{{ label }}</a>
+   hx-target="#run-table" hx-indicator="#table-loading" hx-push-url="false">{{ label }}<span class="sort-mark" aria-hidden="true">&#8645;</span></a>
 {% else %}
 <a class="sort-link{% if sort == key %} active{% endif %}" data-sort="{{ key }}" data-dir="{{ next_dir }}"
-   href="{{ table_url }}?sort={{ key }}&dir={{ next_dir }}&page=1&per_page={{ per_page }}">{{ label }}</a>
+   href="{{ table_url }}?sort={{ key }}&dir={{ next_dir }}&page=1&per_page={{ per_page }}">{{ label }}<span class="sort-mark" aria-hidden="true">&#8645;</span></a>
 {% endif %}
 {% endmacro %}
 <p id="run-table-count" class="muted" data-total="{{ total }}" data-shown="{{ rows|length }}">Showing {{ rows|length }} of {{ total }} rows</p>
@@ -15,9 +15,10 @@
   <table id="run-items" class="data-table">
     <thead>
       <tr>
+        <th scope="col" class="col-gutter"><span class="sr-only">Row</span></th>
         <th scope="col">{{ sort_link('name', 'Repository') }}</th>
-        <th scope="col">{{ sort_link('stars', 'Stars') }}</th>
-        {% if not compact %}<th scope="col">Forks</th>{% endif %}
+        <th scope="col" class="num">{{ sort_link('stars', 'Stars') }}</th>
+        {% if not compact %}<th scope="col" class="num">Forks</th>{% endif %}
         <th scope="col">{{ sort_link('pushed', 'Updated') }}</th>
         {% if not compact %}<th scope="col">Language</th>{% endif %}
         {% if not compact %}<th scope="col">License</th>{% endif %}
@@ -28,23 +29,26 @@
     </thead>
     <tbody>
     {% for row in rows %}
-      <tr id="run-item-{{ row.repo_id }}" data-full-name="{{ row.full_name }}">
-        <td class="mono">{{ row.full_name }}</td>
-        <td>{{ row.stargazers if row.stargazers is not none else '—' }}</td>
-        {% if not compact %}<td>{{ row.forks_count if row.forks_count is not none else '—' }}</td>{% endif %}
-        <td>{{ row.pushed_at or '—' }}</td>
+      <tr id="run-item-{{ row.repo_id }}" data-full-name="{{ row.full_name }}"{% if row.repo_id is none %} class="tombstone"{% endif %}>
+        <td class="gutter">{{ '%02d' % loop.index }}</td>
+        <td><span class="repo-name">{{ row.full_name }}</span><span class="repo-sub mono">{% if row.repo_id is none %}tombstone — record retained{% else %}id {{ row.repo_id }} · {{ row.pushed_at or '—' }}{% endif %}</span></td>
+        <td class="num">{{ "{:,}".format(row.stargazers) if row.stargazers is not none else '—' }}</td>
+        {% if not compact %}<td class="num">{{ "{:,}".format(row.forks_count) if row.forks_count is not none else '—' }}</td>{% endif %}
+        <td class="mono">{{ row.pushed_at or '—' }}</td>
         {% if not compact %}<td>{{ row.language or '—' }}</td>{% endif %}
         {% if not compact %}<td>{{ row.license_spdx or '—' }}</td>{% endif %}
-        <td><span class="country" data-country="{{ row.country_iso }}">{{ row.country_iso or '—' }}</span>{% if row.geo_confidence %} <span class="confidence" data-confidence="{{ row.geo_confidence }}">{{ row.geo_confidence }}</span>{% endif %}</td>
+        <td><span class="geo" data-country="{{ row.country_iso }}">{{ row.country_iso or '—' }}</span>{% if row.geo_confidence %} <span class="geo-conf" data-confidence="{{ row.geo_confidence }}">{{ row.geo_confidence }}</span>{% endif %}</td>
         <td class="flags-cell">
+          {% if row.repo_id is none %}<span class="badge flag tombstone" data-flag="tombstone">tombstone</span>{% endif %}
+          {% if row.virtuals and row.virtuals.get('has_dockerfile') %}<span class="badge flag dockerfile" data-flag="dockerfile">dockerfile</span>{% endif %}
           {% if row.archived %}<span class="badge flag archived" data-flag="archived">archived</span>{% endif %}
           {% if row.incomplete %}<span class="badge flag incomplete" data-flag="incomplete">incomplete</span>{% endif %}
         </td>
-        {% if not compact %}<td>{{ saved_at }}</td>{% endif %}
+        {% if not compact %}<td class="mono">{{ saved_at }}</td>{% endif %}
       </tr>
     {% else %}
       <tr id="run-table-empty">
-        <td colspan="{{ 5 if compact else 9 }}">
+        <td colspan="{{ 6 if compact else 10 }}">
           <p>No repos passed your filters — try removing the file or country rule</p>
           <p class="empty-actions"><a class="button ghost" href="/find">Start a new search</a></p>
         </td>

@@ -6,6 +6,7 @@
     <h1>Run history</h1>
     <a class="button primary" href="/find">New find</a>
   </div>
+  <p class="provenance">Each search queries GitHub live and freezes its results here with provenance.</p>
   <form id="run-filters" class="run-filters" action="/runs" method="get">
     <label class="field" for="run-filter-status">
       <span class="field-label">Status</span>
@@ -35,29 +36,30 @@
     <table id="run-history" class="data-table">
       <thead>
         <tr>
+          <th scope="col" class="col-gutter"><span class="sr-only">Row</span></th>
           <th scope="col">Run</th>
           <th scope="col">ID</th>
           <th scope="col">Status</th>
-          <th scope="col">Found</th>
-          <th scope="col">Saved</th>
-          <th scope="col">Duration</th>
-          <th scope="col">When</th>
-          <th scope="col">Actions</th>
+          <th scope="col" class="num">Found</th>
+          <th scope="col" class="num">Saved</th>
+          <th scope="col" class="num">Duration</th>
+          <th scope="col" class="num">When</th>
+          <th scope="col" class="col-actions">Actions</th>
         </tr>
       </thead>
       <tbody id="run-history-body">
       {% for run in runs %}
         <tr id="history-run-{{ run.id }}" data-run-id="{{ run.id }}" data-status="{{ run.status }}"{% if run.incomplete %} data-incomplete="true"{% endif %}>
-          <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+          <td class="gutter">{{ '%02d' % loop.index }}</td>
+          <td><span class="repo-name"><a href="/runs/{{ run.id }}">Search #{{ run.id }}</a></span><span class="repo-sub mono">{{ run.hash_short }} · {{ run.ran_at }}</span></td>
           <td class="mono"><a href="/runs/{{ run.id }}" aria-label="Open run {{ run.id }}">{{ run.hash_short }}</a></td>
           <td>
             <span class="pill {{ run.status }}" data-status="{{ run.status }}">{{ status_label(run.status) }}</span>
-            {% if run.incomplete %}<span class="badge flag incomplete" data-flag="incomplete" title="Finished but incomplete">incomplete</span>{% endif %}
           </td>
-          <td data-count="fetched">{{ run.fetched }}</td>
-          <td data-count="inserted">{{ run.inserted }}</td>
-          <td data-field="duration">{{ run.duration }}</td>
-          <td>{{ run.ran_at }}</td>
+          <td class="num" data-count="fetched">{{ run.fetched }}</td>
+          <td class="num" data-count="inserted">{{ run.inserted }}</td>
+          <td class="mono num" data-field="duration">{{ run.duration }}</td>
+          <td class="mono num">{{ run.ran_at }}</td>
           <td class="actions-cell">
             <div class="actions-row">
               <a class="button ghost" href="/runs/{{ run.id }}">Detail</a>
@@ -104,5 +106,6 @@
     <a id="runs-page-next" class="button" href="/runs?page={{ page + 1 }}{{ query_suffix }}">Next</a>
     {% endif %}
   </nav>
+  <p class="ledger-foot mono">live measurement · each row frozen with its own ran_at</p>
 </section>
 {% endblock %}

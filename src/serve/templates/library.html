@@ -22,14 +22,14 @@
           <th scope="col">Name</th>
           <th scope="col">Filter in plain words</th>
           <th scope="col">Last used</th>
-          <th scope="col">Actions</th>
+          <th scope="col" class="col-actions">Actions</th>
         </tr>
       </thead>
       <tbody id="library-body">
       {% for item in filters %}
         <tr id="saved-filter-{{ item.id }}" data-filter-id="{{ item.id }}" data-filter-hash="{{ item.filter_hash }}">
           <td>
-            <span class="library-name" title="{{ item.filter_hash }}">{{ item.name }}</span>
+            <a class="library-name" href="/find?filter={{ item.id }}" title="{{ item.filter_hash }} — opens in the editor. No GitHub calls.">{{ item.name }}</a>
           </td>
           <td class="library-sentence">{{ item.sentence }}</td>
           <td class="library-last-used">
@@ -46,17 +46,6 @@
                 <button class="button primary" type="submit"
                         title="Finds matching repos now, saves their details, applies file and country rules, and freezes the results. Uses your GitHub allowance; can take minutes.">Run now</button>
               </form>
-              <a class="button ghost" href="/find?filter={{ item.id }}"
-                 title="Loads this filter into the search form. No GitHub calls.">Open in editor</a>
-              <details class="inline-details">
-                <summary class="button" title="Changes the recipe’s name only.">Rename</summary>
-                <form class="inline-form" action="/filters/{{ item.id }}/rename" method="post">
-                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                  <label class="sr-only" for="rename-{{ item.id }}">Rename {{ item.name }}</label>
-                  <input class="inline-input" type="text" id="rename-{{ item.id }}" name="name" value="{{ item.name }}" aria-label="New name for {{ item.name }}">
-                  <button class="button" type="submit">Save name</button>
-                </form>
-              </details>
               <button class="button danger" type="button" data-open="delete-filter-{{ item.id }}"
                       data-delete-filter data-name="{{ item.name }}"
                       aria-label="Delete {{ item.name }}"
@@ -75,7 +64,7 @@
     </table>
   </div>
   {% if filters %}
-  <p class="muted" id="library-action-help">Run now finds matching repos now, saves their details, applies file and country rules, and freezes the results. Uses your GitHub allowance; can take minutes. Open in editor loads the filter into the search form with no GitHub calls. Rename changes the recipe’s name only. Delete removes the recipe only; Searches and Corpora are untouched.</p>
+  <p class="muted" id="library-action-help">Run now finds matching repos now, saves their details, applies file and country rules, and freezes the results. Uses your GitHub allowance; can take minutes. Select a filter’s name to open it in the editor with no GitHub calls. Delete removes the recipe only; Searches and Corpora are untouched.</p>
   {% endif %}
   {% if not filters and not error %}
   <div id="library-empty" class="empty-state">

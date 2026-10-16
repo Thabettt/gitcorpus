@@ -41,6 +41,37 @@ def register_system(
             request, "partials/status_dot.html", {"color": color, "label": label}
         )
 
+    @application.get("/partials/status-bar", response_class=HTMLResponse)
+    def status_bar(request: Request):
+        status = health_snapshot()
+        color, label = _dot(status)
+        return pages._templates.TemplateResponse(
+            request,
+            "partials/status_bar.html",
+            {"color": color, "label": label, "status": status},
+        )
+
+    @application.get("/partials/github-points", response_class=HTMLResponse)
+    def github_points(request: Request):
+        value = None
+        try:
+            payload = metrics_payload(
+                engine_factory(), redis_client=metrics_redis and metrics_redis()
+            )
+            value = payload["slo"].get("graphql_remaining")
+        except Exception:
+            value = None
+        percent = None
+        value_display = None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            percent = max(0, min(100, int(value * 100 / 5000)))
+            value_display = f"{int(value):,}"
+        return pages._templates.TemplateResponse(
+            request,
+            "partials/github_points.html",
+            {"percent": percent, "value_display": value_display},
+        )
+
     @application.get("/system", response_class=HTMLResponse)
     def system_page(request: Request):
         status = health_snapshot()

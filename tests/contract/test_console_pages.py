@@ -160,7 +160,7 @@ def test_library_page_lists_saved_filters_with_actions(client: TestClient):
     assert "Rust Finds" in html
     assert created["filter_hash"][:8] in html
     assert f'href="/find?filter={created["id"]}"' in html
-    assert f'action="/filters/{created["id"]}/rename"' in html
+    assert f'action="/filters/{created["id"]}/run"' in html
     assert f'action="/filters/{created["id"]}/delete"' in html
     assert html.count('name="csrf"') >= 2
     assert 'data-no-run="true"' in html
@@ -194,7 +194,7 @@ def test_library_page_shows_last_run_time(client: TestClient, clean: Engine):
     assert f'data-filter-hash="{created["filter_hash"]}"' in row
     assert 'data-no-run="true"' not in row
     assert "never" not in row
-    assert "just now" in row or "ago" in row
+    assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", row)
 
 
 def test_find_save_creates_the_filter_without_running(client: TestClient, clean: Engine):
@@ -333,7 +333,7 @@ def test_runs_page_renders_history_rows_and_replay_action(client: TestClient, cl
     assert f'href="/runs/{done}"' in html
     assert 'data-status="done"' in html
     assert 'data-status="partial"' in html
-    assert 'data-flag="incomplete"' in html
+    assert "Finished — incomplete" in html
     done_row = row_html(html, f"history-run-{done}")
     queued_row = row_html(html, f"history-run-{queued}")
     assert 'data-count="fetched">2<' in done_row
@@ -572,7 +572,6 @@ def test_form_controls_have_labels_or_aria_labels(client: TestClient):
     assert 'for="field-name"' in find
     assert 'for="run-filter-status"' in runs
     assert 'for="run-filter-hash"' in runs
-    assert f'for="rename-{created["id"]}"' in library
     assert 'aria-label="Delete Rust"' in library
     assert 'aria-label="Toggle dark mode"' in dashboard
 
@@ -741,7 +740,7 @@ def test_detect_runs_stay_out_of_the_search_history(client: TestClient, clean: E
     assert f'id="run-{detect_id}"' not in dashboard
 
     detections = client.get("/detections").text
-    assert f'href="/runs/{detect_id}"' in detections
+    assert f'href="/detections/{detect_id}"' in detections
 
 
 def test_detect_entry_links_open_the_detection_page(client: TestClient, clean: Engine, tmp_path):
@@ -754,7 +753,10 @@ def test_detect_entry_links_open_the_detection_page(client: TestClient, clean: E
         source_run_id=find_id,
     )
 
-    response = client.get(f"/runs/{detect_id}")
+    redirect = client.get(f"/runs/{detect_id}", follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == f"/detections/{detect_id}"
+    response = client.get(f"/detections/{detect_id}")
     assert response.status_code == 200
     assert "Detection #" in response.text
     assert "Search #" not in response.text.split("<main", 1)[-1].split("</main>", 1)[0]

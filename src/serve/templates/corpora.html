@@ -24,7 +24,7 @@
           <th scope="col">Frozen</th>
           <th scope="col">From search</th>
           <th scope="col">Last detection</th>
-          <th scope="col">Actions</th>
+          <th scope="col" class="col-actions">Actions</th>
         </tr>
       </thead>
       <tbody id="corpora-body">
@@ -35,11 +35,11 @@
           <td>{{ item.frozen_at }}</td>
           <td class="library-sentence"><a href="/runs/{{ item.source_run_id }}">Search #{{ item.source_run_id }}</a>
             <span class="muted">· {{ item.sentence }}</span></td>
-          <td>{% if item.last_detection %}<a href="/runs/{{ item.last_detection.id }}">detection #{{ item.last_detection.number }}</a> <span class="muted">{{ status_label(item.last_detection.status) }}</span>{% else %}<span class="muted" data-no-detection="true">Not yet</span>{% endif %}</td>
+          <td>{% if item.last_detection %}<a href="/detections/{{ item.last_detection.id }}">detection #{{ item.last_detection.number }}</a> <span class="muted">{{ status_label(item.last_detection.status) }}</span>{% else %}<span class="muted" data-no-detection="true">Not yet</span>{% endif %}</td>
           <td class="actions-cell">
             <div class="actions-row">
               <a class="button ghost" href="/corpora/{{ item.id }}">Open</a>
-              <a id="corpora-detect-{{ item.id }}" class="button" href="/runs/{{ item.source_run_id }}/detect" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect</a>
+              <a id="corpora-detect-{{ item.id }}" class="button" href="/detections/from/{{ item.source_run_id }}" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect</a>
             </div>
           </td>
         </tr>

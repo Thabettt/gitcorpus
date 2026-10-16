@@ -110,7 +110,7 @@ class CachedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         if response.status_code == 200:
-            response.headers.setdefault("Cache-Control", "public, max-age=3600")
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
 
@@ -222,24 +222,12 @@ def build_health_snapshot(
     return health_snapshot
 
 
-def _relative_time(value: datetime | None) -> str:
+def _stamp(value: datetime | None) -> str:
     if value is None:
         return "—"
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
-    seconds = max((datetime.now(UTC) - value).total_seconds(), 0.0)
-    if seconds < 60:
-        return "just now"
-    minutes = int(seconds // 60)
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
-    days = hours // 24
-    if days < 30:
-        return f"{days}d ago"
-    return f"{days // 30}mo ago"
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
 
 
 def _duration(started: datetime | None, finished: datetime | None) -> str:
@@ -257,7 +245,7 @@ def _iso(value: datetime | None) -> str:
         return "—"
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _page_param(raw: str | int | None) -> int:
@@ -282,7 +270,7 @@ def _run_summary(row) -> dict:
         "fetched": row["fetched"],
         "inserted": row["inserted"],
         "duration": _duration(row["started_at"], row["finished_at"]),
-        "ran_at": _relative_time(row["finished_at"] or row["started_at"] or row["created_at"]),
+        "ran_at": _stamp(row["finished_at"] or row["started_at"] or row["created_at"]),
     }
 
 
@@ -311,7 +299,7 @@ def _history_summary(row) -> dict:
         "inserted": row["inserted"],
         "total_count": row["total_count"],
         "duration": _duration(row["started_at"], row["finished_at"]),
-        "ran_at": _relative_time(row["finished_at"] or row["started_at"] or row["created_at"]),
+        "ran_at": _stamp(row["finished_at"] or row["started_at"] or row["created_at"]),
         "incomplete": row["status"] == "partial" or bool(row["incomplete_shards"]),
         "terminal": row["status"] not in NON_TERMINAL_STATUSES,
         "error": row["error"],
@@ -362,7 +350,7 @@ def _same_hash_runs(engine: Engine, row, *, limit: int = 50) -> list[dict]:
             "id": candidate["id"],
             "status": candidate["status"],
             "hash_short": candidate["filter_hash"][:8],
-            "ran_at": _relative_time(
+            "ran_at": _stamp(
                 candidate["finished_at"] or candidate["started_at"] or candidate["created_at"]
             ),
         }
@@ -393,7 +381,7 @@ def _previous_same_hash_runs(engine: Engine, row, *, limit: int = 3) -> list[dic
         {
             "id": candidate["id"],
             "status": candidate["status"],
-            "ran_at": _relative_time(
+            "ran_at": _stamp(
                 candidate["finished_at"] or candidate["started_at"] or candidate["created_at"]
             ),
         }
@@ -444,7 +432,7 @@ def _last_runs(engine: Engine, hashes: list[str]) -> dict[str, dict]:
         return {
             row["filter_hash"]: {
                 "id": row["id"],
-                "ran_at": _relative_time(row["created_at"]),
+                "ran_at": _stamp(row["created_at"]),
                 "count": _int_or_zero(
                     row["total_count"] if row["total_count"] is not None else row["fetched"]
                 ),
@@ -477,7 +465,7 @@ def render_library(
             "sentence": _spec_sentence(view.filter_spec),
             "filter_hash": view.filter_hash,
             "hash_short": view.filter_hash[:8],
-            "created_at": _relative_time(view.created_at),
+            "created_at": _stamp(view.created_at),
             "last_run": last_runs.get(view.filter_hash),
         }
         for view in views
@@ -1179,9 +1167,7 @@ def register_pages(
                 request, "run_detail.html", {"run": None}, status_code=404
             )
         if row["kind"] == "detect":
-            from serve.detect import detect_detail_response
-
-            return detect_detail_response(request, engine, row)
+            return RedirectResponse(f"/detections/{run_id}", status_code=307)
         item_count = _item_count(engine, run_id)
         table = results_context(
             engine,

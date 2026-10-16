@@ -5,6 +5,7 @@
   <div class="panel-head">
     <h1>Dashboard</h1>
   </div>
+  <p class="provenance mono">checked now · database · queue · token</p>
   <div class="health-grid">
     <div class="card health-card" id="health-db">
       <span class="health-label">Database</span>
@@ -18,38 +19,50 @@
       <span class="health-label">GitHub token</span>
       <span class="badge {{ 'ok' if health.github_token_present else 'down' }}" data-state="{{ 'ok' if health.github_token_present else 'down' }}">{{ 'ok' if health.github_token_present else 'absent' }}</span>
     </div>
+    <div class="card health-card points-card" id="github-points-card">
+      <span class="health-label">GitHub points</span>
+      <div class="points-meter" hx-get="/partials/github-points" hx-trigger="load, every 30s" hx-swap="innerHTML">
+        <span class="mono muted points-value">&mdash;</span>
+      </div>
+    </div>
   </div>
 </section>
 <section class="panel">
   <div class="panel-head">
     <h2>Recent runs</h2>
   </div>
+  <p class="provenance mono">each search frozen with its own ran_at</p>
   <div class="table-wrap">
     <table id="recent-runs" class="data-table">
       <thead>
         <tr>
+          <th scope="col" class="col-gutter"><span class="sr-only">Row</span></th>
           <th scope="col">Run</th>
           <th scope="col">Search ID</th>
           <th scope="col">Status</th>
-          <th scope="col">Found / Saved</th>
-          <th scope="col">Duration</th>
-          <th scope="col">When</th>
+          <th scope="col" class="num">Found</th>
+          <th scope="col" class="num">Saved</th>
+          <th scope="col" class="num">Duration</th>
+          <th scope="col" class="num">When</th>
         </tr>
       </thead>
       <tbody id="recent-runs-body">
       {% for run in runs %}
-        <tr id="run-{{ run.id }}">
-          <td><a href="/runs/{{ run.id }}">{{ run.id }}</a></td>
+        <tr id="run-{{ run.id }}"{% if run.incomplete %} class="is-incomplete"{% endif %}>
+          <td class="gutter">{{ '%02d' % loop.index }}</td>
+          <td><span class="repo-name"><a href="/runs/{{ run.id }}">Search #{{ run.id }}</a></span><span class="repo-sub mono">{{ run.hash_short }} · {{ run.ran_at }}</span></td>
           <td class="mono">{{ run.hash_short }}</td>
           <td><span class="pill {{ run.status }}">{{ status_label(run.status) }}</span></td>
-          <td>{{ run.fetched if run.fetched is not none else '—' }} / {{ run.inserted }}</td>
-          <td>{{ run.duration }}</td>
-          <td>{{ run.ran_at }}</td>
+          <td class="num mono">{{ run.fetched if run.fetched is not none else '—' }}</td>
+          <td class="num mono">{{ run.inserted }}</td>
+          <td class="num mono">{{ run.duration }}</td>
+          <td class="num mono">{{ run.ran_at }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="ledger-foot mono">live measurement · each search frozen with its own ran_at</p>
   {% if runs_error %}
   <div id="runs-error" class="empty-state error-state" role="alert">
     <p>Recent runs unavailable</p>

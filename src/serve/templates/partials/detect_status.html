@@ -1,4 +1,4 @@
-<div id="detect-status" aria-live="polite" data-status="{{ run.status }}"{% if run.polling %} hx-get="/partials/runs/{{ run.id }}/detect-status" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
+<div id="detect-status" aria-live="polite" data-status="{{ run.status }}"{% if run.polling %} hx-get="/partials/detections/{{ run.id }}/status" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
   <div class="run-status-line">
     <span class="pill {{ run.status }}" data-status="{{ run.status }}">{{ status_label(run.status) }}</span>
     {% if run.progress %}

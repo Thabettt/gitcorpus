@@ -229,7 +229,7 @@ def test_corpora_page_lists_name_repos_frozen_source_and_wired_detect(clean, tmp
     assert f'href="/runs/{run_id}"' in body
     assert "Not yet" in body
     assert 'id="corpora-detect' in body or "Detect" in body
-    assert f'href="/runs/{run_id}/detect"' in body
+    assert f'href="/detections/from/{run_id}"' in body
     assert "Coming soon" not in body
 
 
@@ -255,7 +255,7 @@ def test_corpus_detail_explains_frozen_semantics_and_actions(clean, tmp_path, mo
     assert f'href="/runs/{run_id}/results"' in body
     assert f'href="/runs/{run_id}/export?format=json"' in body
     assert f'href="/runs/{run_id}/export?format=csv"' in body
-    assert f'href="/runs/{run_id}/detect"' in body
+    assert f'href="/detections/from/{run_id}"' in body
     assert "Coming soon" not in body
     assert "never affects its source search" in body
     assert "octo/alpha" in body

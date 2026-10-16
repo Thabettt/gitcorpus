@@ -19,7 +19,7 @@ from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
 from serve.pages import (
     _item_count,
-    _relative_time,
+    _stamp,
     _run_detail_summary,
     validate_csrf,
 )
@@ -83,7 +83,7 @@ def _finished_find_runs(engine: Engine, limit: int = 300) -> list[dict]:
                 "hash_short": str(row["filter_hash"])[:8],
                 "status": row["status"],
                 "repos": int(row["item_count"] or 0),
-                "when": _relative_time(row["created_at"]),
+                "when": _stamp(row["created_at"]),
             }
             for row in rows
         ]
@@ -326,7 +326,7 @@ def register_detect(
                         "number": numbers.get(int(row["id"])),
                         "status": row["status"],
                         "source_run_id": row["source_run_id"],
-                        "started": _relative_time(row["created_at"]),
+                        "started": _stamp(row["created_at"]),
                         "summary": row["result_summary"] or {},
                     }
                     for row in rows
@@ -361,7 +361,7 @@ def register_detect(
             run_id = await run_in_threadpool(
                 import_repos_as_run, engine, parsed, name=str(upload.filename)
             )
-            return RedirectResponse(f"/runs/{run_id}/detect", status_code=303)
+            return RedirectResponse(f"/detections/from/{run_id}", status_code=303)
         source = str(form.get("source") or "").strip()
         if not source.isdigit():
             return _detect_new_response(
@@ -378,9 +378,9 @@ def register_detect(
                 errors_=[f"search #{source} is not a finished search"],
                 hints=["only searches that finished (done or partial) can be detected"],
             )
-        return RedirectResponse(f"/runs/{row['id']}/detect", status_code=303)
+        return RedirectResponse(f"/detections/from/{row['id']}", status_code=303)
 
-    @application.get("/runs/{run_id}/detect", response_class=HTMLResponse)
+    @application.get("/detections/from/{run_id}", response_class=HTMLResponse)
     def detect_options_page(request: Request, run_id: int):
         engine = engine_factory()
         row = _run_row(engine, run_id)
@@ -404,7 +404,7 @@ def register_detect(
             },
         )
 
-    @application.post("/runs/{run_id}/detect")
+    @application.post("/detections/from/{run_id}")
     async def detect_start(request: Request, run_id: int):
         if not await validate_csrf(request):
             return errors.csrf_error_page(request)
@@ -523,9 +523,19 @@ def register_detect(
             source_run_id=run_id,
         )
         executor_factory().submit(new_id, runner_factory())
-        return RedirectResponse(f"/runs/{new_id}", status_code=303)
+        return RedirectResponse(f"/detections/{new_id}", status_code=303)
 
-    @application.get("/runs/{run_id}/detect-estimate", response_class=HTMLResponse)
+    @application.get("/detections/{run_id}", response_class=HTMLResponse)
+    def detect_page(request: Request, run_id: int):
+        engine = engine_factory()
+        row = _run_row(engine, run_id)
+        if row is None or row["kind"] != "detect":
+            return templates.TemplateResponse(
+                request, "detect_detail.html", {"run": None}, status_code=404
+            )
+        return detect_detail_response(request, engine, row)
+
+    @application.get("/partials/detections/{run_id}/estimate", response_class=HTMLResponse)
     def detect_estimate_partial(request: Request, run_id: int):
         engine = engine_factory()
         raw_channels = request.query_params.getlist("channels")
@@ -548,7 +558,7 @@ def register_detect(
             request, "partials/detect_estimate.html", {"estimate": result}
         )
 
-    @application.get("/partials/runs/{run_id}/detect-status", response_class=HTMLResponse)
+    @application.get("/partials/detections/{run_id}/status", response_class=HTMLResponse)
     def detect_status_partial(request: Request, run_id: int):
         engine = engine_factory()
         row = _run_row(engine, run_id)

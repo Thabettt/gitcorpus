@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import re
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -10,6 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from detect import orchestrator as orchestrator_module
+from detect.channels import ChannelResult
 from detect.orchestrator import CHANNELS, DetectConfig, DetectOptions, run_detection
 from detect.packs import Pack, Pattern, freeze_pack
 from discover.pipeline import Deps
@@ -394,6 +397,93 @@ def test_run_detection_cancelled_before_start_writes_nothing(clean_db):
     assert count == 0
     assert seen == []
     assert queries == []
+
+
+def test_run_detection_cancel_reaches_scan_workers(clean_db, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    deps = make_deps(engine, make_handler([], []))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, channels=["file"])
+    seen_cancel = threading.Event()
+
+    def slow_files(deps_, full_name, pack, **kwargs):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                cancellation.check()
+            except RunCancelled:
+                seen_cancel.set()
+                raise
+            time.sleep(0.01)
+        raise AssertionError("scan worker never observed the cancellation binding")
+
+    monkeypatch.setattr(orchestrator_module, "detect_files", slow_files)
+    cancel = threading.Event()
+    token = cancellation.bind(cancel.is_set)
+    timer = threading.Timer(0.2, cancel.set)
+    timer.start()
+    try:
+        with pytest.raises(RunCancelled):
+            run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+    finally:
+        timer.cancel()
+        cancellation.reset(token)
+    assert seen_cancel.is_set()
+
+
+def test_run_detection_cancel_returns_promptly_with_wedged_scans(clean_db, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    deps = make_deps(engine, make_handler([], []))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, channels=["file"])
+    release = threading.Event()
+    started = threading.Event()
+
+    def wedged_files(*args, **kwargs):
+        started.set()
+        release.wait()
+        return ChannelResult(status="partial", note="released")
+
+    monkeypatch.setattr(orchestrator_module, "detect_files", wedged_files)
+    cancel = threading.Event()
+    outcome: list[object] = []
+
+    def drive() -> None:
+        token = cancellation.bind(cancel.is_set)
+        try:
+            run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+            outcome.append(None)
+        except BaseException as exc:
+            outcome.append(exc)
+        finally:
+            cancellation.reset(token)
+
+    thread = threading.Thread(target=drive)
+    thread.start()
+    try:
+        assert started.wait(timeout=5)
+        time.sleep(0.1)
+        cancel.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+        assert outcome and isinstance(outcome[0], RunCancelled)
+    finally:
+        release.set()
+        thread.join(timeout=5)
 
 
 def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path):

@@ -1,0 +1,8 @@
+{
+  "path": "/partials/status-bar",
+  "status": 200,
+  "headers": {
+    "content-type": "text/html; charset=utf-8"
+  },
+  "body": "<span class=\"status-left\">\n  <span class=\"status-label\"><span class=\"dot dot-green\" aria-hidden=\"true\"></span> All systems ready</span>\n</span>\n<span class=\"status-mid\">\n  <span class=\"sep\" aria-hidden=\"true\">·</span>\n  <span>db <b class=\"st-ok\">ok</b></span>\n  <span class=\"sep\" aria-hidden=\"true\">·</span>\n  <span>redis <b class=\"st-ok\">ok</b></span>\n  <span class=\"sep\" aria-hidden=\"true\">·</span>\n  <span>token <b class=\"st-ok\">ok</b></span>\n</span>\n<span class=\"status-right\">\n  <span>v0.0.1</span>\n  <span class=\"sep\" aria-hidden=\"true\">·</span>\n  <a href=\"/system\">system</a>\n  <span class=\"sep\" aria-hidden=\"true\">·</span>\n  <span>? help</span>\n</span>"
+}

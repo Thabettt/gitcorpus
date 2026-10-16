@@ -193,7 +193,7 @@ def _render_list(
             "name": view.name,
             "note": view.note,
             "repo_count": view.repo_count,
-            "frozen_at": pages._relative_time(view.frozen_at),
+            "frozen_at": pages._stamp(view.frozen_at),
             "source_run_id": view.source_run_id,
             "sentence": view.sentence,
             "last_detection": _last_detection(engine, view.source_run_id),

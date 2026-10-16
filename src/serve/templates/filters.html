@@ -121,7 +121,13 @@
       <p class="muted">These limit which repos match. GitHub evaluates the first part; extra rules run after fetching.</p>
       <div id="filter-keywords">
         <div class="field-grid">
-          {{ text_field("keywords", "Keywords") }}
+          <label class="field" for="field-keywords">
+            <span class="field-label">Keywords</span>
+            <div class="prompt-field">
+              <span class="prompt-glyph mono" aria-hidden="true">&#10095;</span>
+              <input class="field-input" type="text" id="field-keywords" name="keywords" value="{{ state.fields.get('keywords', '') }}">
+            </div>
+          </label>
           {{ text_field("language", "Language") }}
           {{ number_field("min_stars", "Minimum stars") }}
           {{ date_field("pushed_from", "Updated since") }}

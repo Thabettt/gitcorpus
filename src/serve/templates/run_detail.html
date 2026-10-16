@@ -27,6 +27,7 @@
       <span id="run-duration" data-field="duration">duration {{ run.duration }}</span>
     </div>
   </details>
+  <p class="ledger-foot mono">filter_hash {{ run.hash_short }} · frozen</p>
 </section>
 <section class="panel" id="run-asked-for">
   <details>
@@ -42,9 +43,9 @@
   <p>Data quality is loading…</p>
 </section>
 <section class="panel" id="run-actions">
-  <div class="form-actions">
+  <div class="form-actions action-grid">
 {%- if run.status in ('done', 'partial') %}
-    <a id="detect-agent-use" class="button" href="/runs/{{ run.id }}/detect" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</a>
+    <a id="detect-agent-use" class="button" href="/detections/from/{{ run.id }}" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</a>
 {%- else %}
     <button id="detect-agent-use" class="button" type="button" disabled title="Detection runs on searches that finished (done or partial).">Detect agent use</button>
 {%- endif %}
@@ -87,7 +88,7 @@
   {% if save_error %}
   <p id="save-filter-error" class="flag error">Could not save the filter: {% if save_error == 'duplicate_name' %}a saved filter with that name already exists.{% elif save_error == 'invalid_name' %}that name is not valid.{% else %}the stored filter is not valid.{% endif %}</p>
   {% endif %}
-  <p id="detect-agent-use-note" class="muted">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.{% if latest_detect %} Latest: <a href="/runs/{{ latest_detect.id }}">detection #{{ latest_detect.number }}</a> — {{ latest_detect.signals }} agent signal(s).{% endif %}</p>
+  <p id="detect-agent-use-note" class="muted">Detect agent use scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.{% if latest_detect %} Latest: <a href="/detections/{{ latest_detect.id }}">detection #{{ latest_detect.number }}</a> — {{ latest_detect.signals }} agent signal(s).{% endif %}</p>
   <p class="muted">Export downloads the frozen result list as JSON or CSV. Clone copies repo contents to this machine — no GitHub API calls; uses disk and time. Search again starts a new search with the same filter; the old results stay frozen.</p>
 {%- if run.status in ('done', 'partial') %}
   <p class="muted">Freeze as corpus records the exact repos and details as of now. No GitHub calls; does not copy code.</p>

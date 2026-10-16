@@ -363,7 +363,7 @@ def test_static_assets_are_cacheable(clean: Engine, tmp_path, monkeypatch):
     response = client.get("/static/app.css")
 
     assert response.status_code == 200
-    assert response.headers["cache-control"] == "public, max-age=3600"
+    assert response.headers["cache-control"] == "no-cache"
 
 
 def test_main_module_reads_env_overrides_without_starting_a_server(monkeypatch):

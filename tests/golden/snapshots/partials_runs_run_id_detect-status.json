@@ -1,8 +1,0 @@
-{
-  "path": "/partials/runs/931/detect-status",
-  "status": 200,
-  "headers": {
-    "content-type": "text/html; charset=utf-8"
-  },
-  "body": "<div id=\"detect-status\" aria-live=\"polite\" data-status=\"done\">\n  <div class=\"run-status-line\">\n    <span class=\"pill done\" data-status=\"done\">Finished</span>\n    \n    \n  </div>\n  \n  \n</div>"
-}

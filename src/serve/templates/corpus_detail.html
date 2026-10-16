@@ -23,7 +23,7 @@
     <a id="corpus-export-json" class="button" href="/runs/{{ corpus.source_run_id }}/export?format=json">Export JSON</a>
     <a id="corpus-export-csv" class="button" href="/runs/{{ corpus.source_run_id }}/export?format=csv">Export CSV</a>
     <a id="corpus-view-all" class="button" href="/runs/{{ corpus.source_run_id }}/results">View all results</a>
-    <a id="corpus-detect" class="button" href="/runs/{{ corpus.source_run_id }}/detect" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</a>
+    <a id="corpus-detect" class="button" href="/detections/from/{{ corpus.source_run_id }}" title="Scans the frozen corpus through GitHub’s API on its own allowance and stores evidence per repo.">Detect agent use</a>
     <button id="corpus-delete-open" class="button danger" type="button"
             data-open="corpus-delete-modal">Delete corpus</button>
     <noscript>

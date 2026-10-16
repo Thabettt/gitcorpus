@@ -15,7 +15,7 @@
       <tbody>
       {% for item in detections %}
         <tr id="detection-{{ item.id }}">
-          <td><a href="/runs/{{ item.id }}">#{{ item.number if item.number else item.id }}</a></td>
+          <td><a href="/detections/{{ item.id }}">#{{ item.number if item.number else item.id }}</a></td>
           <td><a href="/runs/{{ item.source_run_id }}">#{{ item.source_run_id }}</a></td>
           <td><span class="pill {{ item.status }}">{{ status_label(item.status) }}</span></td>
           <td>{{ item.started }}</td>

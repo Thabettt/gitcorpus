@@ -28,7 +28,7 @@
   {% if not packs %}
   <p id="detect-no-packs" class="flag warn">No trace packs are frozen yet. Build one with <code>python -m detect.packs build</code> and <code>… freeze</code>, then reload this page.</p>
   {% endif %}
-  <form id="detect-form" action="/runs/{{ source.id }}/detect" method="post">
+  <form id="detect-form" action="/detections/from/{{ source.id }}" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <section class="filter-section" id="detect-pack-section">
       <h2>Trace pack</h2>
@@ -88,7 +88,7 @@
         </label>
       </div>
       <div id="detect-estimate"
-           hx-get="/runs/{{ source.id }}/detect-estimate"
+           hx-get="/partials/detections/{{ source.id }}/estimate"
            hx-trigger="load, change from:#detect-form"
            hx-include="#detect-form"
            hx-swap="outerHTML">

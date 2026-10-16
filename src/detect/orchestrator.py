@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import contextvars
 import json
 from collections.abc import Mapping
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 import httpx
@@ -24,6 +25,7 @@ _HISTORY_KEYS = ("author", "commit_trailer", "bot")
 _PR_KEYS = ("branch", "label", "pr_metadata")
 _BOT_CHANNEL = "bot"
 _FAILURE_NOTE_LIMIT = 300
+_CANCEL_POLL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -293,11 +295,14 @@ def run_detection(
     failures: list[str] = []
     try:
         max_workers = max(1, cfg.concurrency)
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        cancelled = False
+        try:
             pending = iter(candidates)
             in_flight: dict[Future, Mapping] = {}
             exhausted = False
             done = 0
+            progress.report("detecting", 0, total)
             while True:
                 while not exhausted and len(in_flight) < max_workers:
                     cancellation.check()
@@ -305,11 +310,20 @@ def run_detection(
                     if candidate is None:
                         exhausted = True
                         break
-                    future = pool.submit(_scan_repo, deps, pack, spec, run_id, ledger, candidate)
+                    context = contextvars.copy_context()
+                    future = pool.submit(
+                        context.run, _scan_repo, deps, pack, spec, run_id, ledger, candidate
+                    )
                     in_flight[future] = candidate
                 if not in_flight:
                     break
-                future = next(as_completed(in_flight))
+                ready, _ = wait(
+                    in_flight, timeout=_CANCEL_POLL_SECONDS, return_when=FIRST_COMPLETED
+                )
+                if not ready:
+                    cancellation.check()
+                    continue
+                future = next(iter(ready))
                 cancellation.check()
                 candidate = in_flight.pop(future)
                 synthetic: _RepoScan | None = None
@@ -340,6 +354,11 @@ def run_detection(
                         connection.execute(insert(DetectionEvidence), rows)
                 done += 1
                 progress.report("detecting", done, total)
+        except RunCancelled:
+            cancelled = True
+            raise
+        finally:
+            pool.shutdown(wait=not cancelled, cancel_futures=True)
     finally:
         if deps.limiter is not None:
             deps.limiter.bind_deadline(None)

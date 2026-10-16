@@ -1,5 +1,5 @@
 {
-  "path": "/runs/931/detect-estimate",
+  "path": "/partials/detections/931/estimate",
   "status": 200,
   "headers": {
     "content-type": "text/html; charset=utf-8"

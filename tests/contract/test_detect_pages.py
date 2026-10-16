@@ -150,12 +150,15 @@ def seed_detect_run(engine, source_id: int) -> int:
     return int(run_id)
 
 
-def test_run_page_branches_to_detection_detail(clean):
+def test_detection_detail_lives_under_detections(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
     detect_id = seed_detect_run(clean, source)
     client = make_client(clean)
-    response = client.get(f"/runs/{detect_id}")
+    redirect = client.get(f"/runs/{detect_id}", follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == f"/detections/{detect_id}"
+    response = client.get(f"/detections/{detect_id}")
     assert response.status_code == 200
     assert "Detection" in response.text
     assert "CLAUDE.md" in response.text
@@ -169,8 +172,8 @@ def test_find_run_page_wires_detect_button_and_badge(clean):
     detect_id = seed_detect_run(clean, source)
     client = make_client(clean)
     response = client.get(f"/runs/{source}")
-    assert f'href="/runs/{source}/detect"' in response.text
-    assert f"/runs/{detect_id}" in response.text
+    assert f'href="/detections/from/{source}"' in response.text
+    assert f"/detections/{detect_id}" in response.text
     assert "Coming soon" not in response.text
 
 
@@ -194,11 +197,11 @@ def test_corpora_pages_wire_detect_and_last_detection(clean):
         )
     client = make_client(clean)
     listing = client.get("/corpora")
-    assert f'href="/runs/{source}/detect"' in listing.text
-    assert f"/runs/{detect_id}" in listing.text
+    assert f'href="/detections/from/{source}"' in listing.text
+    assert f"/detections/{detect_id}" in listing.text
     assert "Coming soon" not in listing.text
     detail = client.get("/corpora/1")
-    assert f'href="/runs/{source}/detect"' in detail.text
+    assert f'href="/detections/from/{source}"' in detail.text
 
 
 def test_detections_export_renders_evidence_csv(clean):
@@ -217,7 +220,7 @@ def test_options_page_has_search_and_select_all_controls(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
     client = make_client(clean)
-    response = client.get(f"/runs/{source}/detect")
+    response = client.get(f"/detections/from/{source}")
     assert response.status_code == 200
     assert 'id="detect-agent-search"' in response.text
     assert 'id="detect-agents-all"' in response.text
@@ -231,7 +234,7 @@ def test_detection_detail_has_filters_and_repo_data_attributes(clean):
     seed_pack(clean)
     detect_id = seed_detect_run(clean, source)
     client = make_client(clean)
-    response = client.get(f"/runs/{detect_id}")
+    response = client.get(f"/detections/{detect_id}")
     assert response.status_code == 200
     assert 'id="detection-filter-signal"' in response.text
     assert 'id="detection-filter-agent"' in response.text
@@ -260,7 +263,7 @@ def test_detect_status_poll_refreshes_page_when_run_finishes(clean):
             {"id": detect_id},
         )
     running = client.get(
-        f"/partials/runs/{detect_id}/detect-status", headers={"HX-Request": "true"}
+        f"/partials/detections/{detect_id}/status", headers={"HX-Request": "true"}
     )
     with clean.begin() as connection:
         connection.execute(
@@ -268,9 +271,9 @@ def test_detect_status_poll_refreshes_page_when_run_finishes(clean):
             {"id": detect_id},
         )
     done_poll = client.get(
-        f"/partials/runs/{detect_id}/detect-status", headers={"HX-Request": "true"}
+        f"/partials/detections/{detect_id}/status", headers={"HX-Request": "true"}
     )
-    done_render = client.get(f"/partials/runs/{detect_id}/detect-status")
+    done_render = client.get(f"/partials/detections/{detect_id}/status")
     assert running.status_code == done_poll.status_code == done_render.status_code == 200
     assert "HX-Refresh" not in running.headers
     assert done_poll.headers.get("HX-Refresh") == "true"
@@ -282,7 +285,7 @@ def test_detection_summary_cards_are_readable(clean):
     seed_pack(clean)
     detect_id = seed_detect_run(clean, source)
     client = make_client(clean)
-    response = client.get(f"/runs/{detect_id}")
+    response = client.get(f"/detections/{detect_id}")
     assert response.status_code == 200
     assert "2026-01-02 00:00 UTC" in response.text
     assert "100.0%" in response.text
@@ -299,9 +302,9 @@ def test_detections_use_their_own_numbering(clean):
     second = seed_detect_run(clean, source)
     client = make_client(clean)
     listing = client.get("/detections").text
-    assert f'href="/runs/{first}">#1</a>' in listing
-    assert f'href="/runs/{second}">#2</a>' in listing
-    detail = client.get(f"/runs/{second}").text
+    assert f'href="/detections/{first}">#1</a>' in listing
+    assert f'href="/detections/{second}">#2</a>' in listing
+    detail = client.get(f"/detections/{second}").text
     assert "Detection #2" in detail
     assert f"search #{source}" in detail
     assert f'data-field="run">run {second}</span>' in detail

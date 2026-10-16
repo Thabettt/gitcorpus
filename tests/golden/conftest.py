@@ -172,9 +172,10 @@ PATH_PARAMS = {
     "/partials/runs/{run_id}/clone-progress": {"run_id": RUN_A},
     "/detections": {},
     "/detections/new": {},
-    "/runs/{run_id}/detect": {"run_id": RUN_A},
-    "/runs/{run_id}/detect-estimate": {"run_id": RUN_A},
-    "/partials/runs/{run_id}/detect-status": {"run_id": RUN_A},
+    "/detections/from/{run_id}": {"run_id": RUN_A},
+    "/detections/{run_id}": {"run_id": 952},
+    "/partials/detections/{run_id}/estimate": {"run_id": RUN_A},
+    "/partials/detections/{run_id}/status": {"run_id": 952},
 }
 QUERY = {
     "/vsearch/repos": "?q=language:rust&sort=stars&order=desc",
@@ -186,7 +187,6 @@ EXTRA_CASES = (
     ("static_css", "/static/app.css", {}),
     ("static_js", "/static/app.js", {}),
     ("filters_json", "/filters", {}),
-    ("runs_detect", "/runs/952", {}),
     ("runs_detect_export", "/runs/952/export?format=detections", {}),
 )
 

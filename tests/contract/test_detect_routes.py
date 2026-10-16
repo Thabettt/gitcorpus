@@ -107,10 +107,10 @@ def test_detections_list_renders_empty_and_filled(clean):
 def test_options_page_requires_finished_find_run(clean):
     client = make_client(clean)
     running = seed_find_run(clean, status="running")
-    assert client.get(f"/runs/{running}/detect").status_code == 400
+    assert client.get(f"/detections/from/{running}").status_code == 400
     done = seed_find_run(clean, status="done")
     seed_pack(clean)
-    response = client.get(f"/runs/{done}/detect")
+    response = client.get(f"/detections/from/{done}")
     assert response.status_code == 200
     assert "Claude Code" in response.text
     assert "test-pack" in response.text
@@ -127,9 +127,9 @@ def test_start_detection_creates_run_and_submits_runner(clean):
     client = make_client(clean, detect_runner=detect_runner)
     source = seed_find_run(clean)
     seed_pack(clean)
-    client.get(f"/runs/{source}/detect")  # sets the CSRF cookie
+    client.get(f"/detections/from/{source}")  # sets the CSRF cookie
     response = client.post(
-        f"/runs/{source}/detect",
+        f"/detections/from/{source}",
         data={
             "csrf": csrf_token(client),
             "pack_version": "test-pack",
@@ -161,9 +161,9 @@ def test_start_detection_rejects_empty_source_run(clean):
     client = make_client(clean)
     source = seed_find_run(clean, with_items=False)
     seed_pack(clean)
-    client.get(f"/runs/{source}/detect")
+    client.get(f"/detections/from/{source}")
     response = client.post(
-        f"/runs/{source}/detect",
+        f"/detections/from/{source}",
         data={"csrf": csrf_token(client), "pack_version": "test-pack", "channels": ["file"]},
     )
     assert response.status_code == 400
@@ -178,9 +178,9 @@ def test_start_detection_rejects_unknown_agents(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
     seed_pack(clean)
-    client.get(f"/runs/{source}/detect")
+    client.get(f"/detections/from/{source}")
     response = client.post(
-        f"/runs/{source}/detect",
+        f"/detections/from/{source}",
         data={
             "csrf": csrf_token(client),
             "pack_version": "test-pack",
@@ -208,9 +208,9 @@ def test_start_detection_validates_agents_against_the_submitted_pack(clean):
                 " VALUES ('older-pack', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)"
             )
         )
-    client.get(f"/runs/{source}/detect")
+    client.get(f"/detections/from/{source}")
     response = client.post(
-        f"/runs/{source}/detect",
+        f"/detections/from/{source}",
         data={
             "csrf": csrf_token(client),
             "pack_version": "older-pack",
@@ -230,9 +230,9 @@ def test_start_detection_rejects_empty_selection(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
     seed_pack(clean)
-    client.get(f"/runs/{source}/detect")
+    client.get(f"/detections/from/{source}")
     response = client.post(
-        f"/runs/{source}/detect",
+        f"/detections/from/{source}",
         data={"csrf": csrf_token(client), "pack_version": "test-pack", "channels": []},
     )
     assert response.status_code == 400
@@ -242,7 +242,7 @@ def test_start_detection_rejects_empty_selection(clean):
 def test_estimate_partial_renders(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
-    response = client.get(f"/runs/{source}/detect-estimate?channels=file&channels=issue&limit=10")
+    response = client.get(f"/partials/detections/{source}/estimate?channels=file&channels=issue&limit=10")
     assert response.status_code == 200
     assert "REST calls" in response.text
 
@@ -250,7 +250,7 @@ def test_estimate_partial_renders(clean):
 def test_detect_status_partial(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
-    response = client.get(f"/partials/runs/{source}/detect-status")
+    response = client.get(f"/partials/detections/{source}/status")
     assert response.status_code == 200
 
 
@@ -295,7 +295,7 @@ def test_new_detection_from_search_redirects_to_options(clean):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == f"/runs/{source}/detect"
+    assert response.headers["location"] == f"/detections/from/{source}"
 
 
 def test_new_detection_from_csv_imports_and_redirects(clean):
@@ -315,7 +315,7 @@ def test_new_detection_from_csv_imports_and_redirects(clean):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    new_id = int(response.headers["location"].split("/")[2])
+    new_id = int(response.headers["location"].split("/")[3])
     with clean.connect() as connection:
         run = (
             connection.execute(text("SELECT kind, status FROM runs WHERE id = :id"), {"id": new_id})
@@ -353,7 +353,7 @@ def test_options_page_blocks_enter_submit_and_search_hides_labels(clean, repo_ro
     client = make_client(clean)
     source = seed_find_run(clean)
     seed_pack(clean)
-    response = client.get(f"/runs/{source}/detect")
+    response = client.get(f"/detections/from/{source}")
     assert 'event.key === "Enter"' in response.text
     css = (repo_root / "src/serve/static/app.css").read_text(encoding="utf-8")
     assert ".checklist .checkbox[hidden]" in css
@@ -380,7 +380,7 @@ def test_new_detection_from_json_export_imports(clean):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    new_id = int(response.headers["location"].split("/")[2])
+    new_id = int(response.headers["location"].split("/")[3])
     with clean.connect() as connection:
         items = (
             connection.execute(
