@@ -412,3 +412,25 @@ node --test tests/js/rownav.test.mjs tests/js/applib.test.mjs
 - Static limiter only; the adaptive controller stays off for v1.
 
 **Verification:** full suite `1633 passed, 1 failed` (1634 collected; the failure is the pre-existing disk-reserve clone-estimate test on a nearly-full C:, ~1957 MB free < the 2048 MB reserve — environmental, not from this feature); total coverage `94.16%`, gate `fail_under = 93` reached; `ruff check src tests` and `black --check src tests` clean; the live golden-org tests are green with local Redis up. This entry lands with `docs: detection tiers, README, and development log`.
+
+## Git-first (local clone) detection (2026-10-16)
+
+**Scope:** fourteen commits on `git-first-detection` (base `0e415b3`): `7f4a692`/`3886365` (git I/O core; utf-8 decode and child-reap fixes), `437725a` (PR-ref fetch and merge-message primitives), `45925a6`/`585d69c` (local file/history and PR-commit/branch channels), `9fe2396` (detect-spec `source`/`clone`), `c41e45b` (cloner detect mode and measured size factor), `25a3100`/`d0fa114` (git orchestrator; cancellation lifecycle), `d22b4a0`/`68a95ef`/`f3d1019`/`67491cf` (runner branch, method chooser and clone estimate, API-mode guards, detail page), `d2a6306` (suite-gate fixes). Spec: `design/detection-pipeline.md` (stages 0–8); plan: `docs/superpowers/plans/2026-10-15-git-first-detection.md`. Tasks T1–T11:
+
+- **T1** — git I/O core (`src/detect/gitio.py`): `run_git`, `clone_lean` (`--depth=N --filter=blob:none --no-checkout`), tree/blob reads, log parsing (`CommitRecord`, `read_log`).
+- **T2** — PR-refs primitives (`fetch_pr_refs`, `list_pr_refs`, `walk_pr_shas`, `read_commits`) and the merge-message branch parser.
+- **T3** — local file and history channels (`src/detect/local_channels.py`), returning the same `ChannelResult` shapes as the API channels.
+- **T4** — local `pr_metadata` and `branch` channels.
+- **T5** — detect-spec `source` (`"api"` default / `"git"`) and `clone` (`{depth, keep}`) options; existing specs replay unchanged.
+- **T6** — cloner detect mode + measured size factor (0.006 × stored `size_kb`; estimate only).
+- **T7** — git orchestrator (`run_git_detection`): walk → match → rollup → insert → delete, same `RunPayload` as the API orchestration.
+- **T8** — runner branch: `source == "git"` skips API dependencies entirely (enforced by test).
+- **T9** — detection-method chooser on the options page: both methods with pros/cons and size-based estimates (API calls/hours; clone MB/minutes for the selected top-N).
+- **T10** — run detail shows the scan source and warns when `label`/`issue` were skipped.
+- **T11** — docs (README, this entry) and full verification.
+
+**Measured numbers** (ground-truth replay against the API run's 41,189 evidence rows across 882 repos): **40,618 rows recovered (98.6%)**, **878 of 882 repos (99.5%)**, **100% of PR commits** via the one PR-refs fetch (40% by a plain clone; a targeted follow-up closed the single straggler), and **174 of 744 branch names (23%** — 28% where the project merges with merge commits, 0% where it squashes/rebases). Git mode: zero API calls; ~1 h and ~4 GB for the 17.7k-repo corpus with clones kept (< 1 GB peak with the default delete-after-scan); `label`/`issue` are recorded as skipped (they contributed 1 evidence row API-side).
+
+**Tests added:** `tests/unit/test_gitio.py`, `tests/unit/test_detect_local_channels.py`, `tests/unit/test_git_orchestrator.py`, `tests/unit/test_detect_runner.py`; `tests/unit/test_cloner.py` extended with detect-mode factor/flags; `tests/contract/test_detect_routes.py` covers the spec round-trip, the git-source POST, and the git estimate partial; golden snapshots regenerated for the options page, estimate partial, and detail page.
+
+**Verification:** full suite `1701 passed, 1 failed` (1702 collected, 0 skipped; the failure is the pre-existing, environment-dependent disk-reserve clone-estimate test `tests/unit/test_cloner.py::test_full_run_clone_estimate_matches_the_full_scan_path` — host C: free ~1504 MB < the 2048 MB reserve, reproduces at baseline commits); total coverage `94.22%`, gate `fail_under = 93` reached; `ruff check src tests` and `black --check src tests` clean. One-repo live smoke (`serde-rs/serde`, no token): 361 tree paths, 100 commits. This entry lands with `docs: document git-first detection scan`.

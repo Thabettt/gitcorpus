@@ -554,6 +554,8 @@ Two pieces of test furniture deserve a sentence each. The `golden/` suite snapsh
 
 **Coding-agent detection shipped.** A finished search or corpus offers **Detect agent use** (the nav's **Detections** page lists runs): choose a frozen trace pack, the agents to match, and any of the eight channels (file, author, branch, label, bot, commit trailer, PR metadata, issue). The run scans the frozen items API-only — no discovery calls, no cloning — storing per-repo evidence, a summary rollup, and a `detections.csv` export. Depth is windowed (last 100 commits, most recent 100 PRs and issues) and labelled as windowed, never a census; tier boundaries are in [`docs/detection-tiers.md`](docs/detection-tiers.md).
 
+**Two selectable methods per run.** Detection runs over the GitHub API — the default, unchanged, rate-limited method above — or over a **local clone** (`source: "git"`): a lean clone (`--depth=N --filter=blob:none`), one PR-refs fetch, and local matching, with evidence rows, rollups, and summaries landing in the same tables. The options page presents both with their pros and cons and a size-based estimate for each — API calls/hours; clone MB/minutes for the selected top-N. Git mode uses zero API calls (no token needed), deletes clones after scanning by default (`clone.keep: true` retains them), and records `label`/`issue` as skipped channels — about an hour and about 4 GB for the 17.7k-repo corpus.
+
 **Designed but not implemented** — the console and docs label these clearly rather than pretending:
 
 - **`min_loc`/`max_loc`**: accepted and recorded, but full-depth LOC enrichment is not wired; using them flags the run incomplete.
