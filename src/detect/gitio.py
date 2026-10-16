@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from lib import cancellation
+from lib.batching import chunked
 
 _CANCEL_POLL = 0.1
 _STDERR_LIMIT = 200
 LOG_FORMAT = "%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%cI%x1f%B%x1e"
 _UNIT = "\x1f"
 _RECORD = "\x1e"
+_MERGE_PR = re.compile(r"Merge pull request #(?P<pr>\d+) from (?P<owner>[^/\s]+)/(?P<head>\S+)")
+_MERGE_LOCAL = re.compile(r"Merge branch '(?P<head>[^']+)'")
+_SHOW_BATCH = 200
 
 
 class GitError(RuntimeError):
@@ -142,3 +147,62 @@ def parse_log(output: str) -> tuple[CommitRecord, ...]:
 def read_log(repo: GitRepo, *, limit: int) -> tuple[CommitRecord, ...]:
     output = repo.git("log", "-n", str(limit), f"--format={LOG_FORMAT}", "HEAD")
     return parse_log(output)
+
+
+def fetch_pr_refs(repo: GitRepo, *, depth: int) -> None:
+    repo.git(
+        "fetch",
+        "--quiet",
+        "--depth",
+        str(depth),
+        "--filter=tree:0",
+        "--no-tags",
+        "origin",
+        "+refs/pull/*/head:refs/gc/pr/*",
+    )
+
+
+def list_pr_refs(repo: GitRepo) -> dict[int, str]:
+    output = repo.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/gc/pr")
+    refs: dict[int, str] = {}
+    for line in output.splitlines():
+        name, _, sha = line.partition(" ")
+        number = name.rpartition("/")[2]
+        if number.isdigit() and sha:
+            refs[int(number)] = sha
+    return refs
+
+
+def walk_pr_shas(
+    repo: GitRepo, refs: Mapping[int, str], *, depth: int
+) -> dict[int, tuple[str, ...]]:
+    walks: dict[int, tuple[str, ...]] = {}
+    for number, sha in sorted(refs.items()):
+        output = repo.git("rev-list", "-n", str(depth), sha)
+        walks[number] = tuple(line for line in output.splitlines() if line)
+    return walks
+
+
+def read_commits(repo: GitRepo, shas: Sequence[str]) -> dict[str, CommitRecord]:
+    records: dict[str, CommitRecord] = {}
+    for batch in chunked(list(shas), _SHOW_BATCH):
+        output = repo.git("show", "-s", f"--format={LOG_FORMAT}", *batch)
+        for record in parse_log(output):
+            records[record.sha] = record
+    return records
+
+
+def parse_merge_branches(
+    messages: Iterable[tuple[str | None, str]],
+) -> list[tuple[int | None, str]]:
+    found: list[tuple[int | None, str]] = []
+    for _sha, message in messages:
+        first = (message or "").split("\n", 1)[0].strip()
+        match = _MERGE_PR.match(first)
+        if match:
+            found.append((int(match.group("pr")), match.group("head")))
+            continue
+        match = _MERGE_LOCAL.match(first)
+        if match:
+            found.append((None, match.group("head")))
+    return found

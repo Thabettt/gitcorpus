@@ -12,11 +12,16 @@ from detect.gitio import (
     GitError,
     GitRepo,
     clone_lean,
+    fetch_pr_refs,
+    list_pr_refs,
     list_tree,
     parse_log,
+    parse_merge_branches,
     read_blob,
+    read_commits,
     read_log,
     run_git,
+    walk_pr_shas,
 )
 from lib import cancellation
 from lib.cancellation import RunCancelled
@@ -180,3 +185,70 @@ def test_run_git_kills_child_when_cancelled(tmp_path, monkeypatch):
     assert process.killed
     assert process.reaped
     assert process.returncode == -9
+
+
+_GOOD_REF_FORMAT = "refs/gc/pr/12 aaa\n" "refs/gc/pr/7 bbb\n" "refs/gc/pr/notes ccc\n"
+
+
+def test_list_pr_refs_parses_numbers_and_skips_non_numeric():
+    fake = FakeRepo(lambda args: _GOOD_REF_FORMAT if args[0] == "for-each-ref" else None)
+    assert list_pr_refs(fake) == {12: "aaa", 7: "bbb"}
+
+
+def test_fetch_pr_refs_uses_commit_only_filter():
+    fake = FakeRepo(lambda args: "" if args[0] == "fetch" else None)
+    fetch_pr_refs(fake, depth=100)
+    assert fake.calls[0] == (
+        "fetch",
+        "--quiet",
+        "--depth",
+        "100",
+        "--filter=tree:0",
+        "--no-tags",
+        "origin",
+        "+refs/pull/*/head:refs/gc/pr/*",
+    )
+
+
+def test_walk_pr_shas_reads_each_ref():
+    def handler(args):
+        if args[0] == "rev-list":
+            return {"aaa": "s1\ns2\n", "bbb": "s2\ns3\n"}[args[3]]
+        return None
+
+    fake = FakeRepo(handler)
+    assert walk_pr_shas(fake, {12: "aaa", 7: "bbb"}, depth=2) == {
+        12: ("s1", "s2"),
+        7: ("s2", "s3"),
+    }
+
+
+def test_read_commits_parses_show_output():
+    def handler(args):
+        if args[0] != "show":
+            return None
+        return "".join(
+            f"{sha}\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+            f"\x1f2026-01-01T00:00:00+00:00\x1ffeat {sha}\x1e\n"
+            for sha in args[3:]
+        )
+
+    fake = FakeRepo(handler)
+    records = read_commits(fake, ["a", "b"])
+    assert set(records) == {"a", "b"}
+    assert records["a"].message == "feat a"
+
+
+def test_parse_merge_branches_handles_pr_local_and_fork_forms():
+    messages = [
+        ("s1", "Merge pull request #123 from octo/claude/fix-login\n\nbody text"),
+        ("s2", "Merge branch 'codex/thing' into main"),
+        ("s3", "Merge pull request #7 from forkowner/devin/rewrite"),
+        ("s4", "feat: normal commit"),
+        ("s5", "chore: mention Merge pull request #999 from octo/x in body"),
+    ]
+    assert parse_merge_branches(messages) == [
+        (123, "claude/fix-login"),
+        (None, "codex/thing"),
+        (7, "devin/rewrite"),
+    ]
