@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,8 @@ from detect.git_orchestrator import GitScanConfig, run_git_detection
 from detect.gitio import GitError, GitRepo
 from detect.orchestrator import DetectOptions
 from detect.packs import Pack, Pattern, freeze_pack
+from lib import cancellation
+from lib.cancellation import RunCancelled
 from serve.executor import create_run
 
 
@@ -183,3 +187,114 @@ def test_run_git_detection_refuses_on_low_disk(clean_db, tmp_path, monkeypatch):
             PACK,
             config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         )
+
+
+def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    seen_cancel = threading.Event()
+
+    class CancellableRepo(FakeRepo):
+        def git(self, *args: str) -> str:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    cancellation.check()
+                except RunCancelled:
+                    seen_cancel.set()
+                    raise
+                time.sleep(0.01)
+            raise AssertionError("scan worker never observed the cancellation binding")
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    cancel = threading.Event()
+    token = cancellation.bind(cancel.is_set)
+    timer = threading.Timer(0.2, cancel.set)
+    timer.start()
+    try:
+        with pytest.raises(RunCancelled):
+            run_git_detection(
+                engine,
+                detect_run,
+                make_spec(source_id, frozenset({"file"})),
+                PACK,
+                config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+                clone_fn=clone,
+                repo_factory=lambda dest: CancellableRepo(happy_handler),
+            )
+    finally:
+        timer.cancel()
+        cancellation.reset(token)
+    assert seen_cancel.is_set()
+
+
+def test_run_git_detection_cancel_returns_promptly_with_wedged_scans(
+    clean_db, tmp_path, monkeypatch
+):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    release = threading.Event()
+    started = threading.Event()
+
+    class WedgedRepo(FakeRepo):
+        def git(self, *args: str) -> str:
+            started.set()
+            release.wait()
+            return happy_handler(args)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    cancel = threading.Event()
+    outcome: list[object] = []
+
+    def drive() -> None:
+        token = cancellation.bind(cancel.is_set)
+        try:
+            run_git_detection(
+                engine,
+                detect_run,
+                make_spec(source_id, frozenset({"file"})),
+                PACK,
+                config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+                clone_fn=clone,
+                repo_factory=lambda dest: WedgedRepo(happy_handler),
+            )
+            outcome.append(None)
+        except BaseException as exc:
+            outcome.append(exc)
+        finally:
+            cancellation.reset(token)
+
+    thread = threading.Thread(target=drive)
+    thread.start()
+    try:
+        assert started.wait(timeout=5)
+        time.sleep(0.1)
+        cancel.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+        assert outcome and isinstance(outcome[0], RunCancelled)
+    finally:
+        release.set()
+        thread.join(timeout=5)

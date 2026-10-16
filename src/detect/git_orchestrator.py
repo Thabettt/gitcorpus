@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import shutil
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,7 @@ LOCAL_CHANNELS = (
 )
 API_ONLY_CHANNELS = ("label", "issue")
 _HISTORY_KEYS = ("author", "commit_trailer", "bot")
+_CANCEL_POLL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -119,22 +121,33 @@ def run_git_detection(
         )
 
     try:
-        with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
+        max_workers = max(1, cfg.workers)
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        cancelled = False
+        try:
             pending = iter(candidates)
             in_flight: dict[Future, Mapping] = {}
             exhausted = False
             done = 0
             while True:
-                while not exhausted and len(in_flight) < max(1, cfg.workers):
+                while not exhausted and len(in_flight) < max_workers:
                     cancellation.check()
                     candidate = next(pending, None)
                     if candidate is None:
                         exhausted = True
                         break
-                    in_flight[pool.submit(scan_repo, candidate)] = candidate
+                    context = contextvars.copy_context()
+                    future = pool.submit(context.run, scan_repo, candidate)
+                    in_flight[future] = candidate
                 if not in_flight:
                     break
-                future = next(as_completed(in_flight))
+                ready, _ = wait(
+                    in_flight, timeout=_CANCEL_POLL_SECONDS, return_when=FIRST_COMPLETED
+                )
+                if not ready:
+                    cancellation.check()
+                    continue
+                future = next(iter(ready))
                 cancellation.check()
                 candidate = in_flight.pop(future)
                 try:
@@ -164,6 +177,11 @@ def run_git_detection(
                     shutil.rmtree(run_dir / scan.full_name.replace("/", "__"), ignore_errors=True)
                 done += 1
                 progress.report("detecting", done, total)
+        except RunCancelled:
+            cancelled = True
+            raise
+        finally:
+            pool.shutdown(wait=not cancelled, cancel_futures=True)
     finally:
         if not cfg.keep:
             shutil.rmtree(run_dir, ignore_errors=True)
