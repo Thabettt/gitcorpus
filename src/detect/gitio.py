@@ -35,6 +35,12 @@ def git_env() -> dict[str, str]:
     return env
 
 
+def _terminate(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.kill()
+    process.communicate()
+
+
 def run_git(argv: Sequence[str], *, cwd: Path | str, timeout: float | None = None) -> str:
     process = subprocess.Popen(
         ["git", *argv],
@@ -44,21 +50,27 @@ def run_git(argv: Sequence[str], *, cwd: Path | str, timeout: float | None = Non
         stderr=subprocess.PIPE,
         env=git_env(),
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     deadline = None if timeout is None else time.monotonic() + timeout
-    while True:
-        cancellation.check()
-        step = _CANCEL_POLL
-        if deadline is not None:
-            step = min(step, max(0.01, deadline - time.monotonic()))
-        try:
-            stdout, stderr = process.communicate(timeout=step)
-            break
-        except subprocess.TimeoutExpired:
-            if deadline is not None and time.monotonic() >= deadline:
-                process.kill()
-                process.communicate()
-                raise subprocess.TimeoutExpired(["git", *argv], timeout) from None
+    try:
+        while True:
+            cancellation.check()
+            step = _CANCEL_POLL
+            if deadline is not None:
+                step = min(step, max(0.01, deadline - time.monotonic()))
+            try:
+                stdout, stderr = process.communicate(timeout=step)
+                break
+            except subprocess.TimeoutExpired:
+                if deadline is not None and time.monotonic() >= deadline:
+                    process.kill()
+                    process.communicate()
+                    raise subprocess.TimeoutExpired(["git", *argv], timeout) from None
+    except BaseException:
+        _terminate(process)
+        raise
     if process.returncode != 0:
         raise GitError(["git", *argv], process.returncode, stderr or "")
     return stdout or ""

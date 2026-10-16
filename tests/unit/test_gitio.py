@@ -16,7 +16,10 @@ from detect.gitio import (
     parse_log,
     read_blob,
     read_log,
+    run_git,
 )
+from lib import cancellation
+from lib.cancellation import RunCancelled
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -35,6 +38,26 @@ class FakeRepo(GitRepo):
         if result is None:
             raise GitError(list(args), 128, "fake: unknown command")
         return result
+
+
+class FakeProcess:
+    """Narrow Popen double that records kill/reap for the cancellation test."""
+
+    def __init__(self):
+        self.returncode = None
+        self.killed = False
+        self.reaped = False
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    def communicate(self, timeout=None):
+        self.reaped = True
+        return "", ""
 
 
 def test_parse_log_splits_records_and_keeps_multiline_messages():
@@ -122,3 +145,38 @@ def test_run_git_raises_on_missing_head(tmp_path):
     fake = GitRepo(repo_dir)
     with pytest.raises(GitError):
         fake.git("log", "-n", "1", "HEAD")
+
+
+@needs_git
+def test_real_git_round_trips_non_ascii_messages(tmp_path):
+    repo_dir = tmp_path / "r"
+    repo_dir.mkdir()
+    message = "feat: поддержка локали"
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Jane",
+        "GIT_AUTHOR_EMAIL": "jane@example.com",
+        "GIT_COMMITTER_NAME": "Jane",
+        "GIT_COMMITTER_EMAIL": "jane@example.com",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, env=env)
+    (repo_dir / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo_dir, check=True, env=env)
+
+    records = read_log(GitRepo(repo_dir), limit=10)
+    assert records[0].message.strip() == message
+
+
+def test_run_git_kills_child_when_cancelled(tmp_path, monkeypatch):
+    process = FakeProcess()
+    monkeypatch.setattr(gitio.subprocess, "Popen", lambda *args, **kwargs: process)
+    token = cancellation.bind(lambda: True)
+    try:
+        with pytest.raises(RunCancelled):
+            run_git(["fetch", "origin"], cwd=tmp_path)
+    finally:
+        cancellation.reset(token)
+    assert process.killed
+    assert process.reaped
+    assert process.returncode == -9
