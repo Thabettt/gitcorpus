@@ -38,6 +38,9 @@ class DetectOptions:
     windows: Mapping[str, int] = field(
         default_factory=lambda: {"commits": 100, "prs": 100, "issues": 100}
     )
+    source: str = "api"
+    clone_depth: int = 100
+    clone_keep: bool = False
 
 
 @dataclass(frozen=True)

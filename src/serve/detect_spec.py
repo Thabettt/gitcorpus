@@ -71,6 +71,27 @@ def parse_detect_spec(doc: Mapping[str, object]) -> DetectOptions:
                 windows[key] = value
             else:
                 errors.append(f"windows.{key} must be an integer between 1 and 1000")
+    spec_source = doc.get("source", "api")
+    if spec_source not in ("api", "git"):
+        errors.append("source must be 'api' or 'git'")
+        spec_source = "api"
+    clone_depth = 100
+    clone_keep = False
+    raw_clone = doc.get("clone")
+    if raw_clone is not None:
+        if not isinstance(raw_clone, Mapping):
+            errors.append("clone must be an object")
+        else:
+            depth = raw_clone.get("depth", 100)
+            if isinstance(depth, int) and not isinstance(depth, bool) and 1 <= depth <= 5000:
+                clone_depth = depth
+            else:
+                errors.append("clone.depth must be an integer between 1 and 5000")
+            keep = raw_clone.get("keep", False)
+            if isinstance(keep, bool):
+                clone_keep = keep
+            else:
+                errors.append("clone.keep must be true or false")
     if errors:
         raise DetectSpecError(errors, hints)
     return DetectOptions(
@@ -80,6 +101,9 @@ def parse_detect_spec(doc: Mapping[str, object]) -> DetectOptions:
         channels=channels,
         limit=limit,
         windows=windows,
+        source=str(spec_source),
+        clone_depth=clone_depth,
+        clone_keep=clone_keep,
     )
 
 
@@ -93,4 +117,6 @@ def detect_spec_to_dict(spec: DetectOptions) -> dict:
         "channels": [channel for channel in CHANNELS if channel in spec.channels],
         "limit": spec.limit,
         "windows": dict(spec.windows),
+        "source": spec.source,
+        "clone": {"depth": spec.clone_depth, "keep": spec.clone_keep},
     }

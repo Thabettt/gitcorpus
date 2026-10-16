@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from serve.app import create_app
-from serve.detect_spec import detect_spec_to_dict, parse_detect_spec
+from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -399,3 +399,65 @@ def test_new_detection_from_json_export_imports(clean):
         (1, "octo/one", 9),
         (6, "octo/two", 2),
     ]
+
+
+def test_detect_spec_parses_git_source_and_clone_options():
+    doc = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file", "label"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+        "source": "git",
+        "clone": {"depth": 250, "keep": True},
+    }
+    spec = parse_detect_spec(doc)
+    assert spec.source == "git"
+    assert spec.clone_depth == 250
+    assert spec.clone_keep is True
+    round_tripped = detect_spec_to_dict(spec)
+    assert round_tripped["source"] == "git"
+    assert round_tripped["clone"] == {"depth": 250, "keep": True}
+
+
+def test_detect_spec_defaults_to_api_source():
+    doc = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+    }
+    spec = parse_detect_spec(doc)
+    assert spec.source == "api"
+    assert spec.clone_depth == 100
+    assert spec.clone_keep is False
+    assert detect_spec_to_dict(spec)["source"] == "api"
+
+
+def test_detect_spec_rejects_unknown_source_and_bad_clone():
+    base = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+    }
+    with pytest.raises(DetectSpecError) as bad_source:
+        parse_detect_spec({**base, "source": "ftp"})
+    assert any("source must be" in error for error in bad_source.value.errors)
+    with pytest.raises(DetectSpecError) as bad_depth:
+        parse_detect_spec({**base, "clone": {"depth": 0}})
+    assert any("clone.depth must be" in error for error in bad_depth.value.errors)
+    with pytest.raises(DetectSpecError) as bad_keep:
+        parse_detect_spec({**base, "clone": {"keep": "yes"}})
+    assert any("clone.keep must be" in error for error in bad_keep.value.errors)
