@@ -242,9 +242,11 @@ def test_start_detection_rejects_empty_selection(clean):
 def test_estimate_partial_renders(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
-    response = client.get(f"/partials/detections/{source}/estimate?channels=file&channels=issue&limit=10")
+    response = client.get(
+        f"/partials/detections/{source}/estimate?channels=file&channels=issue&limit=10"
+    )
     assert response.status_code == 200
-    assert "REST calls" in response.text
+    assert "REST" in response.text
 
 
 def test_detect_status_partial(clean):
@@ -461,3 +463,54 @@ def test_detect_spec_rejects_unknown_source_and_bad_clone():
     with pytest.raises(DetectSpecError) as bad_keep:
         parse_detect_spec({**base, "clone": {"keep": "yes"}})
     assert any("clone.keep must be" in error for error in bad_keep.value.errors)
+
+
+def test_options_page_presents_both_detection_methods(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    response = client.get(f"/detections/from/{source}")
+    assert response.status_code == 200
+    assert "GitHub API" in response.text
+    assert "Local clone (git)" in response.text
+    assert "5,000 REST requests + 5,000 GraphQL points per hour" in response.text
+    assert "No API quota" in response.text
+    assert "99.5% of detected repos" in response.text
+
+
+def test_estimate_partial_shows_both_methods(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    response = client.get(
+        f"/partials/detections/{source}/estimate?source=git&channels=file&limit=10"
+    )
+    assert response.status_code == 200
+    assert "REST" in response.text
+    assert "Local clone (git)" in response.text
+    assert "MB of lean clones" in response.text
+
+
+def test_start_detection_records_git_source_and_clone(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/detections/from/{source}")
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "channels": ["file", "commit_trailer"],
+            "source": "git",
+            "clone_depth": "250",
+            "clone_keep": "true",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with clean.connect() as connection:
+        spec = connection.execute(
+            text("SELECT filter_spec FROM runs WHERE kind = 'detect' ORDER BY id DESC LIMIT 1")
+        ).scalar_one()
+    assert spec["source"] == "git"
+    assert spec["clone"] == {"depth": 250, "keep": True}

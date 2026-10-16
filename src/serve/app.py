@@ -1109,6 +1109,7 @@ def create_app(
         engine_factory=engine_for,
         executor_factory=executor_for,
         runner_factory=detect_runner_for,
+        clone_disk_free=clone_disk_free,
     )
 
     return application

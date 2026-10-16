@@ -2299,3 +2299,21 @@ kbd {
     display: none;
   }
 }
+
+.method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+.method-card {
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius);
+  padding: 12px 14px;
+  cursor: pointer;
+  background: var(--gc-surface);
+}
+.method-card:has(input:checked) { border-color: var(--gc-accent); background: var(--gc-accent-soft); }
+.method-title { display: block; font-weight: 600; margin-bottom: 6px; }
+.method-pros, .method-cons { margin: 6px 0; padding-left: 18px; font-size: 0.9rem; }
+.method-pros li::marker { color: var(--gc-ok); }
+.method-cons li::marker { color: var(--gc-down); }
+.channel-api-only { opacity: 0.55; }
+.estimate-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.estimate-table th, .estimate-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--gc-border); }
+.estimate-table tr.estimate-selected { background: var(--gc-accent-soft); }

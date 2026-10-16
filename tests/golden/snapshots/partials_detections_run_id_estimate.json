@@ -4,5 +4,5 @@
   "headers": {
     "content-type": "text/html; charset=utf-8"
   },
-  "body": "<div id=\"detect-estimate\">\n  <p><strong>9</strong> REST calls + <strong>9</strong> GraphQL calls ≈ <strong>0.0h</strong> for 3 repos (10 concurrent).</p>\n  \n  <p class=\"muted\">Agent selection does not change the call count. Estimates assume the steady-state token budget and track actuals within the pilot tolerance.</p>\n  \n</div>"
+  "body": "<div id=\"detect-estimate\">\n  <p class=\"muted\">For 3 repos — the selected method is highlighted; the other stays fully available for any run.</p>\n  <table class=\"estimate-table\">\n    <thead>\n      <tr><th>Method</th><th>Cost</th><th>Time</th><th>Disk</th></tr>\n    </thead>\n    <tbody>\n      <tr class=\"estimate-selected\">\n        <td><strong>GitHub API</strong> — selected</td>\n        <td>9 REST + 9 GraphQL calls</td>\n        <td>≈0.0 h (quota-bound)</td>\n        <td>none</td>\n      </tr>\n      <tr class=\"\">\n        <td><strong>Local clone (git)</strong></td>\n        <td>≈0.0 MB of lean clones (1000000.0 MB free)</td>\n        <td>≈0.0–0.0 min at 10 workers</td>\n        <td>&lt;1 GB peak, or ≈0.0 MB kept</td>\n      </tr>\n    </tbody>\n  </table>\n  \n  \n  <p class=\"muted\">Git time uses the measured 1–4 s per repo (clone + reads); sizes come from the corpus's stored repo sizes.</p>\n</div>"
 }

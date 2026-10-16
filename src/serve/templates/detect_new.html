@@ -4,7 +4,7 @@
 <section class="panel" id="detect-new">
   <div class="panel-head">
     <h1>New detection</h1>
-    <p class="muted">Detection scans a frozen repo list through GitHub’s API on its own allowance and stores per-repo agent evidence. Pick a finished search, or import a repo list from CSV.</p>
+    <p class="muted">Two detection methods are available: <strong>GitHub API</strong> (default — no downloads, rate-limited) and <strong>local clone via git</strong> (no API quota; downloads each repo and records the API-only <code>label</code>/<code>issue</code> channels as skipped). Pick one on the next screen. Detection scans a frozen repo list and stores per-repo agent evidence.</p>
   </div>
   {% if errors %}
   <div id="detect-new-errors" class="empty-state error-state" role="alert">

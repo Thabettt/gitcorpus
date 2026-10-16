@@ -14,6 +14,7 @@ from detect.estimate import estimate
 from detect.git_orchestrator import GitScanConfig, run_git_detection
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
 from detect.packs import load_frozen
+from enrich.cloner import CloneMode, estimate_clone, free_disk_mb
 from lib.deadlines import clone_timeout_seconds
 from lib.gh_client import API_VERSION, load_tokens
 from serve import errors
@@ -310,6 +311,7 @@ def register_detect(
     engine_factory: Callable[[], Engine],
     executor_factory: Callable[[], RunExecutor],
     runner_factory: Callable[[], Runner],
+    clone_disk_free: Callable[[str], float] | None = None,
 ) -> None:
     @application.get("/detections", response_class=HTMLResponse)
     def detections_page(request: Request):
@@ -431,6 +433,13 @@ def register_detect(
                 limit = int(raw_limit)
             except ValueError:
                 limit = 0
+        raw_depth = str(form.get("clone_depth") or "").strip()
+        clone_depth: int | None = None
+        if raw_depth:
+            try:
+                clone_depth = int(raw_depth)
+            except ValueError:
+                clone_depth = 0
         doc = {
             "version": 1,
             "kind": "detect",
@@ -441,6 +450,11 @@ def register_detect(
             "channels": [str(value) for value in form.getlist("channels") if str(value).strip()],
             "limit": limit,
             "windows": {"commits": 100, "prs": 100, "issues": 100},
+            "source": str(form.get("source") or "api").strip(),
+            "clone": {
+                "depth": clone_depth if clone_depth is not None else 100,
+                "keep": form.get("clone_keep") is not None,
+            },
         }
         engine = engine_factory()
         try:
@@ -559,18 +573,45 @@ def register_detect(
         channels = [channel for channel in raw_channels if channel in CHANNELS] or list(CHANNELS)
         raw_limit = request.query_params.get("limit", "").strip()
         candidates = _candidate_count(engine, run_id)
-        if raw_limit.isdigit() and int(raw_limit) > 0:
-            candidates = min(candidates, int(raw_limit))
+        limit_value = int(raw_limit) if raw_limit.isdigit() and int(raw_limit) > 0 else None
+        repos = min(candidates, limit_value) if limit_value is not None else candidates
         settings = load_run_settings(engine)
-        result = estimate(
-            candidates,
+        api_estimate = estimate(
+            repos,
             channels,
             tokens=max(1, len(load_tokens())),
             concurrency=settings.limiter_max_concurrent,
             deadline_seconds=float(settings.request_deadline_seconds),
         )
+        free_mb = (
+            clone_disk_free("clones") if clone_disk_free is not None else free_disk_mb("clones")
+        )
+        clone_estimate = estimate_clone(
+            engine,
+            run_id,
+            limit=repos,
+            mode=CloneMode.DETECT,
+            disk_free_mb=free_mb,
+        )
+        workers = max(1, min(settings.limiter_max_concurrent, 32))
+        git_estimate = {
+            "repos": clone_estimate.repos,
+            "estimated_mb": round(clone_estimate.estimated_mb, 1),
+            "free_mb": round(free_mb, 1),
+            "workers": workers,
+            "minutes_low": round(clone_estimate.repos * 1.0 / workers / 60, 1),
+            "minutes_high": round(clone_estimate.repos * 4.0 / workers / 60, 1),
+            "warnings": list(clone_estimate.warnings),
+        }
         return templates.TemplateResponse(
-            request, "partials/detect_estimate.html", {"estimate": result}
+            request,
+            "partials/detect_estimate.html",
+            {
+                "selected": (request.query_params.get("source") or "api").strip(),
+                "repos": repos,
+                "api": api_estimate,
+                "git": git_estimate,
+            },
         )
 
     @application.get("/partials/detections/{run_id}/status", response_class=HTMLResponse)

@@ -1,8 +1,29 @@
 <div id="detect-estimate">
-  <p><strong>{{ estimate.rest_calls }}</strong> REST calls + <strong>{{ estimate.graphql_calls }}</strong> GraphQL calls ≈ <strong>{{ estimate.hours }}h</strong> for {{ estimate.repos }} repos ({{ estimate.concurrency }} concurrent).</p>
-  {% if estimate.deadline_exceeded %}
-  <p class="flag warn">This estimate exceeds the request deadline; the run would stop partial. Narrow the top-N or the channels.</p>
-  {% else %}
-  <p class="muted">Agent selection does not change the call count. Estimates assume the steady-state token budget and track actuals within the pilot tolerance.</p>
+  <p class="muted">For {{ repos }} repos — the selected method is highlighted; the other stays fully available for any run.</p>
+  <table class="estimate-table">
+    <thead>
+      <tr><th>Method</th><th>Cost</th><th>Time</th><th>Disk</th></tr>
+    </thead>
+    <tbody>
+      <tr class="{% if selected == 'api' %}estimate-selected{% endif %}">
+        <td><strong>GitHub API</strong>{% if selected == 'api' %} — selected{% endif %}</td>
+        <td>{{ api.rest_calls }} REST + {{ api.graphql_calls }} GraphQL calls</td>
+        <td>≈{{ api.hours }} h (quota-bound)</td>
+        <td>none</td>
+      </tr>
+      <tr class="{% if selected == 'git' %}estimate-selected{% endif %}">
+        <td><strong>Local clone (git)</strong>{% if selected == 'git' %} — selected{% endif %}</td>
+        <td>≈{{ git.estimated_mb }} MB of lean clones ({{ git.free_mb }} MB free)</td>
+        <td>≈{{ git.minutes_low }}–{{ git.minutes_high }} min at {{ git.workers }} workers</td>
+        <td>&lt;1 GB peak, or ≈{{ git.estimated_mb }} MB kept</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if api.deadline_exceeded %}
+  <p class="flag warn">The API estimate exceeds the request deadline; an API run would stop partial. Local clone has no deadline constraint.</p>
   {% endif %}
+  {% if git.warnings %}
+  <p class="flag warn">Local clone: {{ git.warnings | join("; ") }}</p>
+  {% endif %}
+  <p class="muted">Git time uses the measured 1–4 s per repo (clone + reads); sizes come from the corpus's stored repo sizes.</p>
 </div>

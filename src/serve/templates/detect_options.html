@@ -30,6 +30,46 @@
   {% endif %}
   <form id="detect-form" action="/detections/from/{{ source.id }}" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <section class="filter-section" id="detect-method-section">
+      <h2>Detection method</h2>
+      <p class="muted">Two methods are available per run and produce the same evidence tables — they differ in where the data comes from and what they cost. The API method stays the default; local clone is additive, not a replacement.</p>
+      <div class="method-grid">
+        <label class="method-card" for="detect-source-api">
+          <input type="radio" id="detect-source-api" name="source" value="api" checked>
+          <span class="method-title">GitHub API — default</span>
+          <ul class="method-pros">
+            <li>No downloads and no disk; starts instantly — small corpora finish in seconds.</li>
+            <li>The only method that can read the <code>label</code> and <code>issue</code> channels.</li>
+          </ul>
+          <ul class="method-cons">
+            <li>Rate-limited: 5,000 REST requests + 5,000 GraphQL points per hour per account.</li>
+            <li>Large corpora are slow (≈13 h for 17.7k repos) and stall when the quota is spent; long runs are fragile to interruptions.</li>
+          </ul>
+        </label>
+        <label class="method-card" for="detect-source-git">
+          <input type="radio" id="detect-source-git" name="source" value="git">
+          <span class="method-title">Local clone (git) — new</span>
+          <ul class="method-pros">
+            <li>No API quota and no tokens required — 17.7k repos scan in ≈1 h (measured).</li>
+            <li>Same evidence for 6 of 8 channels — 99.5% of detected repos recovered in validation against the API run.</li>
+            <li>Clones can be kept for offline re-scans with future packs.</li>
+          </ul>
+          <ul class="method-cons">
+            <li>Downloads ≈4 GB of lean clones for 17.7k repos; peak disk stays under 1 GB because each clone is deleted after its scan (keeping is opt-in).</li>
+            <li><code>label</code> and <code>issue</code> are API-only and are recorded as skipped.</li>
+            <li>Branch names are recovered only for projects that merge with merge commits (23% measured).</li>
+            <li>Needs git installed.</li>
+          </ul>
+        </label>
+      </div>
+      <div class="field-grid" id="detect-git-fields">
+        <label class="field" for="detect-clone-depth">
+          <span class="field-label">Clone depth (last N commits)</span>
+          <input class="field-input" id="detect-clone-depth" name="clone_depth" type="number" min="1" max="5000" value="100">
+        </label>
+        <label class="checkbox"><input type="checkbox" name="clone_keep" value="true"> <span>Keep clones on disk after scanning (off = delete each repo after its scan)</span></label>
+      </div>
+    </section>
     <section class="filter-section" id="detect-pack-section">
       <h2>Trace pack</h2>
       <p class="muted">The frozen pattern set used for matching — agent heuristics plus the 63-tool roster. Packs are immutable once frozen, and every stored evidence row carries this version.</p>
@@ -158,6 +198,30 @@
       });
     });
   }
+  var gitFields = document.getElementById("detect-git-fields");
+  var gitRadio = document.getElementById("detect-source-git");
+  var apiOnlyValues = { label: true, issue: true };
+  function syncMethod() {
+    var gitSelected = !!(gitRadio && gitRadio.checked);
+    if (gitFields) {
+      gitFields.hidden = !gitSelected;
+    }
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#detect-channels input[type=checkbox]"),
+      function (input) {
+        if (apiOnlyValues[input.value]) {
+          input.closest("label").classList.toggle("channel-api-only", gitSelected);
+        }
+      }
+    );
+  }
+  Array.prototype.forEach.call(
+    form ? form.querySelectorAll('input[name="source"]') : [],
+    function (radio) {
+      radio.addEventListener("change", syncMethod);
+    }
+  );
+  syncMethod();
 })();
 </script>
 {% endif %}
