@@ -249,6 +249,12 @@ def test_estimate_partial_renders(clean):
     assert "REST" in response.text
 
 
+def test_estimate_partial_404s_for_missing_run(clean):
+    client = make_client(clean)
+    response = client.get("/partials/detections/9999/estimate")
+    assert response.status_code == 404
+
+
 def test_detect_status_partial(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
@@ -359,6 +365,7 @@ def test_options_page_blocks_enter_submit_and_search_hides_labels(clean, repo_ro
     assert 'event.key === "Enter"' in response.text
     css = (repo_root / "src/serve/static/app.css").read_text(encoding="utf-8")
     assert ".checklist .checkbox[hidden]" in css
+    assert ".field-grid[hidden]" in css
 
 
 def test_new_detection_from_json_export_imports(clean):

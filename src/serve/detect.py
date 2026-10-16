@@ -567,6 +567,9 @@ def register_detect(
     @application.get("/partials/detections/{run_id}/estimate", response_class=HTMLResponse)
     def detect_estimate_partial(request: Request, run_id: int):
         engine = engine_factory()
+        row = _run_row(engine, run_id)
+        if row is None:
+            return HTMLResponse("run not found", status_code=404)
         raw_channels = request.query_params.getlist("channels")
         if len(raw_channels) == 1 and "," in raw_channels[0]:
             raw_channels = raw_channels[0].split(",")
