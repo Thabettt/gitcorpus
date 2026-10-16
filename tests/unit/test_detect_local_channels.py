@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from detect.gitio import GitError, GitRepo
-from detect.local_channels import detect_files_local, detect_history_local
+from detect.local_channels import (
+    detect_branch_local,
+    detect_files_local,
+    detect_history_local,
+    detect_pr_commits_local,
+)
 from detect.packs import Pack, Pattern
 
 PACK = Pack(
@@ -109,3 +114,57 @@ def test_detect_history_local_empty_repository():
     repo = FakeRepo(lambda args: None if args[0] == "log" else "")
     results = detect_history_local(repo, PACK)
     assert all(result.status == "unavailable" for result in results.values())
+
+
+_PR_LOG = (
+    "s1\x1fClaude\x1fnoreply@anthropic.com\x1fClaude\x1fnoreply@anthropic.com"
+    "\x1f2026-02-01T00:00:00+00:00\x1ffeat: pr work\x1e"
+    "\ns2\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+    "\x1f2026-02-02T00:00:00+00:00\x1fhuman work\x1e"
+)
+
+
+def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes():
+    def handler(args):
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "for-each-ref":
+            return "refs/gc/pr/7 aaa\nrefs/gc/pr/9 bbb\n"
+        if args[0] == "rev-list":
+            return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[3]]
+        if args[0] == "show":
+            return _PR_LOG
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    assert result.status == "ok"
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
+    assert all(h.evidence["propagated"] is True for h in result.hits)
+    assert result.stats["propagated_oids"] == ("s1",)
+    assert result.stats["created_at"] == {}
+
+
+def test_detect_pr_commits_local_without_refs_is_ok():
+    repo = FakeRepo(lambda args: "" if args[0] == "fetch" else "")
+    result = detect_pr_commits_local(repo, PACK)
+    assert result.status == "ok"
+    assert result.hits == ()
+    assert result.stats["propagated_oids"] == ()
+
+
+def test_detect_branch_local_parses_merge_messages():
+    log = (
+        "m1\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+        "\x1f2026-03-01T00:00:00+00:00\x1fMerge pull request #123 from octo/claude/fix\x1e"
+        "\nm2\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+        "\x1f2026-03-02T00:00:00+00:00\x1fMerge pull request #9 from fork/cursor/tool\x1e"
+        "\nm3\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+        "\x1f2026-03-03T00:00:00+00:00\x1ffeat: normal\x1e"
+    )
+    repo = FakeRepo(lambda args: log if args[0] == "log" else None)
+    result = detect_branch_local(repo, PACK, limit=100)
+    assert {(h.evidence["pr"], h.evidence["head"]) for h in result.hits} == {
+        (123, "claude/fix"),
+        (9, "cursor/tool"),
+    }
+    assert {h.agent for h in result.hits} == {"Claude Code", "Cursor"}

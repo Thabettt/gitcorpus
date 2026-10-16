@@ -3,15 +3,29 @@ from __future__ import annotations
 import re
 
 from detect.attribution import (
+    Hit,
     dedupe_hits,
     is_noise_commit,
     match_author_identities,
     match_bots,
+    match_branches,
     match_commit_messages,
     match_files,
 )
 from detect.channels import ChannelResult
-from detect.gitio import CommitRecord, GitError, GitRepo, list_tree, read_blob, read_log
+from detect.gitio import (
+    CommitRecord,
+    GitError,
+    GitRepo,
+    fetch_pr_refs,
+    list_pr_refs,
+    list_tree,
+    parse_merge_branches,
+    read_blob,
+    read_commits,
+    read_log,
+    walk_pr_shas,
+)
 from detect.packs import Pack
 from enrich.trees_first import FilePresence
 
@@ -125,3 +139,77 @@ def detect_history_local(
             note="generic bot evidence only (QA; never counted as adoption)",
         ),
     }
+
+
+def detect_pr_commits_local(
+    repo: GitRepo,
+    pack: Pack,
+    agents: frozenset[str] | None = None,
+    *,
+    depth: int = 100,
+) -> ChannelResult:
+    empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
+    try:
+        fetch_pr_refs(repo, depth=depth)
+        refs = list_pr_refs(repo)
+    except GitError:
+        return ChannelResult(status="partial", note="pull refs fetch failed", stats=empty_stats)
+    if not refs:
+        return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
+    walks = walk_pr_shas(repo, refs, depth=depth)
+    sha_to_pr: dict[str, int] = {}
+    for number in sorted(walks):
+        for sha in walks[number]:
+            sha_to_pr.setdefault(sha, number)
+    try:
+        records = read_commits(repo, sorted(sha_to_pr))
+    except GitError:
+        records = {}
+    hits: list[Hit] = []
+    for sha, number in sorted(sha_to_pr.items(), key=lambda item: (item[1], item[0])):
+        record = records.get(sha)
+        if record is None:
+            continue
+        matches = match_author_identities(pack, list(_entries(record)), agents)
+        matches += match_commit_messages(pack, [(sha, record.message)], agents)
+        for hit in dedupe_hits(matches):
+            hits.append(
+                Hit(hit.agent, "pr_metadata", {"pr": number, "commit": sha, "propagated": True})
+            )
+    hits = dedupe_hits(hits)
+    propagated = tuple(sorted({hit.evidence["commit"] for hit in hits}))
+    return ChannelResult(
+        hits=tuple(hits),
+        status="ok",
+        note=f"local PR refs; depth {depth}",
+        stats={**empty_stats, "propagated_oids": propagated},
+    )
+
+
+def detect_branch_local(
+    repo: GitRepo,
+    pack: Pack,
+    agents: frozenset[str] | None = None,
+    *,
+    limit: int = 100,
+) -> ChannelResult:
+    try:
+        records = read_log(repo, limit=limit)
+    except GitError:
+        return ChannelResult(status="unavailable", note="empty repository")
+    pairs = parse_merge_branches((record.sha, record.message) for record in records)
+    hits: list[Hit] = []
+    for number, head in pairs:
+        for hit in match_branches(pack, [head], agents):
+            hits.append(
+                Hit(
+                    hit.agent,
+                    "branch",
+                    {"pr": number, "head": head, "match": hit.evidence["match"]},
+                )
+            )
+    return ChannelResult(
+        hits=tuple(dedupe_hits(hits)),
+        status="ok",
+        note=f"window: last {limit} commits; merge messages only",
+    )
