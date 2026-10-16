@@ -291,6 +291,7 @@ def test_detection_summary_cards_are_readable(clean):
     assert 'class="info-pop"' in response.text
     assert "What the windowed commit ratio means" in response.text
     assert "conservative lower bound" in response.text
+    assert "source api" in response.text
 
 
 def test_detections_use_their_own_numbering(clean):
