@@ -11,16 +11,18 @@ from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
 from detect.estimate import estimate
+from detect.git_orchestrator import GitScanConfig, run_git_detection
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
 from detect.packs import load_frozen
+from lib.deadlines import clone_timeout_seconds
 from lib.gh_client import API_VERSION, load_tokens
 from serve import errors
 from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
 from serve.pages import (
     _item_count,
-    _stamp,
     _run_detail_summary,
+    _stamp,
     validate_csrf,
 )
 from serve.pages import (
@@ -37,11 +39,24 @@ from store.settings import load_run_settings
 
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
+        spec = parse_detect_spec(spec_doc)
+        settings = load_run_settings(engine)
+        pack = load_frozen(engine, spec.pack_version)
+        if spec.source == "git":
+            return run_git_detection(
+                engine,
+                run_id,
+                spec,
+                pack,
+                config=GitScanConfig(
+                    depth=spec.clone_depth,
+                    keep=spec.clone_keep,
+                    timeout=clone_timeout_seconds(),
+                    workers=min(settings.limiter_max_concurrent, 32),
+                ),
+            )
         from serve.runner import build_deps
 
-        settings = load_run_settings(engine)
-        spec = parse_detect_spec(spec_doc)
-        pack = load_frozen(engine, spec.pack_version)
         deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
         try:
             return run_detection(
