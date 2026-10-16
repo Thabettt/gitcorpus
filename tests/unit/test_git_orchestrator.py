@@ -20,7 +20,7 @@ class FakeRepo(GitRepo):
     """GitRepo whose git() answers from a canned handler."""
 
     def __init__(self, handler):
-        super().__init__(Path("."))
+        super().__init__(Path())
         self._handler = handler
 
     def git(self, *args: str) -> str:

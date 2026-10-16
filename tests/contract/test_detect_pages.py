@@ -262,9 +262,7 @@ def test_detect_status_poll_refreshes_page_when_run_finishes(clean):
             text("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = :id"),
             {"id": detect_id},
         )
-    running = client.get(
-        f"/partials/detections/{detect_id}/status", headers={"HX-Request": "true"}
-    )
+    running = client.get(f"/partials/detections/{detect_id}/status", headers={"HX-Request": "true"})
     with clean.begin() as connection:
         connection.execute(
             text("UPDATE runs SET status = 'done', finished_at = now() WHERE id = :id"),

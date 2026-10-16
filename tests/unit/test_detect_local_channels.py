@@ -34,7 +34,7 @@ PACK = Pack(
 
 class FakeRepo(GitRepo):
     def __init__(self, handler):
-        super().__init__(Path("."))
+        super().__init__(Path())
         self._handler = handler
 
     def git(self, *args: str) -> str:

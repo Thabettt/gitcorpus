@@ -561,7 +561,7 @@ def test_run_table_has_a_loading_indicator(client: TestClient, clean, tmp_path):
 
 
 def test_form_controls_have_labels_or_aria_labels(client: TestClient):
-    created = client.post("/filters", json={"name": "Rust", "spec": FILTER_A}).json()
+    client.post("/filters", json={"name": "Rust", "spec": FILTER_A})
 
     dashboard = client.get("/").text
     find = client.get("/find").text
