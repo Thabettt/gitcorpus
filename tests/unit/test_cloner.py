@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 
 from enrich.cloner import (
     MARKER_NAME,
+    MODE_FLAGS,
     CloneEstimate,
     CloneMode,
     CloneProgress,
@@ -18,17 +19,12 @@ from enrich.cloner import (
     _default_git_runner,
     clone_repos,
     estimate_clone,
+    estimate_clone_from_totals,
     parse_mode,
 )
 from serve.executor import create_run
 
 FILTER = {"gitcorpus_filter": 1, "q": "language:rust"}
-
-MODE_FLAGS = {
-    CloneMode.SHALLOW: ("--depth", "1"),
-    CloneMode.FILE_ONLY: ("--depth", "1", "--no-checkout"),
-    CloneMode.WINDOWED: ("--filter=blob:none", "--no-checkout"),
-}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -585,3 +581,17 @@ def test_clone_repos_cancellation_marks_status_and_stops(clean: Engine, tmp_path
     assert progress.completed == 1
     assert stats.failed == 0
     assert len(calls) == 1
+
+
+def test_estimate_detect_mode_uses_lean_factor():
+    estimate = estimate_clone_from_totals(10, 1_000_000, mode=CloneMode.DETECT)
+    assert estimate.estimated_mb == pytest.approx(1_000_000 * 0.006 / 1024)
+
+
+def test_detect_mode_flags_are_lean():
+    assert MODE_FLAGS[CloneMode.DETECT] == (
+        "--depth",
+        "100",
+        "--filter=blob:none",
+        "--no-checkout",
+    )

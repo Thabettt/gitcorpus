@@ -33,18 +33,21 @@ class CloneMode(StrEnum):
     SHALLOW = "shallow"
     FILE_ONLY = "file_only"
     WINDOWED = "windowed"
+    DETECT = "detect"
 
 
 MODE_FACTORS: dict[CloneMode, float] = {
     CloneMode.SHALLOW: 1.0,
     CloneMode.FILE_ONLY: 0.25,
     CloneMode.WINDOWED: 0.5,
+    CloneMode.DETECT: 0.006,  # measured on the 2026-10 corpus sample
 }
 
 MODE_FLAGS: dict[CloneMode, tuple[str, ...]] = {
     CloneMode.SHALLOW: ("--depth", "1"),
     CloneMode.FILE_ONLY: ("--depth", "1", "--no-checkout"),
     CloneMode.WINDOWED: ("--filter=blob:none", "--no-checkout"),
+    CloneMode.DETECT: ("--depth", "100", "--filter=blob:none", "--no-checkout"),
 }
 
 
