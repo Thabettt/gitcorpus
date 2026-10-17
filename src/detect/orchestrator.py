@@ -163,7 +163,9 @@ def _scan_repo(
     )
 
 
-def _failed_scan(candidate: Mapping, exc: Exception) -> _RepoScan:
+def _failed_scan(
+    candidate: Mapping, exc: Exception, *, failure_class: str | None = None
+) -> _RepoScan:
     note = f"{type(exc).__name__}: {exc}"
     if len(note) > _FAILURE_NOTE_LIMIT:
         note = note[:_FAILURE_NOTE_LIMIT]
@@ -179,6 +181,7 @@ def _failed_scan(candidate: Mapping, exc: Exception) -> _RepoScan:
             "agents": [],
             "channels": {},
             "unavailable": True,
+            "failure_class": failure_class,
             "first_signal_at": None,
             "commit_ratio": None,
             "adoption_level": "none",

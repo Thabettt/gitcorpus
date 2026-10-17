@@ -19,8 +19,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
 from detect.attribution import dedupe_hits
+from detect.breaker import CircuitBreaker, local_values
 from detect.channels import ChannelResult
-from detect.gitio import GitRepo, clone_lean, retry_call
+from detect.gitio import GitRepo, classify_git_failure, clone_lean, retry_call
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
@@ -122,7 +123,12 @@ def _scan_one(
             clone_one(full_name, dest)
             (dest / MARKER_NAME).write_text("", encoding="utf-8")
 
-        retry_call(clone_attempt, attempts=cfg.attempts, base_delay=cfg.retry_delay)
+        retry_call(
+            clone_attempt,
+            attempts=cfg.attempts,
+            base_delay=cfg.retry_delay,
+            retryable=lambda exc: classify_git_failure(exc) != "dead",
+        )
     repo = make_repo(dest)
     results: dict[str, ChannelResult] = {}
     history_stats: Mapping[str, object] = {}
@@ -207,6 +213,7 @@ def _scan_worker_main(
     pack: Pack,
     run_dir_str: str,
     threads: int,
+    breaker_values: tuple,
 ) -> None:
     cancellation.bind(cancel_event.is_set)
     run_dir = Path(run_dir_str)
@@ -215,16 +222,20 @@ def _scan_worker_main(
         full_name, dest, depth=cfg.depth, timeout=cfg.timeout
     )
     make_repo = lambda dest: GitRepo(dest, timeout=cfg.timeout)  # noqa: E731
+    breaker = CircuitBreaker(*breaker_values)
     walk_pool = ThreadPoolExecutor(max_workers=max(1, cfg.walk_workers))
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     try:
         pending = iter(slice_candidates)
+        retry_candidates: list[Mapping] = []
+        wave = 1
         in_flight: dict[Future, Mapping] = {}
         exhausted = False
         while True:
             if cancel_event.is_set():
                 raise RunCancelled()
             while not exhausted and len(in_flight) < threads:
+                breaker.wait_if_open()
                 free = free_disk_mb(cfg.scan_root)
                 if free < LOW_DISK_THRESHOLD_MB:
                     exhausted = True
@@ -232,6 +243,11 @@ def _scan_worker_main(
                     break
                 candidate = next(pending, None)
                 if candidate is None:
+                    if wave == 1 and retry_candidates:
+                        wave = 2
+                        pending = iter(retry_candidates)
+                        retry_candidates = []
+                        continue
                     exhausted = True
                     break
                 context = contextvars.copy_context()
@@ -263,8 +279,18 @@ def _scan_worker_main(
             except RunCancelled:
                 raise
             except Exception as exc:
-                scan = _failed_scan(candidate, exc)
-                failure = f"{scan.full_name}: {scan.document['notes'][0]}"
+                failure_class = classify_git_failure(exc)
+                deferred = False
+                if failure_class == "transient":
+                    breaker.record_failure()
+                    if wave == 1:
+                        retry_candidates.append(candidate)
+                        deferred = True
+                scan = _failed_scan(candidate, exc, failure_class=failure_class)
+                if not deferred:
+                    failure = f"{scan.full_name}: {scan.document['notes'][0]}"
+            else:
+                breaker.record_success()
             if not cfg.keep:
                 _remove_tree(run_dir / scan.full_name.replace("/", "__"))
             out_queue.put(("scan", scan, failure))
@@ -315,6 +341,11 @@ def _run_git_detection_processes(
     mp_context = multiprocessing.get_context("spawn")
     out_queue = mp_context.Queue()
     cancel_event = mp_context.Event()
+    breaker_values = (
+        mp_context.Value("d", 0.0),
+        mp_context.Value("d", 0.0),
+        mp_context.Value("d", 0.0),
+    )
     slices = [candidates[index::processes] for index in range(processes)]
     workers = []
     try:
@@ -330,6 +361,7 @@ def _run_git_detection_processes(
                     pack,
                     str(run_dir),
                     threads,
+                    breaker_values,
                 ),
                 daemon=True,
             )
@@ -428,6 +460,7 @@ def run_git_detection(
         )
         cancelled = False
     else:
+        breaker = CircuitBreaker(*local_values())
         walk_pool = ThreadPoolExecutor(max_workers=max(1, cfg.walk_workers))
         scans = []
         cancelled = False
@@ -450,12 +483,15 @@ def run_git_detection(
             pool = ThreadPoolExecutor(max_workers=max_workers)
             try:
                 pending = iter(candidates)
+                retry_candidates: list[Mapping] = []
+                wave = 1
                 in_flight: dict[Future, Mapping] = {}
                 exhausted = False
                 done = 0
                 while True:
                     while not exhausted and len(in_flight) < max_workers:
                         cancellation.check()
+                        breaker.wait_if_open()
                         free = free_disk_mb(scan_root)
                         if free < LOW_DISK_THRESHOLD_MB:
                             stopped_for_disk = True
@@ -468,6 +504,11 @@ def run_git_detection(
                             break
                         candidate = next(pending, None)
                         if candidate is None:
+                            if wave == 1 and retry_candidates:
+                                wave = 2
+                                pending = iter(retry_candidates)
+                                retry_candidates = []
+                                continue
                             exhausted = True
                             break
                         context = contextvars.copy_context()
@@ -489,8 +530,18 @@ def run_git_detection(
                     except RunCancelled:
                         raise
                     except Exception as exc:
-                        scan = _failed_scan(candidate, exc)
-                        failures.append(f"{scan.full_name}: {scan.document['notes'][0]}")
+                        failure_class = classify_git_failure(exc)
+                        deferred = False
+                        if failure_class == "transient":
+                            breaker.record_failure()
+                            if wave == 1:
+                                retry_candidates.append(candidate)
+                                deferred = True
+                        scan = _failed_scan(candidate, exc, failure_class=failure_class)
+                        if not deferred:
+                            failures.append(f"{scan.full_name}: {scan.document['notes'][0]}")
+                    else:
+                        breaker.record_success()
                     scans.append(scan)
                     _persist_scan(engine, run_id, scan, pack)
                     if not cfg.keep:
@@ -509,6 +560,10 @@ def run_git_detection(
             if not cfg.keep and not cancelled:
                 _remove_tree(run_dir)
 
+    by_repo: dict[int, _RepoScan] = {}
+    for scan in scans:
+        by_repo[scan.repo_id] = scan
+    scans = [by_repo[key] for key in sorted(by_repo)]
     partial = (
         stopped_for_disk
         or worker_lost

@@ -722,3 +722,71 @@ def test_run_git_detection_cancel_returns_promptly_with_wedged_scans(
     finally:
         release.set()
         thread.join(timeout=5)
+
+
+def test_dead_repo_fails_fast_without_retries(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine, {"kind": "detect"}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+    )
+    attempts: list[str] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        attempts.append(full_name)
+        if full_name == "octo/two":
+            raise GitError(
+                ["git", "clone"],
+                128,
+                "fatal: repository 'https://github.com/octo/two/' not found",
+            )
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1, retry_delay=0.0),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert attempts.count("octo/two") == 1  # dead class: no inline retries
+    failed = [item for item in payload.items if item.full_name == "octo/two"]
+    assert failed and failed[0].detection["failure_class"] == "dead"
+    assert payload.result_summary["repos_unavailable"] == 1
+
+
+def test_transient_failure_gets_one_post_sweep_retry(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine, {"kind": "detect"}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+    )
+    attempts: list[str] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        attempts.append(full_name)
+        if full_name == "octo/two" and attempts.count("octo/two") == 1:
+            raise GitError(
+                ["git", "clone"],
+                128,
+                "fatal: unable to access 'x': Could not resolve host: github.com",
+            )
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(
+            scan_root=str(tmp_path / "clones"), workers=1, attempts=1, retry_delay=0.0
+        ),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert attempts.count("octo/two") == 2  # first try + retry wave
+    assert payload.result_summary["repos_unavailable"] == 0
