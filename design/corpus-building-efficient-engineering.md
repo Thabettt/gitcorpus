@@ -10,6 +10,8 @@
 
 **Status note (2026-10-11)**: the secondary-limit hardening shipped (pool-wide 403/429 pause, escalation with jitter, per-pass hit budget, controller feed), and the settled operating point — **batch 20, concurrency 17–20, adaptive off** — delivered two consecutive zero-403 record runs: 39,484 repos in 9m41s (run 29) and 39,485 in **9m08s** (run 30), both inside a single hourly window (~2,400 points each; two runs per window).
 
+**Status note (2026-10-17)**: the **detection tier's** git-mode transport was rebuilt after run #21 exposed two pathological costs that had nothing to do with API meters — this document's domain — and everything to do with process and protocol efficiency on the *local* side. `--filter=tree:0` on PR-ref fetches provoked a non-converging promisor "repair" loop (6,183 fleet packs / 678 MB; repos stuck 10–40 min each; the fix — `blob:none` — took a 592-PR repo from 308+ packs to 40 s / 8 packs), and one `git rev-list` process per pull request put ~95 % of a 26-spawns/s Windows ceiling into a single design choice (replaced by one batched `cat-file` walker: Perry's 8,010 tips walked in-process in 57.3 s). A failure layer (dead/transient/local/fatal taxonomy + fleet-wide circuit breaker + post-sweep retry wave) turned a network outage that cost run #21 twenty-one percent of the corpus into a class of events that now costs **zero repos**. Verification was fail-closed: 4,689 walk-equivalence checks against `git rev-list` (0 mismatches) and a 120-repo replay against run #21 (0 regressions; 2 outage victims recovered with *more* evidence than before). Section 14 records the engineering; the full technical report is `Projects/thisisjustthebeginning/gitcorpus-detection-session-report-2.md`.
+
 ---
 
 ## 1. The goal, in one paragraph
@@ -405,3 +407,56 @@ A `graphql_batch` module existed before and was deleted as unused (R58). It had 
 - Catalog-tool contrast (SEART) and why this pipeline exists — `design/gitcorpus-vs-seart.md`
 - Market landscape and build justification — `design/landscape-comparison.md`
 - Batching design discussion and prior-art analysis — this document, §9–§10
+
+---
+
+## 14. The detection tier: git-mode transport at zero API cost (measured 2026-10-17)
+
+Everything in §1–§13 lives on GitHub's **meters**. The detection tier is the opposite kind of system, and it earned its own chapter because its constraint is not a quota — it is **process and protocol efficiency on the local machine**, and in run #21 that constraint broke in two spectacular ways that no API-side model would have predicted. This section records what happened, what the fix is, and the measured operating points. Full narrative: `Projects/thisisjustthebeginning/gitcorpus-detection-session-report-2.md`; evidence ledger: `docs/superpowers/plans/2026-10-17-run93-live-evidence.md`.
+
+### 14.1 What the tier is
+
+After a corpus exists (§1–§11), detection scans it for coding-agent traces. The **git method** trades API meters for disk and network: for each repo, a lean clone (`--depth=100 --filter=blob:none`), a file channel, a last-100-commits history channel, and a PR channel that fetches every `refs/pull/*/head` and walks each tip 100 deep. No API requests are spent at all. The cost model is therefore: per-repo git process spawns + network round trips to GitHub's git service (pack builds count against no documented meter, but they are real server work and real wall time) + local CPU for matching.
+
+### 14.2 Failure one: a filter flag that made `git fetch` never finish
+
+The PR-refs fetch used `--depth 100 --filter=tree:0` ("no trees — the walk only needs commits"). On a promisor remote with 500-refspec chunks, `tree:0` creates a repair loop: git finds objects missing for the ref updates it is about to write, and fixes each one with a separate hidden fetch (`fetch --stdin`, no negotiation, `blob:none` — so each repair carries a full commit+trees closure of the missing object). Forensics on the resulting packs: each repair pack held ~290 trees with **93 % object overlap** from one iteration to the next — the loop re-fetches nearly the same closure over and over. Measured consequences:
+
+| Measurement | Value |
+|---|---|
+| Fleet packs at 2 h into run #21 | **6,183 packs / 677.7 MB**; 25 dirs >50 packs, 9 dirs >200 |
+| Worst live repos | 510 packs (octos), 518 packs for 2,000 refs (tempo), 130 packs for a 3-PR repo |
+| Per-repo burden | 10–40 minutes per repository at the head |
+| Scratch reproduction (`rust-stdx/stdx`, 44 PRs) | current fetch **never completed** — killed at 15 min, 33+ packs, refs never written |
+| The one-argument fix (`--filter=blob:none`, depth kept, all else equal) | same repo: **10.1 s / 4 packs / 44/44 refs**; 592-PR repo: **40 s / 8 packs / 592/592 refs** |
+
+Walk outputs were identical across every variant tested — the fix changes transport only. The general rule this adds to the document's canon: **on a promisor remote, "which objects the fetch omits" is a correctness-and-liveness property of `git fetch` itself, not just of the data you plan to read.** Lean means `blob:none` (no file contents); it does not mean `tree:0`.
+
+### 14.3 Failure two: one process per pull request
+
+The PR walk spawned one `git rev-list -n 100` per ref: 0.31–0.53 s each (spawn-dominated), ~95 % of a measured **26 git-process-spawns/second** ceiling, against a corpus whose head has repos with 4,998–8,010 PR refs. The replacement is a batched walker (`src/detect/repo_walk.py`): one long-lived `git cat-file --batch` pipe per repo, a date-priority walk that replicates `rev-list`'s default order exactly (lazy parent expansion, insertion-stable ties), graft-aware shallow handling, exactness tiers (**exhausted-before-depth ⇒ set-exact regardless of order**; order-dependent tips covered by a real `rev-list` spawn as fallback and by self-healing verify sampling), and hard fallback to a spawn on any anomaly. Measured: Perry's **8,010 tips walked in 57.3 s** in one process (the old pipeline spent ≈8 minutes spawning alone, on top of the storm), and the verification gate checked **4,689 tips against `git rev-list -n 100` across 52 repos with 0 mismatches**.
+
+### 14.4 Failure engineering: outages and dead repos
+
+Run #21 also suffered a machine-level network outage (DNS) that silently consumed **3,717 repositories — 21 % of the corpus** — because every failed clone was retried pointlessly and then recorded as an anonymous failure. The rebuild introduces a **failure taxonomy** (`dead` / `transient` / `local` / `fatal` from stderr patterns), a **fleet-wide circuit breaker** (5 consecutive transient failures → all workers pause with escalating cooldowns until a probe succeeds), a **post-sweep retry wave** (deferred transients get one fresh attempt after the main sweep), askpass hardening (no credential dialogs, ever), and **machine-readable unavailable reporting** (`unavailable_reasons` counts + full repo lists in every run summary). Cross-check from the replay gate: two repositories that run #21 recorded as damaged (`pr_metadata: partial` with either an outage note or an old `tree:0` fetch failure) came back **complete** in the new pipeline — one of them with **14 detected agents where the old run found 3**.
+
+### 14.5 Measured operating points (for planning arithmetic)
+
+| Stage (per repo, measured) | Value |
+|---|---|
+| Blobless depth-100 clone | 1.2–4.9 s (outlier 37 s on one large repo) |
+| `ls-remote` PR-refs listing | 3.0–3.7 s |
+| PR-refs fetch (blob:none), per 500-ref chunk | 2–24 s (GitHub pack service; 8 k refs ⇒ ~16 chunks ⇒ ≈102 s) |
+| All-tips walk, in-process | ms per tip; 57.3 s for 8,010 tips |
+| Gate totals | walk gate: 52 repos / 4,689 checks / **0 mismatches** / 19.9 min; replay gate: 120 sampled (67 compared) / **0 regressions**, 8 proven drift-or-recovery divergences |
+| Live run #22 (fresh full corpus, 64 workers) | 5.3 → 10.7 → 22 → **23.2 repos/min** across its first hour (vs 4.9/min at run #21's start); 3 failures, all genuinely-dead repos; ≤9 packs per dir, zero repair fetches |
+
+### 14.6 Rules this adds to the canon (alongside §8)
+
+1. Meters bound the API tiers; **spawn budgets and round-trip counts bound the git tier**. Count processes per unit of work the same way §4 counts touches.
+2. A fetch flag can be a liveness bug: verify that `git fetch` *completes* on the smallest pathological repo before scaling it to thousands.
+3. Batch processes the way §10 batches requests; a persistent `cat-file --batch` pipe replaces hundreds of spawns.
+4. Exactness has tiers — set-exact, order-replicated, fallback — and a differential gate must prove the tier you ship.
+5. Failures deserve a taxonomy: dead (fast-fail, record), transient (breaker + retry wave), local (inline retry), fatal (record). An outage is a scheduled pause, not a data loss.
+6. Differential replay against a preserved old run is the cheapest, strongest correctness gate in the project's arsenal; live repos drift, so divergences must be taxonomized and *proven* (commit dates, `pushed_at`), not waved away.
+7. Observers are part of the system: a monitoring loop that costs filesystem walks will show up in the observability data itself.
