@@ -137,3 +137,8 @@ Cancelled gracefully via `POST /runs/93/cancel` at 8,562/17,757 (13.7 repos/min 
 `run_items` (8,562) + `detection_evidence` (1,208,034 rows) preserved: they are the end-to-end
 replay baseline for the new pipeline. Leftover clone dirs cleaned. Design for the rebuild:
 `docs/superpowers/specs/2026-10-17-fast-zero-loss-detection-design.md`.
+
+Pipeline rebuild implemented on branch `detect-fast-zero-loss` (plan:
+`docs/superpowers/plans/2026-10-17-fast-zero-loss-detection.md`): `blob:none` PR fetch, batched
+cat-file walker with fallback + verify sampling, failure taxonomy + circuit breaker + retry wave,
+unavailable reporting, configurable clones root, honest estimator. Gates run before the fresh full run.
