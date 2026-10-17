@@ -21,11 +21,11 @@ from detect.gitio import (
     fetch_blobs,
     fetch_pr_refs,
     git_error_tail,
-    list_pr_refs,
     list_tree_entries,
     parse_merge_branches,
     read_commits,
     read_log,
+    read_pr_refs_snapshot,
     retry_call,
 )
 from detect.packs import Pack
@@ -176,19 +176,25 @@ def detect_pr_commits_local(
     retry_delay: float = 1.0,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
+    resumed_note = ""
 
     def fetch_and_list() -> dict[int, str]:
-        fetch_pr_refs(repo, depth=depth)
-        return list_pr_refs(repo)
+        return fetch_pr_refs(repo, depth=depth)
 
     try:
         refs = retry_call(fetch_and_list, attempts=attempts, base_delay=retry_delay)
     except _GIT_FAILURES as exc:
-        return ChannelResult(
-            status="partial",
-            note=f"pull refs fetch failed: {git_error_tail(exc)}",
-            stats=empty_stats,
-        )
+        # A snapshot is a resume path only: after a failed fresh fetch it
+        # keeps the channel alive, but a successful fetch always wins.
+        snapshot = read_pr_refs_snapshot(repo)
+        if not snapshot:
+            return ChannelResult(
+                status="partial",
+                note=f"pull refs fetch failed: {git_error_tail(exc)}",
+                stats=empty_stats,
+            )
+        refs = snapshot
+        resumed_note = f"resumed from persisted PR ref snapshot: {git_error_tail(exc)}"
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     try:
@@ -227,10 +233,13 @@ def detect_pr_commits_local(
             )
     hits = dedupe_hits(hits)
     propagated = tuple(sorted({hit.evidence["commit"] for hit in hits}))
+    note = f"local PR refs; depth {depth}"
+    if resumed_note:
+        note = f"{note}; {resumed_note}"
     return ChannelResult(
         hits=tuple(hits),
         status="ok",
-        note=f"local PR refs; depth {depth}",
+        note=note,
         stats={**empty_stats, "propagated_oids": propagated},
     )
 

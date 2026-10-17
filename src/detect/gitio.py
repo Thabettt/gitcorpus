@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import random
 import re
@@ -23,9 +24,11 @@ _RECORD = "\x1e"
 _MERGE_PR = re.compile(r"Merge pull request #(?P<pr>\d+) from (?P<owner>[^/\s]+)/(?P<head>\S+)")
 _MERGE_LOCAL = re.compile(r"Merge branch '(?P<head>[^']+)'")
 _SHOW_BATCH = 600
-_PR_FETCH_CHUNK_REFS = 500
+_PR_FETCH_CHUNK_REFS = 2000
 _LS_REMOTE_TIMEOUT = 120.0
 _PR_CHUNK_TIMEOUT = 600.0
+_PR_REFS_SNAPSHOT = ".gitcorpus-pr-refs.json"
+_PR_SNAPSHOT_VERSION = 1
 
 
 class GitError(RuntimeError):
@@ -183,14 +186,18 @@ def _run_git_process(
     timeout: float | None,
     stdin: BinaryIO | None,
     text: bool,
+    env_extra: Mapping[str, str] | None = None,
 ) -> str | bytes:
+    env = git_env()
+    if env_extra:
+        env.update(env_extra)
     process = subprocess.Popen(
         ["git", *argv],
         cwd=str(cwd),
         stdin=stdin if stdin is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=git_env(),
+        env=env,
         text=text,
         **({"encoding": "utf-8", "errors": "replace"} if text else {}),
     )
@@ -224,8 +231,14 @@ def run_git(
     cwd: Path | str,
     timeout: float | None = None,
     stdin: BinaryIO | None = None,
+    env_extra: Mapping[str, str] | None = None,
 ) -> str:
-    return cast(str, _run_git_process(argv, cwd=cwd, timeout=timeout, stdin=stdin, text=True))
+    return cast(
+        str,
+        _run_git_process(
+            argv, cwd=cwd, timeout=timeout, stdin=stdin, text=True, env_extra=env_extra
+        ),
+    )
 
 
 def run_git_bytes(
@@ -234,8 +247,14 @@ def run_git_bytes(
     cwd: Path | str,
     timeout: float | None = None,
     stdin: BinaryIO | None = None,
+    env_extra: Mapping[str, str] | None = None,
 ) -> bytes:
-    return cast(bytes, _run_git_process(argv, cwd=cwd, timeout=timeout, stdin=stdin, text=False))
+    return cast(
+        bytes,
+        _run_git_process(
+            argv, cwd=cwd, timeout=timeout, stdin=stdin, text=False, env_extra=env_extra
+        ),
+    )
 
 
 @dataclass
@@ -244,12 +263,19 @@ class GitRepo:
     timeout: float | None = None
     _log_cache: dict[int, tuple[CommitRecord, ...]] = field(default_factory=dict, repr=False)
 
-    def git(self, *args: str, timeout: float | None = None, stdin: BinaryIO | None = None) -> str:
+    def git(
+        self,
+        *args: str,
+        timeout: float | None = None,
+        stdin: BinaryIO | None = None,
+        env_extra: Mapping[str, str] | None = None,
+    ) -> str:
         return run_git(
             args,
             cwd=self.dest,
             timeout=self.timeout if timeout is None else timeout,
             stdin=stdin,
+            env_extra=env_extra,
         )
 
     def read_blobs(self, paths: Sequence[str]) -> dict[str, str | None]:
@@ -399,29 +425,78 @@ def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
     return refs
 
 
-def fetch_pr_refs(repo: GitRepo, *, depth: int, chunk_refs: int | None = None) -> None:
+def write_pr_refs_snapshot(repo: GitRepo, refs: Mapping[int, str]) -> None:
+    payload = {
+        "version": _PR_SNAPSHOT_VERSION,
+        "refs": {str(number): refs[number] for number in sorted(refs)},
+    }
+    path = Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def read_pr_refs_snapshot(repo: GitRepo) -> dict[int, str] | None:
+    try:
+        payload = json.loads(
+            (Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != _PR_SNAPSHOT_VERSION:
+        return None
+    refs = payload.get("refs")
+    if not isinstance(refs, dict):
+        return None
+    snapshot: dict[int, str] = {}
+    for number, sha in refs.items():
+        if (
+            not isinstance(number, str)
+            or not number.isdigit()
+            or not isinstance(sha, str)
+            or not sha
+        ):
+            return None
+        snapshot[int(number)] = sha
+    return snapshot
+
+
+def fetch_pr_refs(repo: GitRepo, *, depth: int, chunk_refs: int | None = None) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
-    # chunks. A single wildcard fetch of a repo with thousands of PRs makes
-    # the server build one giant pack; explicit refspecs keep every request
-    # bounded, stream sooner, and only retry the failed chunk.
+    # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
+    # tree:0 keeps the pack to commit metadata, no-write-fetch-head leaves no
+    # ref files behind, and lazy fetching is disabled for the command only so
+    # a stalled promisor round trip cannot wedge a chunk.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
     remote = remote_pr_refs(repo)
     if not remote:
-        return
+        return {}
     for numbers in chunked(sorted(remote), chunk_refs):
-        refspecs = [f"+refs/pull/{number}/head:refs/gc/pr/{number}" for number in numbers]
-        repo.git(
-            "fetch",
-            "--quiet",
-            "--depth",
-            str(depth),
-            "--filter=blob:none",
-            "--no-tags",
-            "origin",
-            *refspecs,
-            timeout=_PR_CHUNK_TIMEOUT,
-        )
+        request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
+        handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
+        try:
+            handle.write(request.encode("ascii"))
+            handle.close()
+            with open(handle.name, "rb") as stdin:
+                repo.git(
+                    "fetch",
+                    "--quiet",
+                    "--depth",
+                    str(depth),
+                    "--filter=tree:0",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--recurse-submodules=no",
+                    "origin",
+                    "--stdin",
+                    stdin=stdin,
+                    timeout=_PR_CHUNK_TIMEOUT,
+                    env_extra={"GIT_NO_LAZY_FETCH": "1"},
+                )
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(handle.name)
+    write_pr_refs_snapshot(repo, remote)
+    return remote
 
 
 _FETCH_BLOBS_ARGV = (
@@ -451,17 +526,6 @@ def fetch_blobs(repo: GitRepo, oids: Sequence[str]) -> None:
     finally:
         with contextlib.suppress(OSError):
             os.unlink(handle.name)
-
-
-def list_pr_refs(repo: GitRepo) -> dict[int, str]:
-    output = repo.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/gc/pr")
-    refs: dict[int, str] = {}
-    for line in output.splitlines():
-        name, _, sha = line.partition(" ")
-        number = name.rpartition("/")[2]
-        if number.isdigit() and sha:
-            refs[int(number)] = sha
-    return refs
 
 
 def walk_pr_shas(

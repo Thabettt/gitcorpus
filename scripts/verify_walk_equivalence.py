@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from detect.gitio import GitRepo, clone_lean, fetch_pr_refs, list_pr_refs  # noqa: E402
+from detect.gitio import GitRepo, clone_lean, fetch_pr_refs  # noqa: E402
 from detect.repo_walk import walk_windows  # noqa: E402
 
 
@@ -39,9 +39,8 @@ def main() -> int:
         t_clone = time.monotonic() - t0
         repo = GitRepo(dest)
         t0 = time.monotonic()
-        fetch_pr_refs(repo, depth=args.depth)
+        refs = fetch_pr_refs(repo, depth=args.depth)
         t_fetch = time.monotonic() - t0
-        refs = list_pr_refs(repo)
         t0 = time.monotonic()
         walked = walk_windows(repo, refs, depth=args.depth)
         t_walk = time.monotonic() - t0

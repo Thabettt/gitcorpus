@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -18,7 +19,6 @@ from detect.gitio import (
     fetch_blobs,
     fetch_pr_refs,
     git_error_tail,
-    list_pr_refs,
     list_tree,
     list_tree_entries,
     parse_log,
@@ -26,9 +26,11 @@ from detect.gitio import (
     read_blob,
     read_commits,
     read_log,
+    read_pr_refs_snapshot,
     remote_pr_refs,
     retry_call,
     run_git,
+    run_git_bytes,
     walk_pr_shas,
 )
 from lib import cancellation
@@ -40,17 +42,25 @@ needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not inst
 class FakeRepo(GitRepo):
     """GitRepo whose git() answers from a canned handler."""
 
-    def __init__(self, handler):
-        super().__init__(Path())
+    def __init__(self, handler, dest: Path | None = None):
+        super().__init__(dest or Path())
         self._handler = handler
         self.calls: list[tuple[str, ...]] = []
         self.timeouts: list[float | None] = []
         self.stdins: list[bytes | None] = []
+        self.env_extras: list[dict[str, str] | None] = []
 
-    def git(self, *args: str, timeout: float | None = None, stdin: BinaryIO | None = None) -> str:
+    def git(
+        self,
+        *args: str,
+        timeout: float | None = None,
+        stdin: BinaryIO | None = None,
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
         self.calls.append(args)
         self.timeouts.append(timeout)
         self.stdins.append(stdin.read() if stdin is not None else None)
+        self.env_extras.append(env_extra)
         result = self._handler(args)
         if result is None:
             raise GitError(list(args), 128, "fake: unknown command")
@@ -369,15 +379,41 @@ def test_run_git_kills_child_when_cancelled(tmp_path, monkeypatch):
     assert process.returncode == -9
 
 
-_GOOD_REF_FORMAT = "refs/gc/pr/12 aaa\n" "refs/gc/pr/7 bbb\n" "refs/gc/pr/notes ccc\n"
+def test_env_extra_reaches_every_git_entry_point_without_leaking(tmp_path, monkeypatch):
+    created: list[dict] = []
 
+    class RecordingProcess:
+        def __init__(self, argv, **kwargs):
+            created.append(kwargs)
+            self.returncode = 0
 
-def test_list_pr_refs_parses_numbers_and_skips_non_numeric():
-    fake = FakeRepo(lambda args: _GOOD_REF_FORMAT if args[0] == "for-each-ref" else None)
-    assert list_pr_refs(fake) == {12: "aaa", 7: "bbb"}
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            pass
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+    monkeypatch.setattr(gitio.subprocess, "Popen", RecordingProcess)
+    monkeypatch.delenv("GIT_NO_LAZY_FETCH", raising=False)
+    run_git(["status"], cwd=tmp_path, env_extra={"GIT_NO_LAZY_FETCH": "1"})
+    run_git_bytes(["status"], cwd=tmp_path, env_extra={"GIT_NO_LAZY_FETCH": "1"})
+    GitRepo(tmp_path).git("status", env_extra={"GIT_NO_LAZY_FETCH": "1"})
+    assert [call["env"]["GIT_NO_LAZY_FETCH"] for call in created] == ["1", "1", "1"]
+    run_git(["status"], cwd=tmp_path)
+    assert "GIT_NO_LAZY_FETCH" not in created[-1]["env"]
+    assert "GIT_NO_LAZY_FETCH" not in gitio.git_env()
+    assert "GIT_NO_LAZY_FETCH" not in os.environ
 
 
 _LS_REMOTE_OUTPUT = "sha1\trefs/pull/7/head\nsha2\trefs/pull/9/head\nsha3\trefs/tags/v1\n"
+
+
+def _repo_dir(tmp_path: Path) -> Path:
+    (tmp_path / ".git").mkdir(parents=True, exist_ok=True)
+    return tmp_path
 
 
 def test_remote_pr_refs_lists_pr_tips():
@@ -387,53 +423,86 @@ def test_remote_pr_refs_lists_pr_tips():
     assert fake.timeouts[0] == gitio._LS_REMOTE_TIMEOUT
 
 
-def test_fetch_pr_refs_requests_the_ls_remote_snapshot_explicitly():
+def test_fetch_pr_refs_sends_destinationless_refspecs_over_stdin(tmp_path):
     def handler(args):
         if args[0] == "ls-remote":
             return _LS_REMOTE_OUTPUT
         return "" if args[0] == "fetch" else None
 
-    fake = FakeRepo(handler)
-    fetch_pr_refs(fake, depth=100)
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100) == {7: "sha1", 9: "sha2"}
     assert fake.calls[-1] == (
         "fetch",
         "--quiet",
         "--depth",
         "100",
-        "--filter=blob:none",
+        "--filter=tree:0",
         "--no-tags",
+        "--no-write-fetch-head",
+        "--recurse-submodules=no",
         "origin",
-        "+refs/pull/7/head:refs/gc/pr/7",
-        "+refs/pull/9/head:refs/gc/pr/9",
+        "--stdin",
     )
+    assert not any("refs/pull" in part for part in fake.calls[-1])
+    assert fake.stdins[-1] == b"refs/pull/7/head\nrefs/pull/9/head\n"
+    assert fake.env_extras[-1] == {"GIT_NO_LAZY_FETCH": "1"}
     assert fake.timeouts[-1] == gitio._PR_CHUNK_TIMEOUT
 
 
-def test_fetch_pr_refs_skips_fetch_when_no_pr_refs():
-    fake = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None)
-    fetch_pr_refs(fake, depth=100)
+def test_fetch_pr_refs_returns_the_remote_map_and_persists_a_sorted_snapshot(tmp_path):
+    fake = FakeRepo(
+        lambda args: (
+            "s10\trefs/pull/10/head\ns2\trefs/pull/2/head\n" if args[0] == "ls-remote" else ""
+        ),
+        dest=_repo_dir(tmp_path),
+    )
+    assert fetch_pr_refs(fake, depth=100) == {2: "s2", 10: "s10"}
+    payload = json.loads((tmp_path / ".git" / ".gitcorpus-pr-refs.json").read_text("utf-8"))
+    assert payload == {"version": 1, "refs": {"2": "s2", "10": "s10"}}
+    assert list(payload["refs"]) == ["2", "10"]
+    assert read_pr_refs_snapshot(fake) == {2: "s2", 10: "s10"}
+
+
+def test_fetch_pr_refs_skips_fetch_and_snapshot_when_no_pr_refs(tmp_path):
+    fake = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100) == {}
     assert [call[0] for call in fake.calls] == ["ls-remote"]
+    assert not (tmp_path / ".git" / ".gitcorpus-pr-refs.json").exists()
 
 
-def test_fetch_pr_refs_chunks_large_ref_sets(monkeypatch):
+def test_fetch_pr_refs_chunks_large_ref_sets_over_stdin(monkeypatch, tmp_path):
+    assert gitio._PR_FETCH_CHUNK_REFS == 2000
     monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 2)
     lines = "".join(f"sha{n}\trefs/pull/{n}/head\n" for n in (1, 2, 3, 4, 5))
     fake = FakeRepo(
-        lambda args: lines if args[0] == "ls-remote" else ("" if args[0] == "fetch" else None)
+        lambda args: lines if args[0] == "ls-remote" else ("" if args[0] == "fetch" else None),
+        dest=_repo_dir(tmp_path),
     )
     fetch_pr_refs(fake, depth=100)
     fetches = [call for call in fake.calls if call[0] == "fetch"]
     assert len(fetches) == 3
-    assert fetches[0][-2:] == (
-        "+refs/pull/1/head:refs/gc/pr/1",
-        "+refs/pull/2/head:refs/gc/pr/2",
-    )
-    assert fetches[1][-2:] == (
-        "+refs/pull/3/head:refs/gc/pr/3",
-        "+refs/pull/4/head:refs/gc/pr/4",
-    )
-    assert fetches[2][-1:] == ("+refs/pull/5/head:refs/gc/pr/5",)
-    assert all("--depth" in call and "--filter=blob:none" in call for call in fetches)
+    assert fake.stdins[-3:] == [
+        b"refs/pull/1/head\nrefs/pull/2/head\n",
+        b"refs/pull/3/head\nrefs/pull/4/head\n",
+        b"refs/pull/5/head\n",
+    ]
+    assert all("--filter=tree:0" in call and "--stdin" in call for call in fetches)
+
+
+def test_read_pr_refs_snapshot_none_when_missing_corrupt_or_unknown(tmp_path):
+    fake = FakeRepo(lambda args: None, dest=_repo_dir(tmp_path))
+    path = tmp_path / ".git" / ".gitcorpus-pr-refs.json"
+    assert read_pr_refs_snapshot(fake) is None
+    path.write_text("not json", encoding="utf-8")
+    assert read_pr_refs_snapshot(fake) is None
+    path.write_text('{"version": 99, "refs": {"7": "abc"}}', encoding="utf-8")
+    assert read_pr_refs_snapshot(fake) is None
+    path.write_text('{"version": 1, "refs": "nope"}', encoding="utf-8")
+    assert read_pr_refs_snapshot(fake) is None
+    path.write_text('{"version": 1, "refs": {"7": "abc", "notes": "abc"}}', encoding="utf-8")
+    assert read_pr_refs_snapshot(fake) is None
+    path.write_text('{"version": 1, "refs": {"7": "abc"}}', encoding="utf-8")
+    assert read_pr_refs_snapshot(fake) == {7: "abc"}
 
 
 def test_fetch_blobs_batches_objects_into_one_stdin_fetch():

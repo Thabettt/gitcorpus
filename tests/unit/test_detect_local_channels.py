@@ -4,7 +4,13 @@ import subprocess
 from pathlib import Path
 
 import detect.repo_walk as repo_walk
-from detect.gitio import CommitRecord, GitError, GitRepo
+from detect.gitio import (
+    CommitRecord,
+    GitError,
+    GitRepo,
+    read_pr_refs_snapshot,
+    write_pr_refs_snapshot,
+)
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
@@ -36,15 +42,23 @@ PACK = Pack(
 
 
 class FakeRepo(GitRepo):
-    def __init__(self, handler):
-        super().__init__(Path())
+    def __init__(self, handler, dest: Path | None = None):
+        super().__init__(dest or Path())
         self._handler = handler
         self.calls: list[tuple[str, ...]] = []
         self.stdins: list[bytes | None] = []
+        self.env_extras: list[dict[str, str] | None] = []
 
-    def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+    def git(
+        self,
+        *args: str,
+        timeout: float | None = None,
+        stdin=None,
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
         self.calls.append(args)
         self.stdins.append(stdin.read() if stdin is not None else None)
+        self.env_extras.append(env_extra)
         result = self._handler(args)
         if result is None:
             raise GitError(list(args), 128, "fake")
@@ -53,6 +67,11 @@ class FakeRepo(GitRepo):
     def read_blobs(self, paths):
         self.calls.append(("read_blobs", *paths))
         return {path: self._handler(("show", f"HEAD:{path}")) for path in paths}
+
+
+def _repo_dir(tmp_path: Path) -> Path:
+    (tmp_path / ".git").mkdir(parents=True, exist_ok=True)
+    return tmp_path
 
 
 def _tree(handler_args_value: str):
@@ -170,21 +189,19 @@ _PR_LOG = (
 )
 
 
-def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes():
+def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes(tmp_path):
     def handler(args):
         if args[0] == "ls-remote":
             return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\n"
         if args[0] == "fetch":
             return ""
-        if args[0] == "for-each-ref":
-            return "refs/gc/pr/7 aaa\nrefs/gc/pr/9 bbb\n"
         if args[0] == "rev-list":
             return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[3]]
         if args[0] == "log":
             return _PR_LOG
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    result = detect_pr_commits_local(FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100)
     assert result.status == "ok"
     assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
     assert all(h.evidence["propagated"] is True for h in result.hits)
@@ -200,7 +217,7 @@ def test_detect_pr_commits_local_without_refs_is_ok():
     assert result.stats["propagated_oids"] == ()
 
 
-def test_detect_pr_commits_local_retries_a_transient_fetch_failure():
+def test_detect_pr_commits_local_retries_a_transient_fetch_failure(tmp_path):
     fetches: list[int] = []
 
     def handler(args):
@@ -211,21 +228,21 @@ def test_detect_pr_commits_local_retries_a_transient_fetch_failure():
             if len(fetches) == 1:
                 raise GitError(list(args), 128, "fatal: connection reset")
             return ""
-        if args[0] == "for-each-ref":
-            return "refs/gc/pr/7 aaa\n"
         if args[0] == "rev-list":
             return "s1\n"
         if args[0] == "log":
             return _PR_LOG
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100, retry_delay=0.0)
+    repo = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    result = detect_pr_commits_local(repo, PACK, depth=100, retry_delay=0.0)
     assert result.status == "ok"
     assert len(fetches) == 2
     assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
+    assert read_pr_refs_snapshot(repo) == {7: "aaa"}
 
 
-def test_detect_pr_commits_local_reports_the_fetch_error_tail():
+def test_detect_pr_commits_local_reports_the_fetch_error_tail(tmp_path):
     fetches: list[int] = []
 
     def handler(args):
@@ -241,7 +258,9 @@ def test_detect_pr_commits_local_reports_the_fetch_error_tail():
             )
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, retry_delay=0.0
+    )
     assert result.status == "partial"
     assert result.note == (
         "pull refs fetch failed: fatal: unable to access 'https://github.com/o/r.git/':"
@@ -251,7 +270,7 @@ def test_detect_pr_commits_local_reports_the_fetch_error_tail():
     assert len(fetches) == 4
 
 
-def test_detect_pr_commits_local_degrades_a_fetch_timeout_to_partial():
+def test_detect_pr_commits_local_degrades_a_fetch_timeout_to_partial(tmp_path):
     fetches: list[int] = []
 
     def handler(args):
@@ -262,45 +281,47 @@ def test_detect_pr_commits_local_degrades_a_fetch_timeout_to_partial():
             raise subprocess.TimeoutExpired(list(args), timeout=600)
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, retry_delay=0.0
+    )
     assert result.status == "partial"
     assert result.note.startswith("pull refs fetch failed: ")
     assert len(fetches) == 4
 
 
-def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial():
+def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial(tmp_path):
     def handler(args):
         if args[0] == "ls-remote":
             return "aaa\trefs/pull/7/head\n"
         if args[0] == "fetch":
             return ""
-        if args[0] == "for-each-ref":
-            return "refs/gc/pr/7 aaa\n"
         if args[0] == "rev-list":
             raise GitError(list(args), 128, "fatal: bad object aaa")
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, retry_delay=0.0
+    )
     assert result.status == "partial"
     assert result.note == "pull refs walk failed: fatal: bad object aaa"
     assert result.stats["propagated_oids"] == ()
 
 
-def test_detect_pr_commits_local_reports_a_commit_read_failure_as_partial():
+def test_detect_pr_commits_local_reports_a_commit_read_failure_as_partial(tmp_path):
     def handler(args):
         if args[0] == "ls-remote":
             return "aaa\trefs/pull/7/head\n"
         if args[0] == "fetch":
             return ""
-        if args[0] == "for-each-ref":
-            return "refs/gc/pr/7 aaa\n"
         if args[0] == "rev-list":
             return "s1\n"
         if args[0] == "log":
             raise GitError(list(args), 128, "fatal: bad object")
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, retry_delay=0.0
+    )
     assert result.status == "partial"
     assert result.note == "commit read failed: fatal: bad object"
     assert result.stats["propagated_oids"] == ()
@@ -381,14 +402,12 @@ def test_detect_pr_commits_local_reads_no_git_log_when_walker_supplied_records(
             return f"{_A_TIP}\trefs/pull/7/head\n"
         if args[0] == "fetch":
             return ""
-        if args[0] == "for-each-ref":
-            return f"refs/gc/pr/7 {_A_TIP}\n"
         if args[0] == "log":
             logged.append(args)
             return ""
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    result = detect_pr_commits_local(FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100)
     assert result.status == "ok"
     assert logged == []
     assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, _A_PARENT)}
@@ -406,8 +425,6 @@ def test_detect_pr_commits_local_backfills_only_missing_records(tmp_path, monkey
             return f"{_A_TIP}\trefs/pull/7/head\n{_B_TIP}\trefs/pull/9/head\n"
         if args[0] == "fetch":
             return ""
-        if args[0] == "for-each-ref":
-            return f"refs/gc/pr/7 {_A_TIP}\nrefs/gc/pr/9 {_B_TIP}\n"
         if args[0] == "rev-list":
             return "c1\nc2\n"
         if args[0] == "log":
@@ -419,7 +436,7 @@ def test_detect_pr_commits_local_backfills_only_missing_records(tmp_path, monkey
             )
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    result = detect_pr_commits_local(FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100)
     assert result.status == "ok"
     assert len(logged) == 1
     assert logged[0][3:] == ("c1", "c2")
@@ -429,3 +446,60 @@ def test_detect_pr_commits_local_backfills_only_missing_records(tmp_path, monkey
         (9, "c2"),
     }
     assert result.stats["propagated_oids"] == (_A_PARENT, "c1", "c2")
+
+
+def test_detect_pr_commits_local_resumes_from_snapshot_after_fetch_failure(tmp_path, monkeypatch):
+    reset_verification()
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    monkeypatch.setattr(repo_walk, "CatFileBatch", lambda dest: _StubCatFileBatch(_A_NODES))
+    fetches: list[int] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return f"{_A_TIP}\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            fetches.append(1)
+            raise GitError(list(args), 128, "fatal: connection reset by peer")
+        return None
+
+    repo = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    write_pr_refs_snapshot(repo, {7: _A_TIP})
+    result = detect_pr_commits_local(repo, PACK, depth=100, retry_delay=0.0)
+    assert len(fetches) == 4
+    assert result.status == "ok"
+    assert result.note == (
+        "local PR refs; depth 100; resumed from persisted PR ref snapshot:"
+        " fatal: connection reset by peer"
+    )
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, _A_PARENT)}
+    assert result.stats["propagated_oids"] == (_A_PARENT,)
+
+
+def test_detect_pr_commits_local_prefers_a_successful_fetch_over_the_snapshot(
+    tmp_path, monkeypatch
+):
+    reset_verification()
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    monkeypatch.setattr(repo_walk, "CatFileBatch", lambda dest: _StubCatFileBatch(_A_NODES))
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return f"{_B_TIP}\trefs/pull/9/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "rev-list":
+            return "c1\n"
+        if args[0] == "log":
+            return (
+                "c1\x1fClaude\x1fnoreply@anthropic.com\x1fClaude\x1fnoreply@anthropic.com"
+                "\x1f2026-02-03T00:00:00Z\x1fbackfilled c1\x1e\n"
+            )
+        return None
+
+    repo = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    write_pr_refs_snapshot(repo, {7: _A_TIP})
+    result = detect_pr_commits_local(repo, PACK, depth=100)
+    assert result.status == "ok"
+    assert "resumed" not in result.note
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(9, "c1")}
+    assert read_pr_refs_snapshot(repo) == {9: _B_TIP}
