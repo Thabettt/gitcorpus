@@ -21,6 +21,12 @@ def main() -> int:
     parser.add_argument("--run-id", type=int, required=True, help="detect run to replay against")
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument(
+        "--sample",
+        choices=("random", "first"),
+        default="random",
+        help="random draws across the whole run; first replays the earliest scans (heaviest)",
+    )
+    parser.add_argument(
         "--root", default=str(Path(__file__).resolve().parents[1] / "clones" / "replay")
     )
     args = parser.parse_args()
@@ -35,7 +41,7 @@ def main() -> int:
             text(
                 "SELECT i.full_name, i.detection, i.repo_id FROM run_items i"
                 " WHERE i.run_id=:id AND i.detection IS NOT NULL"
-                " ORDER BY i.id LIMIT :limit"
+                f" ORDER BY {'random()' if args.sample == 'random' else 'i.id'} LIMIT :limit"
             ),
             {"id": args.run_id, "limit": args.limit},
         ).all()
