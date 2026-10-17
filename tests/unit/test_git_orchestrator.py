@@ -552,12 +552,11 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     )
     captured: dict[str, int] = {}
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, walk_workers, walk_pool=None):
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay):
         captured.update(
             depth=depth,
             attempts=attempts,
             retry_delay=retry_delay,
-            walk_workers=walk_workers,
         )
         return ChannelResult(status="ok")
 
@@ -576,12 +575,11 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
             workers=1,
             attempts=2,
             retry_delay=0.5,
-            walk_workers=3,
         ),
         clone_fn=clone,
         repo_factory=lambda dest: FakeRepo(happy_handler),
     )
-    assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5, "walk_workers": 3}
+    assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5}
 
 
 def test_remove_tree_retries_after_a_transient_failure(tmp_path, monkeypatch):

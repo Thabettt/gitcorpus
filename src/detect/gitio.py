@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, cast
@@ -27,7 +26,6 @@ _SHOW_BATCH = 600
 _PR_FETCH_CHUNK_REFS = 500
 _LS_REMOTE_TIMEOUT = 120.0
 _PR_CHUNK_TIMEOUT = 600.0
-_WALK_WORKERS = 8
 
 
 class GitError(RuntimeError):
@@ -468,21 +466,17 @@ def walk_pr_shas(
     refs: Mapping[int, str],
     *,
     depth: int,
-    workers: int = _WALK_WORKERS,
-    pool: ThreadPoolExecutor | None = None,
+    workers: int = 1,
+    pool: object | None = None,
 ) -> dict[int, tuple[str, ...]]:
-    def walk_one(item: tuple[int, str]) -> tuple[int, tuple[str, ...]]:
-        number, sha = item
-        output = repo.git("rev-list", "-n", str(depth), sha)
-        return number, tuple(line for line in output.splitlines() if line)
+    """Compatibility shim; walks now run in-process via detect.repo_walk.
 
-    items = sorted(refs.items())
-    if pool is not None:
-        return dict(pool.map(walk_one, items))
-    if workers <= 1 or len(items) <= 1:
-        return dict(walk_one(item) for item in items)
-    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as local:
-        return dict(local.map(walk_one, items))
+    ``workers`` and ``pool`` are accepted for callers from the spawn era and
+    are ignored: the batched walker needs neither.
+    """
+    from detect.repo_walk import walk_windows
+
+    return walk_windows(repo, refs, depth=depth)
 
 
 def read_commits(repo: GitRepo, shas: Sequence[str]) -> dict[str, CommitRecord]:

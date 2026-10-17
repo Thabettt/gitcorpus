@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 
 from detect.attribution import (
     Hit,
@@ -28,9 +27,9 @@ from detect.gitio import (
     read_commits,
     read_log,
     retry_call,
-    walk_pr_shas,
 )
 from detect.packs import Pack
+from detect.repo_walk import walk_windows
 from enrich.trees_first import FilePresence
 
 CONTENT_PROBE_LIMIT = 5
@@ -175,8 +174,6 @@ def detect_pr_commits_local(
     depth: int = 100,
     attempts: int = 4,
     retry_delay: float = 1.0,
-    walk_workers: int = 8,
-    walk_pool: ThreadPoolExecutor | None = None,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
 
@@ -195,7 +192,7 @@ def detect_pr_commits_local(
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     try:
-        walks = walk_pr_shas(repo, refs, depth=depth, workers=walk_workers, pool=walk_pool)
+        walks = walk_windows(repo, refs, depth=depth)
     except _GIT_FAILURES as exc:
         return ChannelResult(
             status="partial",

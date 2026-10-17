@@ -18,6 +18,7 @@ from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
+from detect import repo_walk
 from detect.attribution import dedupe_hits
 from detect.breaker import CircuitBreaker, local_values
 from detect.channels import ChannelResult
@@ -66,7 +67,6 @@ class GitScanConfig:
     workers: int = 16
     attempts: int = 4
     retry_delay: float = 1.0
-    walk_workers: int = 8
     processes: int = 0
 
 
@@ -112,7 +112,6 @@ def _scan_one(
     *,
     clone_one: Callable[[str, Path], None],
     make_repo: Callable[[Path], GitRepo],
-    walk_pool: ThreadPoolExecutor | None,
 ) -> _RepoScan:
     full_name = str(candidate["full_name"])
     dest = run_dir / full_name.replace("/", "__")
@@ -149,8 +148,6 @@ def _scan_one(
             depth=cfg.depth,
             attempts=cfg.attempts,
             retry_delay=cfg.retry_delay,
-            walk_workers=cfg.walk_workers,
-            walk_pool=walk_pool,
         )
         results["pr_metadata"] = pr_result
     if "branch" in active:
@@ -223,7 +220,6 @@ def _scan_worker_main(
     )
     make_repo = lambda dest: GitRepo(dest, timeout=cfg.timeout)  # noqa: E731
     breaker = CircuitBreaker(*breaker_values)
-    walk_pool = ThreadPoolExecutor(max_workers=max(1, cfg.walk_workers))
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     try:
         pending = iter(slice_candidates)
@@ -262,7 +258,6 @@ def _scan_worker_main(
                     candidate,
                     clone_one=clone_one,
                     make_repo=make_repo,
-                    walk_pool=walk_pool,
                 )
                 in_flight[future] = candidate
             if not in_flight:
@@ -296,7 +291,6 @@ def _scan_worker_main(
             out_queue.put(("scan", scan, failure))
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-        walk_pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _drain_message(
@@ -461,7 +455,6 @@ def run_git_detection(
         cancelled = False
     else:
         breaker = CircuitBreaker(*local_values())
-        walk_pool = ThreadPoolExecutor(max_workers=max(1, cfg.walk_workers))
         scans = []
         cancelled = False
 
@@ -475,7 +468,6 @@ def run_git_detection(
                 candidate,
                 clone_one=clone_one,
                 make_repo=make_repo,
-                walk_pool=walk_pool,
             )
 
         try:
@@ -554,7 +546,6 @@ def run_git_detection(
             finally:
                 pool.shutdown(wait=not cancelled, cancel_futures=True)
         finally:
-            walk_pool.shutdown(wait=False, cancel_futures=True)
             # On a stop, skip the sweep so the status flips immediately; the
             # leftovers are reclaimed by the console's flush action or the resume.
             if not cfg.keep and not cancelled:
@@ -631,6 +622,7 @@ def run_git_detection(
                 "keep": cfg.keep,
                 "scanned": len(scans),
                 "failures": len(failures),
-            }
+            },
+            "walk": repo_walk.verification_summary(),
         },
     )

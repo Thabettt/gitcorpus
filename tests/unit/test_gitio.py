@@ -462,32 +462,17 @@ def test_fetch_blobs_is_a_noop_without_objects():
     assert fake.calls == []
 
 
-def test_walk_pr_shas_reads_each_ref():
-    def handler(args):
-        if args[0] == "rev-list":
-            return {"aaa": "s1\ns2\n", "bbb": "s2\ns3\n"}[args[3]]
-        return None
+def test_walk_pr_shas_delegates_to_the_batched_walker(monkeypatch):
+    calls: list[tuple] = []
 
-    fake = FakeRepo(handler)
-    assert walk_pr_shas(fake, {12: "aaa", 7: "bbb"}, depth=2) == {
-        12: ("s1", "s2"),
-        7: ("s2", "s3"),
-    }
+    def fake_walk(repo, refs, *, depth):
+        calls.append((repo, dict(refs), depth))
+        return {7: ("s1",)}
 
-
-def test_walk_pr_shas_parallel_matches_sequential():
-    def handler(args):
-        if args[0] == "rev-list":
-            return {"a1": "s1\ns2\n", "a2": "s2\n", "a3": "s3\n", "a4": ""}[args[3]]
-        return None
-
-    refs = {4: "a4", 1: "a1", 3: "a3", 2: "a2"}
-    parallel = FakeRepo(handler)
-    sequential = FakeRepo(handler)
-    assert walk_pr_shas(parallel, refs, depth=100, workers=4) == walk_pr_shas(
-        sequential, refs, depth=100, workers=1
-    )
-    assert len([call for call in parallel.calls if call[0] == "rev-list"]) == 4
+    monkeypatch.setattr("detect.repo_walk.walk_windows", fake_walk)
+    result = walk_pr_shas(FakeRepo(lambda args: None), {7: "aaa"}, depth=5)
+    assert result == {7: ("s1",)}
+    assert calls and calls[0][2] == 5
 
 
 def test_read_log_caches_the_parsed_window_per_repo():

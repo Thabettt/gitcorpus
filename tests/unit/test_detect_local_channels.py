@@ -182,7 +182,7 @@ def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes():
             return _PR_LOG
         return None
 
-    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100, walk_workers=2)
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
     assert result.status == "ok"
     assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, "s1")}
     assert all(h.evidence["propagated"] is True for h in result.hits)
