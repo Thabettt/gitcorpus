@@ -550,13 +550,14 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
         kind="detect",
         source_run_id=source_id,
     )
-    captured: dict[str, int] = {}
+    captured: dict[str, object] = {}
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay):
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate):
         captured.update(
             depth=depth,
             attempts=attempts,
             retry_delay=retry_delay,
+            gate=gate,
         )
         return ChannelResult(status="ok")
 
@@ -579,7 +580,40 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
         clone_fn=clone,
         repo_factory=lambda dest: FakeRepo(happy_handler),
     )
-    assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5}
+    assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5, "gate": None}
+
+
+def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    gates: list[object] = []
+
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate):
+        gates.append(gate)
+        return ChannelResult(status="ok")
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"pr_metadata"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert gates == [None, None]
 
 
 def test_remove_tree_retries_after_a_transient_failure(tmp_path, monkeypatch):

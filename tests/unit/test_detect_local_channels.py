@@ -217,6 +217,34 @@ def test_detect_pr_commits_local_without_refs_is_ok():
     assert result.stats["propagated_oids"] == ()
 
 
+def test_detect_pr_commits_local_forwards_the_gate(monkeypatch):
+    captured: dict[str, object] = {}
+    gate = object()
+
+    def fake_fetch(repo, *, depth, gate=None):
+        captured["gate"] = gate
+        return {}
+
+    monkeypatch.setattr("detect.local_channels.fetch_pr_refs", fake_fetch)
+    result = detect_pr_commits_local(FakeRepo(lambda args: None), PACK, gate=gate)
+    assert captured["gate"] is gate
+    assert result.status == "ok"
+    assert result.note == "no pull requests found"
+
+
+def test_detect_pr_commits_local_defaults_to_no_gate(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_fetch(repo, *, depth, gate=None):
+        captured["gate"] = gate
+        return {}
+
+    monkeypatch.setattr("detect.local_channels.fetch_pr_refs", fake_fetch)
+    result = detect_pr_commits_local(FakeRepo(lambda args: None), PACK)
+    assert captured["gate"] is None
+    assert result.status == "ok"
+
+
 def test_detect_pr_commits_local_retries_a_transient_fetch_failure(tmp_path):
     fetches: list[int] = []
 

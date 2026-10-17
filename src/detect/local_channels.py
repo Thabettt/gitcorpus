@@ -174,12 +174,13 @@ def detect_pr_commits_local(
     depth: int = 100,
     attempts: int = 4,
     retry_delay: float = 1.0,
+    gate: object | None = None,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
     resumed_note = ""
 
     def fetch_and_list() -> dict[int, str]:
-        return fetch_pr_refs(repo, depth=depth)
+        return fetch_pr_refs(repo, depth=depth, gate=gate)
 
     try:
         refs = retry_call(fetch_and_list, attempts=attempts, base_delay=retry_delay)

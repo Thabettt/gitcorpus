@@ -30,6 +30,7 @@ _LS_REMOTE_TIMEOUT = 120.0
 _PR_CHUNK_TIMEOUT = 600.0
 _PR_REFS_SNAPSHOT = ".gitcorpus-pr-refs.json"
 _PR_SNAPSHOT_VERSION = 1
+_MONSTER_PR_THRESHOLD = 500
 
 
 def _configured_tokens() -> list[str]:
@@ -490,42 +491,57 @@ def read_pr_refs_snapshot(repo: GitRepo) -> dict[int, str] | None:
     return snapshot
 
 
-def fetch_pr_refs(repo: GitRepo, *, depth: int, chunk_refs: int | None = None) -> dict[int, str]:
+def fetch_pr_refs(
+    repo: GitRepo,
+    *,
+    depth: int,
+    chunk_refs: int | None = None,
+    gate: object | None = None,
+) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
     # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
     # tree:0 keeps the pack to commit metadata, no-write-fetch-head leaves no
     # ref files behind, and lazy fetching is disabled for the command only so
-    # a stalled promisor round trip cannot wedge a chunk.
+    # a stalled promisor round trip cannot wedge a chunk. Monster ref sets
+    # hold the fleet gate for every chunk of the fetch, so a wave of giants
+    # cannot saturate the link at once; ordinary repos never touch it.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
     remote = remote_pr_refs(repo)
     if not remote:
         return {}
-    for numbers in chunked(sorted(remote), chunk_refs):
-        request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
-        handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
-        try:
-            handle.write(request.encode("ascii"))
-            handle.close()
-            with open(handle.name, "rb") as stdin:
-                repo.git(
-                    "fetch",
-                    "--quiet",
-                    "--depth",
-                    str(depth),
-                    "--filter=tree:0",
-                    "--no-tags",
-                    "--no-write-fetch-head",
-                    "--recurse-submodules=no",
-                    "origin",
-                    "--stdin",
-                    stdin=stdin,
-                    timeout=_PR_CHUNK_TIMEOUT,
-                    env_extra={"GIT_NO_LAZY_FETCH": "1"},
-                )
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(handle.name)
+    gated = gate is not None and len(remote) > _MONSTER_PR_THRESHOLD
+    if gated:
+        gate.acquire()
+    try:
+        for numbers in chunked(sorted(remote), chunk_refs):
+            request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
+            handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
+            try:
+                handle.write(request.encode("ascii"))
+                handle.close()
+                with open(handle.name, "rb") as stdin:
+                    repo.git(
+                        "fetch",
+                        "--quiet",
+                        "--depth",
+                        str(depth),
+                        "--filter=tree:0",
+                        "--no-tags",
+                        "--no-write-fetch-head",
+                        "--recurse-submodules=no",
+                        "origin",
+                        "--stdin",
+                        stdin=stdin,
+                        timeout=_PR_CHUNK_TIMEOUT,
+                        env_extra={"GIT_NO_LAZY_FETCH": "1"},
+                    )
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(handle.name)
+    finally:
+        if gated:
+            gate.release()
     try:
         write_pr_refs_snapshot(repo, remote)
     except OSError:

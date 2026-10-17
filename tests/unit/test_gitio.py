@@ -68,6 +68,25 @@ class FakeRepo(GitRepo):
         return result
 
 
+class FakeGate:
+    """Records acquire/release and the hold depth seen mid-fetch."""
+
+    def __init__(self) -> None:
+        self.acquires = 0
+        self.releases = 0
+        self.held = 0
+        self.held_at_fetch: list[int] = []
+
+    def acquire(self) -> bool:
+        self.acquires += 1
+        self.held += 1
+        return True
+
+    def release(self) -> None:
+        self.releases += 1
+        self.held -= 1
+
+
 class FakeProcess:
     """Narrow Popen double that records kill/reap for the cancellation test."""
 
@@ -597,6 +616,87 @@ def test_fetch_pr_refs_chunks_large_ref_sets_over_stdin(monkeypatch, tmp_path):
         b"refs/pull/5/head\n",
     ]
     assert all("--filter=tree:0" in call and "--stdin" in call for call in fetches)
+
+
+def _ls_remote_lines(count: int) -> str:
+    return "".join(f"sha{n}\trefs/pull/{n}/head\n" for n in range(1, count + 1))
+
+
+def test_fetch_pr_refs_leaves_the_gate_alone_at_the_threshold(tmp_path):
+    assert gitio._MONSTER_PR_THRESHOLD == 500
+    gate = FakeGate()
+    fake = FakeRepo(
+        lambda args: _ls_remote_lines(500) if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    assert len(fetch_pr_refs(fake, depth=100, gate=gate)) == 500
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def test_fetch_pr_refs_leaves_the_gate_alone_for_ordinary_repos(tmp_path):
+    gate = FakeGate()
+    fake = FakeRepo(
+        lambda args: _LS_REMOTE_OUTPUT if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    fetch_pr_refs(fake, depth=100, gate=gate)
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def test_fetch_pr_refs_gates_monster_ref_sets_across_every_chunk(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 200)
+    gate = FakeGate()
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return _ls_remote_lines(501)
+        if args[0] == "fetch":
+            gate.held_at_fetch.append(gate.held)
+            return ""
+        return None
+
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    assert len(fetch_pr_refs(fake, depth=100, gate=gate)) == 501
+    assert gate.held_at_fetch == [1, 1, 1]
+    assert (gate.acquires, gate.releases) == (1, 1)
+
+
+def test_fetch_pr_refs_releases_the_gate_when_a_chunk_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 200)
+    gate = FakeGate()
+    fetches: list[int] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return _ls_remote_lines(501)
+        if args[0] == "fetch":
+            fetches.append(1)
+            if len(fetches) == 3:
+                raise GitError(list(args), 128, "fatal: connection reset")
+            return ""
+        return None
+
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    with pytest.raises(GitError):
+        fetch_pr_refs(fake, depth=100, gate=gate)
+    assert len(fetches) == 3
+    assert (gate.acquires, gate.releases) == (1, 1)
+
+
+def test_fetch_pr_refs_ignores_the_gate_without_pr_refs(tmp_path):
+    gate = FakeGate()
+    fake = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100, gate=gate) == {}
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def test_fetch_pr_refs_fetches_monsters_ungated_without_a_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 200)
+    fake = FakeRepo(
+        lambda args: _ls_remote_lines(501) if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    assert len(fetch_pr_refs(fake, depth=100, gate=None)) == 501
 
 
 def test_read_pr_refs_snapshot_none_when_missing_corrupt_or_unknown(tmp_path):

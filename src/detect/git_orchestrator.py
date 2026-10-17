@@ -112,6 +112,7 @@ def _scan_one(
     *,
     clone_one: Callable[[str, Path], None],
     make_repo: Callable[[Path], GitRepo],
+    pr_gate: object | None = None,
 ) -> _RepoScan:
     full_name = str(candidate["full_name"])
     dest = run_dir / full_name.replace("/", "__")
@@ -148,6 +149,7 @@ def _scan_one(
             depth=cfg.depth,
             attempts=cfg.attempts,
             retry_delay=cfg.retry_delay,
+            gate=pr_gate,
         )
         results["pr_metadata"] = pr_result
     if "branch" in active:
@@ -211,6 +213,7 @@ def _scan_worker_main(
     run_dir_str: str,
     threads: int,
     breaker_values: tuple,
+    pr_gate: multiprocessing.BoundedSemaphore,
 ) -> None:
     cancellation.bind(cancel_event.is_set)
     run_dir = Path(run_dir_str)
@@ -258,6 +261,7 @@ def _scan_worker_main(
                     candidate,
                     clone_one=clone_one,
                     make_repo=make_repo,
+                    pr_gate=pr_gate,
                 )
                 in_flight[future] = candidate
             if not in_flight:
@@ -338,6 +342,7 @@ def _run_git_detection_processes(
         mp_context.Value("d", 0.0),
         mp_context.Value("d", 0.0),
     )
+    pr_gate = mp_context.BoundedSemaphore(8)
     slices = [candidates[index::processes] for index in range(processes)]
     workers = []
     try:
@@ -354,6 +359,7 @@ def _run_git_detection_processes(
                     str(run_dir),
                     threads,
                     breaker_values,
+                    pr_gate,
                 ),
                 daemon=True,
             )
@@ -478,6 +484,7 @@ def run_git_detection(
                 candidate,
                 clone_one=clone_one,
                 make_repo=make_repo,
+                pr_gate=None,
             )
 
         try:
