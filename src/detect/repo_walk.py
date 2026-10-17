@@ -90,13 +90,17 @@ class CatFileBatch:
         return parents, int(timestamp.group(1))
 
     def close(self) -> None:
-        if self._process.stdin is not None:
+        process = self._process
+        if process.stdin is not None:
             with contextlib.suppress(OSError, ValueError):
-                self._process.stdin.close()
-        if self._process.poll() is None:
-            self._process.kill()
+                process.stdin.close()
+        if process.poll() is None:
+            process.kill()
         with contextlib.suppress(OSError):
-            self._process.communicate()
+            process.wait()
+        if process.stdout is not None:
+            with contextlib.suppress(OSError, ValueError):
+                process.stdout.close()
 
 
 def _fallback(repo: GitRepo, sha: str, depth: int) -> tuple[str, ...]:

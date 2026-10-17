@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from detect.gitio import GitRepo
-from detect.repo_walk import reset_verification, verification_summary, walk_windows
+from detect.repo_walk import (
+    CatFileBatch,
+    reset_verification,
+    verification_summary,
+    walk_windows,
+)
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -120,3 +125,20 @@ def test_walk_windows_falls_back_to_rev_list_without_a_repo(tmp_path):
 
 def test_walk_windows_returns_empty_for_no_refs(tmp_path):
     assert walk_windows(GitRepo(tmp_path), {}, depth=100) == {}
+
+
+@needs_git
+def test_cat_file_batch_close_survives_posix_communicate_semantics(tmp_path, monkeypatch):
+    cat = CatFileBatch(tmp_path)
+    original = subprocess.Popen.communicate
+
+    def posix_communicate(process, input=None, timeout=None):
+        if process.stdin is not None and process.stdin.closed:
+            raise ValueError("flush of closed file")
+        return original(process, input, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", posix_communicate)
+
+    cat.close()
+
+    assert cat._process.poll() is not None
