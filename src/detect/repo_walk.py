@@ -196,16 +196,30 @@ def _verify(repo: GitRepo, sha: str, depth: int, shas: tuple[str, ...]) -> tuple
     return shas
 
 
+def _group_numbers_by_tip(refs: Mapping[int, str]) -> dict[str, list[int]]:
+    """Map each unique tip SHA to its PR numbers, ordered by PR number."""
+    grouped: dict[str, list[int]] = {}
+    for number, sha in sorted(refs.items()):
+        grouped.setdefault(sha, []).append(number)
+    return grouped
+
+
 def walk_windows(
     repo: GitRepo, refs: Mapping[int, str], *, depth: int
 ) -> dict[int, tuple[str, ...]]:
     """PR tip → first ``depth`` commits, set-identical to per-tip rev-list."""
     if not refs:
         return {}
+    grouped = _group_numbers_by_tip(refs)
     git_dir = Path(repo.dest) / ".git"
     alternates = git_dir / "objects" / "info" / "alternates"
     if _has_replace_refs(git_dir) or alternates.exists():
-        return {number: _fallback(repo, sha, depth) for number, sha in sorted(refs.items())}
+        fallback_results: dict[int, tuple[str, ...]] = {}
+        for sha, numbers in grouped.items():
+            shas = _fallback(repo, sha, depth)
+            for number in numbers:
+                fallback_results[number] = shas
+        return fallback_results
     shallow = _load_shallow(git_dir)
     pct = _verify_pct()
     verify_budget = _VERIFY_MAX_PER_REPO
@@ -219,7 +233,7 @@ def walk_windows(
                 cat = CatFileBatch(Path(repo.dest))
             except WalkAnomaly:
                 exact = False
-        for number, sha in sorted(refs.items()):
+        for sha, numbers in grouped.items():
             if exact and cat is not None:
                 try:
                     shas = _walk_one(cat, cache, sha, depth, shallow)
@@ -233,7 +247,8 @@ def walk_windows(
                         exact = False
             else:
                 shas = _fallback(repo, sha, depth)
-            results[number] = shas
+            for number in numbers:
+                results[number] = shas
     finally:
         if cat is not None:
             cat.close()

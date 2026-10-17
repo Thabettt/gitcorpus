@@ -220,6 +220,45 @@ def test_walk_windows_falls_back_to_rev_list_without_a_repo(tmp_path):
     assert result == {9: ("s1", "s2")}
 
 
+def test_fallback_walks_each_unique_tip_once(tmp_path):
+    calls: list[tuple[str, ...]] = []
+
+    class FakeRepo(GitRepo):
+        def __init__(self):
+            super().__init__(tmp_path / "not-a-repo")
+
+        def git(self, *args, timeout=None, stdin=None):
+            assert args[:2] == ("rev-list", "-n")
+            calls.append(args)
+            return "s1\ns2\n" if args[-1] == "aaa" else "s3\n"
+
+    result = walk_windows(FakeRepo(), {1: "aaa", 2: "aaa", 3: "bbb"}, depth=100)
+    assert len(calls) == 2
+    assert result == {1: ("s1", "s2"), 2: ("s1", "s2"), 3: ("s3",)}
+
+
+@needs_git
+def test_in_process_duplicate_tips_share_one_walk_and_identical_windows(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    reset_verification()
+    dest = _repo(tmp_path, 25)
+    repo, calls = _tracking_repo(dest)
+    head = _rev_parse(dest, "HEAD")
+    walked: list[str] = []
+    real_walk_one = repo_walk._walk_one
+
+    def counting(cat, cache, tip, depth, shallow):
+        walked.append(tip)
+        return real_walk_one(cat, cache, tip, depth, shallow)
+
+    monkeypatch.setattr(repo_walk, "_walk_one", counting)
+    result = walk_windows(repo, {1: head, 2: head, 3: head}, depth=10)
+    assert walked == [head]
+    assert calls == []
+    assert result[1] == result[2] == result[3]
+    assert result[1] == _rev_list(dest, head, 10)
+
+
 def test_walk_windows_returns_empty_for_no_refs(tmp_path):
     assert walk_windows(GitRepo(tmp_path), {}, depth=100) == {}
 
