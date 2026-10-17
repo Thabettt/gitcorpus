@@ -586,7 +586,9 @@ def _progress_summary(row) -> dict | None:
     if total and done >= 1 and phase_started is not None:
         elapsed = max((datetime.now(UTC) - phase_started).total_seconds(), 0.0)
         if elapsed > 0:
-            eta = elapsed * (total - done) / done
+            candidate = elapsed * (total - done) / done
+            if candidate <= 24 * 3600:
+                eta = candidate
     provisional = eta is not None and done < 10
     return {
         "phase": phase,
