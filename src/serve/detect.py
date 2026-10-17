@@ -38,6 +38,8 @@ from serve.repo_import import (
 from store.models import DetectionEvidence, RunItem, Runs, TracePack
 from store.settings import load_run_settings
 
+DETECTIONS_PAGE_SIZE = 15
+
 
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
@@ -324,13 +326,24 @@ def register_detect(
     @application.get("/detections", response_class=HTMLResponse)
     def detections_page(request: Request):
         engine = engine_factory()
+        raw_page = request.query_params.get("page", "").strip()
+        page_number = int(raw_page) if raw_page.isdigit() and int(raw_page) > 0 else 1
         with engine.connect() as connection:
+            total = int(
+                connection.scalar(
+                    select(func.count()).select_from(Runs).where(Runs.kind == "detect")
+                )
+                or 0
+            )
+            pages = max(1, (total + DETECTIONS_PAGE_SIZE - 1) // DETECTIONS_PAGE_SIZE)
+            page_number = min(page_number, pages)
             rows = list(
                 connection.execute(
                     select(Runs)
                     .where(Runs.kind == "detect")
-                    .order_by(Runs.created_at.desc(), Runs.id.desc())
-                    .limit(200)
+                    .order_by(Runs.id.desc())
+                    .offset((page_number - 1) * DETECTIONS_PAGE_SIZE)
+                    .limit(DETECTIONS_PAGE_SIZE)
                 ).mappings()
             )
             numbers = {
@@ -356,6 +369,12 @@ def register_detect(
                     }
                     for row in rows
                 ],
+                "page": page_number,
+                "pages": pages,
+                "total": total,
+                "flushed": request.query_params.get("flushed"),
+                "kept": request.query_params.get("kept"),
+                "failed": request.query_params.get("failed"),
                 "csrf_token": request.state.csrf_token,
             },
         )
@@ -366,7 +385,7 @@ def register_detect(
             return errors.csrf_error_page(request)
         engine = engine_factory()
 
-        def flush() -> None:
+        def flush() -> dict[str, list[str] | int]:
             with engine.connect() as connection:
                 active = {
                     int(run_id)
@@ -376,14 +395,30 @@ def register_detect(
                         )
                     ).scalars()
                 }
+            deleted = 0
+            kept: list[str] = []
+            failed: list[str] = []
             for path in sorted(Path(clone_root).glob("detect-*")):
                 suffix = path.name[len("detect-") :]
-                if not suffix.isdigit() or int(suffix) in active:
+                if not suffix.isdigit():
+                    continue
+                if int(suffix) in active:
+                    kept.append(path.name)
                     continue
                 _remove_tree(path)
+                if path.exists():
+                    failed.append(path.name)
+                else:
+                    deleted += 1
+            return {"deleted": deleted, "kept": kept, "failed": failed}
 
-        await run_in_threadpool(flush)
-        return RedirectResponse("/detections", status_code=303)
+        result = await run_in_threadpool(flush)
+        deleted = int(result["deleted"])
+        kept = len(result["kept"])
+        failed = len(result["failed"])
+        return RedirectResponse(
+            f"/detections?flushed={deleted}&kept={kept}&failed={failed}", status_code=303
+        )
 
     @application.get("/detections/new", response_class=HTMLResponse)
     def detect_new_page(request: Request):

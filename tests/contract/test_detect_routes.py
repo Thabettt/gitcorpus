@@ -167,10 +167,43 @@ def test_flush_repos_removes_leftover_detect_clones_but_keeps_active_ones(clean,
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/detections"
+    assert response.headers["location"] == "/detections?flushed=1&kept=1&failed=0"
     assert not (clone_root / "detect-41").exists()
     assert (clone_root / f"detect-{active}").exists()
     assert (clone_root / "find-hash").exists()
+    banner = client.get(response.headers["location"]).text
+    assert "deleted 1 leftover" in banner
+    assert "kept 1 (active scans)" in banner
+
+
+def test_detections_list_is_ordered_newest_id_first_even_with_older_timestamps(clean):
+    client = make_client(clean)
+    older_id = seed_detect_run(clean, status="done")
+    newer_id = seed_detect_run(clean, status="done")
+    with clean.begin() as connection:
+        connection.execute(
+            text("UPDATE runs SET created_at = now() - interval '1 day' WHERE id = :id"),
+            {"id": newer_id},
+        )
+    body = client.get("/detections").text
+    assert body.index(f"detection-{newer_id}") < body.index(f"detection-{older_id}")
+
+
+def test_detections_list_paginates_older_runs(clean):
+    client = make_client(clean)
+    run_ids = [seed_detect_run(clean, status="done") for _ in range(17)]
+    first_page = client.get("/detections").text
+    assert first_page.count('<tr id="detection-') == 15
+    assert f'id="detection-{run_ids[-1]}"' in first_page
+    assert f'id="detection-{run_ids[0]}"' not in first_page
+    assert "Page 1 of 2 · 17 detections" in first_page
+    assert 'href="/detections?page=2"' in first_page
+    second_page = client.get("/detections?page=2").text
+    assert second_page.count('<tr id="detection-') == 2
+    assert f'id="detection-{run_ids[0]}"' in second_page
+    assert f'id="detection-{run_ids[-1]}"' not in second_page
+    assert "Page 2 of 2 · 17 detections" in second_page
+    assert 'href="/detections?page=1"' in second_page
 
 
 def csrf_token(client: TestClient) -> str:

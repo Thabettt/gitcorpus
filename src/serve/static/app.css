@@ -407,6 +407,17 @@ a:hover {
   font-size: 0.85rem;
 }
 
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.panel-head-actions .inline-form {
+  margin: 0;
+}
+
 /* micro-label pattern */
 .field-label,
 .data-table thead th,
