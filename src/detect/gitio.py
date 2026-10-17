@@ -49,6 +49,11 @@ def git_env() -> dict[str, str]:
     # Scans fetch thousands of objects; auto-gc/repack maintenance on every
     # fetch would storm the disk, and optional locks are pure overhead here.
     env["GIT_OPTIONAL_LOCKS"] = "0"
+    # Never let git surface an askpass dialog: empty values are skipped by git,
+    # and GIT_TERMINAL_PROMPT=0 blocks the terminal fallback, so auth-required
+    # operations fail fast and clean instead of blocking a scan worker.
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS"] = ""
     env["GIT_CONFIG_COUNT"] = "2"
     env["GIT_CONFIG_KEY_0"] = "gc.auto"
     env["GIT_CONFIG_VALUE_0"] = "0"
@@ -64,6 +69,62 @@ def git_error_tail(exc: BaseException) -> str:
     if not line:
         line = str(exc)
     return line[:160]
+
+
+_DEAD_PHRASES = (
+    "not found",
+    "could not read username",
+    "authentication failed",
+    "returned error: 404",
+    "returned error: 401",
+    "returned error: 403",
+)
+_TRANSIENT_PHRASES = (
+    "could not resolve host",
+    "couldn't connect to server",
+    "failed to connect",
+    "connection was reset",
+    "connection reset",
+    "operation timed out",
+    "timed out",
+    "early eof",
+    "rpc failed",
+    "returned error: 500",
+    "returned error: 502",
+    "returned error: 503",
+    "returned error: 504",
+)
+_LOCAL_PHRASES = (
+    "index.lock",
+    "cannot lock",
+    "unable to create",
+    "already exists and is not an empty directory",
+    "permission denied",
+    "no space left",
+)
+
+
+def classify_git_failure(exc: BaseException) -> str:
+    """Map a git/subprocess failure to a retry policy class.
+
+    dead      — the repository is gone or private; retrying cannot help.
+    transient — network/DNS/server trouble; pause via the breaker, retry later.
+    local     — lock/disk/permission trouble; retry inline as before.
+    fatal     — unknown; fail fast and record.
+    """
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return "transient"
+    stderr = ""
+    if isinstance(exc, GitError):
+        stderr = exc.stderr or ""
+    haystack = f"{stderr}\n{exc}".lower()
+    if any(phrase in haystack for phrase in _DEAD_PHRASES):
+        return "dead"
+    if any(phrase in haystack for phrase in _TRANSIENT_PHRASES):
+        return "transient"
+    if any(phrase in haystack for phrase in _LOCAL_PHRASES):
+        return "local"
+    return "fatal"
 
 
 def _sleep_interruptibly(delay: float) -> None:

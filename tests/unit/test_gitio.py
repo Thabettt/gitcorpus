@@ -142,6 +142,9 @@ def test_git_env_disables_maintenance_and_optional_locks():
     assert env["GIT_CONFIG_VALUE_0"] == "0"
     assert env["GIT_CONFIG_KEY_1"] == "maintenance.auto"
     assert env["GIT_CONFIG_VALUE_1"] == "false"
+    assert env["GIT_ASKPASS"] == ""
+    assert env["SSH_ASKPASS"] == ""
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_clone_lean_uses_depth_and_blob_filter(tmp_path, monkeypatch):
@@ -571,3 +574,38 @@ def test_parse_merge_branches_handles_pr_local_and_fork_forms():
         (None, "codex/thing"),
         (7, "devin/rewrite"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("fatal: repository 'https://github.com/o/r/' not found", "dead"),
+        ("fatal: could not read Username for 'https://github.com'", "dead"),
+        ("fatal: Authentication failed for 'https://github.com/o/r.git/'", "dead"),
+        (
+            "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host",
+            "transient",
+        ),
+        (
+            "fatal: unable to access 'https://github.com/o/r.git/': Failed to connect",
+            "transient",
+        ),
+        ("error: RPC failed; curl 56 Recv failure: Connection was reset", "transient"),
+        ("fatal: unable to access 'https://github.com/o/r.git/': Operation timed out", "transient"),
+        (
+            "fatal: unable to access 'https://github.com/': returned error: 502",
+            "transient",
+        ),
+        ("fatal: Unable to create '.../.git/index.lock': File exists", "local"),
+        ("fatal: destination path 'x' already exists and is not an empty directory", "local"),
+        ("something unexpected happened", "fatal"),
+    ],
+)
+def test_classify_git_failure_table(stderr, expected):
+    assert gitio.classify_git_failure(GitError(["git", "clone"], 128, stderr)) == expected
+
+
+def test_classify_git_failure_reads_timeouts_as_transient():
+    assert (
+        gitio.classify_git_failure(subprocess.TimeoutExpired(["git", "fetch"], 600)) == "transient"
+    )

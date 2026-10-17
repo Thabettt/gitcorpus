@@ -510,6 +510,8 @@ def test_git_env_disables_prompts_and_credential_helpers(monkeypatch):
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["GIT_CONFIG_NOSYSTEM"] == "1"
     assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_ASKPASS"] == ""
+    assert env["SSH_ASKPASS"] == ""
 
 
 def test_default_git_runner_closes_stdin_and_sets_the_terminal_env(monkeypatch):
