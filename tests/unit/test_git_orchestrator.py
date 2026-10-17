@@ -790,3 +790,33 @@ def test_transient_failure_gets_one_post_sweep_retry(clean_db, tmp_path, monkeyp
     )
     assert attempts.count("octo/two") == 2  # first try + retry wave
     assert payload.result_summary["repos_unavailable"] == 0
+
+
+def test_unavailable_repos_listed_with_reasons(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine, {"kind": "detect"}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        if full_name == "octo/two":
+            raise RuntimeError("clone failed")
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(
+            scan_root=str(tmp_path / "clones"), workers=1, attempts=1, retry_delay=0.0
+        ),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert payload.result_summary["unavailable_repos"] == [
+        {"full_name": "octo/two", "reason": "fatal"}
+    ]
+    assert payload.result_summary["unavailable_reasons"] == {"fatal": 1}

@@ -598,6 +598,22 @@ def run_git_detection(
     summary = _summary(scans, spec, pack)
     summary["source"] = "git"
     summary["skipped_channels"] = skipped
+    unavailable = sorted(
+        (
+            {
+                "full_name": scan.full_name,
+                "reason": scan.document.get("failure_class") or "channel_unavailable",
+            }
+            for scan in scans
+            if scan.document.get("unavailable")
+        ),
+        key=lambda row: row["full_name"],
+    )
+    reasons: dict[str, int] = {}
+    for entry in unavailable:
+        reasons[entry["reason"]] = reasons.get(entry["reason"], 0) + 1
+    summary["unavailable_repos"] = unavailable
+    summary["unavailable_reasons"] = dict(sorted(reasons.items()))
     warnings.extend(failures)
     if skipped:
         warnings.append(f"local scan skipped API-only channels: {', '.join(skipped)}")

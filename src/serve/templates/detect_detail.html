@@ -103,6 +103,19 @@
       <a class="button" href="/runs/{{ run.id }}/export?format=csv">Export CSV</a>
     </div>
   </div>
+  {% if detection.summary.unavailable_reasons %}
+  <details class="evidence-repo" id="detection-unavailable">
+    <summary>Unavailable repos · {{ detection.summary.unavailable_repos | length }}</summary>
+    <div class="evidence-body">
+      <p class="muted">
+        {% for reason, count in detection.summary.unavailable_reasons.items() %}{{ reason }}: {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+      <ul class="muted">
+        {% for entry in detection.summary.unavailable_repos[:200] %}<li>{{ entry.full_name }} — {{ entry.reason }}</li>{% endfor %}
+      </ul>
+    </div>
+  </details>
+  {% endif %}
   <div id="detection-filters" class="filter-row">
     <label class="field" for="detection-filter-signal">
       <span class="field-label">Has signal</span>
