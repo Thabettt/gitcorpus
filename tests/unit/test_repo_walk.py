@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import detect.repo_walk as repo_walk
 from detect.gitio import GitRepo
 from detect.repo_walk import (
     CatFileBatch,
@@ -41,24 +42,49 @@ def _repo(tmp_path: Path, commits: int) -> Path:
     return dest
 
 
-@needs_git
-def test_walk_windows_matches_rev_list_exactly(tmp_path, monkeypatch):
-    monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
-    reset_verification()
-    dest = _repo(tmp_path, 30)
-    heads = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=dest, check=True, env=ENV, capture_output=True, text=True
+def _rev_parse(dest: Path, rev: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", rev], cwd=dest, check=True, env=ENV, capture_output=True, text=True
     ).stdout.strip()
-    result = walk_windows(GitRepo(dest), {7: heads}, depth=100)
-    truth = subprocess.run(
-        ["git", "rev-list", "-n", "100", heads],
+
+
+def _rev_list(dest: Path, rev: str, depth: int) -> tuple[str, ...]:
+    output = subprocess.run(
+        ["git", "rev-list", "-n", str(depth), rev],
         cwd=dest,
         check=True,
         env=ENV,
         capture_output=True,
         text=True,
-    ).stdout.split()
-    assert set(result[7]) == set(truth)
+    ).stdout
+    return tuple(output.split())
+
+
+def _tracking_repo(dest: Path) -> tuple[GitRepo, list[tuple[str, ...]]]:
+    repo = GitRepo(dest)
+    calls: list[tuple[str, ...]] = []
+    git = repo.git
+
+    def tracked(*args, **kwargs):
+        if args and args[0] == "rev-list":
+            calls.append(args)
+        return git(*args, **kwargs)
+
+    repo.git = tracked
+    return repo, calls
+
+
+@needs_git
+def test_walk_windows_matches_rev_list_exactly(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
+    reset_verification()
+    dest = _repo(tmp_path, 30)
+    repo, calls = _tracking_repo(dest)
+    heads = _rev_parse(dest, "HEAD")
+    result = walk_windows(repo, {7: heads}, depth=10)
+    assert set(result[7]) == set(_rev_list(dest, heads, 10))
+    assert len(calls) == 1
+    assert verification_summary()["checked"] == 1
     assert verification_summary()["mismatches"] == 0
 
 
@@ -67,19 +93,10 @@ def test_walk_windows_selects_the_same_deep_prefix_as_rev_list(tmp_path, monkeyp
     monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
     reset_verification()
     dest = _repo(tmp_path, 25)
-    heads = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=dest, check=True, env=ENV, capture_output=True, text=True
-    ).stdout.strip()
+    heads = _rev_parse(dest, "HEAD")
     result = walk_windows(GitRepo(dest), {1: heads}, depth=10)
-    truth = subprocess.run(
-        ["git", "rev-list", "-n", "10", heads],
-        cwd=dest,
-        check=True,
-        env=ENV,
-        capture_output=True,
-        text=True,
-    ).stdout.split()
-    assert result[1] == tuple(truth)
+    assert result[1] == _rev_list(dest, heads, 10)
+    assert verification_summary()["checked"] == 1
 
 
 @needs_git
@@ -108,6 +125,86 @@ def test_walk_windows_respects_shallow_grafts(tmp_path):
     ).stdout.split()
     assert result[3] == tuple(truth)
     assert len(result[3]) == 5  # the graft caps it
+
+
+@needs_git
+def test_exhausted_walk_is_never_verified_even_at_pct_100(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
+    reset_verification()
+    dest = _repo(tmp_path, 5)
+    repo, calls = _tracking_repo(dest)
+    result = walk_windows(repo, {1: _rev_parse(dest, "HEAD")}, depth=100)
+    assert len(result[1]) == 5
+    assert calls == []
+    assert verification_summary() == {"checked": 0, "mismatches": 0, "disabled": False}
+
+
+@needs_git
+def test_default_verify_pct_is_zero_so_order_dependent_walks_spawn_nothing(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    monkeypatch.setattr(repo_walk.random, "randint", lambda low, high: low)
+    reset_verification()
+    dest = _repo(tmp_path, 25)
+    repo, calls = _tracking_repo(dest)
+    result = walk_windows(repo, {1: _rev_parse(dest, "HEAD")}, depth=10)
+    assert len(result[1]) == 10
+    assert calls == []
+    assert verification_summary()["checked"] == 0
+
+
+@needs_git
+def test_verify_budget_caps_spawns_at_two_per_walk_windows_call(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
+    reset_verification()
+    dest = _repo(tmp_path, 40)
+    repo, calls = _tracking_repo(dest)
+    tips = {
+        1: _rev_parse(dest, "HEAD"),
+        2: _rev_parse(dest, "HEAD~5"),
+        3: _rev_parse(dest, "HEAD~10"),
+    }
+    first = walk_windows(repo, tips, depth=10)
+    assert len(calls) == 2
+    assert verification_summary()["checked"] == 2
+    second = walk_windows(repo, tips, depth=10)
+    assert len(calls) == 4
+    assert verification_summary()["checked"] == 4
+    for number, tip in tips.items():
+        truth = _rev_list(dest, tip, 10)
+        assert first[number] == truth
+        assert second[number] == truth
+
+
+@needs_git
+def test_mismatch_substitutes_truth_and_disables_after_three(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_WALK_VERIFY_PCT", "100")
+    reset_verification()
+    dest = _repo(tmp_path, 20)
+    repo, _calls = _tracking_repo(dest)
+    head = _rev_parse(dest, "HEAD")
+    truth = _rev_list(dest, head, 5)
+    real_walk_one = repo_walk._walk_one
+    walked_tips: list[str] = []
+
+    def corrupted(cat, cache, tip, depth, shallow):
+        walked_tips.append(tip)
+        walked = real_walk_one(cat, cache, tip, depth, shallow)
+        return ("f" * 40, *walked[1:])
+
+    monkeypatch.setattr(repo_walk, "_walk_one", corrupted)
+
+    for expected_mismatches in (1, 2, 3):
+        result = walk_windows(repo, {1: head}, depth=5)
+        assert result[1] == truth
+        summary = verification_summary()
+        assert summary["mismatches"] == expected_mismatches
+        assert summary["disabled"] == (expected_mismatches == 3)
+
+    assert len(walked_tips) == 3
+    healed = walk_windows(repo, {1: head}, depth=5)
+    assert healed[1] == truth
+    assert verification_summary()["disabled"] is True
+    assert len(walked_tips) == 3
 
 
 def test_walk_windows_falls_back_to_rev_list_without_a_repo(tmp_path):

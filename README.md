@@ -369,7 +369,7 @@ Everything is read from the environment only. Secrets are never stored in the re
 | `GITCORPUS_DISCOVERY_CONCURRENCY` | `32` | Discovery worker pool size (1–64); one GraphQL search connection per page. |
 | `GITCORPUS_DETECT_CONCURRENCY` | `32` | Detection scan workers (1–64); git-source detection runs clone this many repos in parallel. Detection only — searches are unaffected. |
 | `GITCORPUS_CLONES_ROOT` | `clones` | Clone root for detection scans. Point this at a non-synced disk (e.g. `D:\gitcrawl-clones`) so OneDrive/backup watchers do not churn the git objects. |
-| `GITCORPUS_WALK_VERIFY_PCT` | `10` | Percentage of order-dependent PR windows additionally verified against `git rev-list`; mismatches self-heal and disable the in-process path after 3. Gates/tests set `100`. |
+| `GITCORPUS_WALK_VERIFY_PCT` | `0` | Percentage of order-dependent PR windows additionally verified against `git rev-list`; off by default and capped at 2 spawns per `walk_windows` call, and exhausted-before-depth walks are never sampled. Mismatches self-heal and disable the in-process path after 3. Gates/tests set `100`. |
 | `TEST_DATABASE_URL` | — | Test database; its name must end in `_test` (destructive-safe). Suites skip without it. |
 | `GITCORPUS_REQUIRE_TEST_DB` | unset | `1` turns a missing test database into a failure instead of a skip (used in CI). |
 | `UPDATE_GOLDEN` | unset | `1` regenerates the golden snapshots. |

@@ -13,9 +13,11 @@ from detect.gitio import GitRepo, git_env
 from lib import cancellation
 
 # Environment knob: percentage of order-dependent walks that are additionally
-# verified against a real `git rev-list`. Gates run at 100.
+# verified against a real `git rev-list`. Off by default; each `walk_windows`
+# call spends at most `_VERIFY_MAX_PER_REPO` spawns on non-exhausted windows.
 _VERIFY_ENV = "GITCORPUS_WALK_VERIFY_PCT"
 _MAX_MISMATCHES = 3
+_VERIFY_MAX_PER_REPO = 2
 
 _HDR = re.compile(rb"^([0-9a-f]{40}) (commit|tree|blob|tag) (\d+)$")
 _PARENT = re.compile(rb"^parent ([0-9a-f]{40})$", re.M)
@@ -37,11 +39,11 @@ def reset_verification() -> None:
 
 
 def _verify_pct() -> int:
-    raw = os.environ.get(_VERIFY_ENV, "10")
+    raw = os.environ.get(_VERIFY_ENV, "0")
     try:
         value = int(raw)
     except ValueError:
-        return 10
+        return 0
     return max(0, min(100, value))
 
 
@@ -176,11 +178,14 @@ def _load_shallow(git_dir: Path) -> frozenset[str]:
     )
 
 
-def _verify(
-    repo: GitRepo, sha: str, depth: int, shas: tuple[str, ...], pct: int
-) -> tuple[str, ...]:
-    if pct <= 0 or random.randint(1, 100) > pct:
-        return shas
+def _verification_due(shas: tuple[str, ...], depth: int, pct: int, budget: int) -> bool:
+    """Only non-exhausted windows are sampled, and only within the spawn budget."""
+    if budget <= 0 or pct <= 0 or len(shas) < depth:
+        return False
+    return random.randint(1, 100) <= pct
+
+
+def _verify(repo: GitRepo, sha: str, depth: int, shas: tuple[str, ...]) -> tuple[str, ...]:
     truth = _fallback(repo, sha, depth)
     _state["checked"] = int(_state["checked"]) + 1
     if set(truth) != set(shas):
@@ -203,6 +208,7 @@ def walk_windows(
         return {number: _fallback(repo, sha, depth) for number, sha in sorted(refs.items())}
     shallow = _load_shallow(git_dir)
     pct = _verify_pct()
+    verify_budget = _VERIFY_MAX_PER_REPO
     results: dict[int, tuple[str, ...]] = {}
     exact = not bool(_state["disabled"])
     cache: dict[str, tuple[tuple[str, ...], int]] = {}
@@ -220,7 +226,9 @@ def walk_windows(
                 except WalkAnomaly:
                     shas = _fallback(repo, sha, depth)
                 else:
-                    shas = _verify(repo, sha, depth, shas, pct)
+                    if _verification_due(shas, depth, pct, verify_budget):
+                        shas = _verify(repo, sha, depth, shas)
+                        verify_budget -= 1
                     if _state["disabled"]:
                         exact = False
             else:
