@@ -342,7 +342,7 @@ def _run_git_detection_processes(
         mp_context.Value("d", 0.0),
         mp_context.Value("d", 0.0),
     )
-    pr_gate = mp_context.BoundedSemaphore(8)
+    pr_gate = mp_context.BoundedSemaphore(32)
     slices = [candidates[index::processes] for index in range(processes)]
     workers = []
     try:
