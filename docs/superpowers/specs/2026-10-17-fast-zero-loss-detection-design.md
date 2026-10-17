@@ -70,8 +70,9 @@ Implementation:
   set (provably exact for the only contract that matters).
 - **Fallback:** any anomaly (missing object, non-commit object, replace-refs present, parse error) →
   spawn `git rev-list -n 100` for that tip (exact by definition).
-- **Self-healing verification:** env `GITCORPUS_WALK_VERIFY_PCT` (default 10; gates use 100). A random
-  share of walk results are additionally verified with a real `rev-list`; on mismatch the true result is
+- **Self-healing verification:** env `GITCORPUS_WALK_VERIFY_PCT` (default 0; gates use 100; at most 2
+  spawns per `walk_windows` call, and exhausted-before-depth walks are never sampled). A random share of
+  walk results are additionally verified with a real `rev-list`; on mismatch the true result is
   substituted, a counter increments in `field_stats`, and after 3 mismatches the process disables the
   exact-order path entirely (spawn-only) and records a run warning.
 - Concurrency: runs inline in the scan thread; the shared 8-thread `walk_pool` and its plumbing in

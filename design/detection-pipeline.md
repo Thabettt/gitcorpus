@@ -57,10 +57,12 @@ One pass yields everything the API's history query yielded: author and committer
 ### Stage 4 — Fetch PR refs (the pr_metadata channel)
 
 ```
-git fetch --depth=100 --filter=tree:0 origin '+refs/pull/*/head:refs/gc/pr/*'
+git ls-remote --refs origin 'refs/pull/*/head'          # → in-memory {pr: sha} map
+git fetch --depth=100 --filter=tree:0 --no-write-fetch-head \
+  --recurse-submodules=no origin --stdin                # ← refspecs from the map, 2,000 per chunk
 ```
 
-One command asks GitHub for the tip of **every pull request**, downloading commit metadata only (`tree:0` means no trees and no contents — the smallest possible object set). The PR number is preserved in the local ref name (`refs/gc/pr/123`), so a matched commit can be written exactly as the API wrote it: `{"pr": 123, "commit": "<sha>", "propagated": true}`. This is what recovers agent commits that a squash-merge removed from the default branch. Measured recovery against the API ground truth (1,938 distinct commits across 58 repos): **40% found by a plain clone, 86% after this one fetch, 100% after a targeted follow-up** for the single straggler — one repo whose PR history was 300 commits long, fetchable by explicit commit id. Why this stage exists: without it, the 60% of PR-only evidence a plain clone misses would stay invisible; with the API, the same data cost a GraphQL call per repo and helped exhaust the hourly budget.
+The listing asks GitHub for the tip of **every pull request** and keeps it as an in-memory number→commit map, persisted to `.git/.gitcorpus-pr-refs.json` as a resume snapshot (a kept clone whose fresh listing comes back empty has that snapshot deleted, so it can never resume from refs the remote no longer has). The fetch then requests exactly those refs — destination-less and fed over `--stdin` in 2,000-ref chunks, so no ref files are written and the argv never grows — downloading commit metadata only (`tree:0` means no trees and no contents — the smallest possible object set) with lazy fetching disabled for the command alone (`GIT_NO_LAZY_FETCH=1`), so a stalled promisor round trip cannot wedge a chunk. The PR number stays in the map, so a matched commit can be written exactly as the API wrote it: `{"pr": 123, "commit": "<sha>", "propagated": true}`. This is what recovers agent commits that a squash-merge removed from the default branch. Measured recovery against the API ground truth (1,938 distinct commits across 58 repos): **40% found by a plain clone, 86% after this one fetch, 100% after a targeted follow-up** for the single straggler — one repo whose PR history was 300 commits long, fetchable by explicit commit id. Why this stage exists: without it, the 60% of PR-only evidence a plain clone misses would stay invisible; with the API, the same data cost a GraphQL call per repo and helped exhaust the hourly budget.
 
 ### Stage 5 — Recover branch names (the branch channel, partial by nature)
 

@@ -947,9 +947,10 @@ git commit -m "detect: list unavailable repos with machine-readable reasons in t
 - Consumes: `gitio.GitRepo`, `gitio.git_env`, `lib.cancellation`.
 - Produces: `walk_windows(repo: GitRepo, refs: Mapping[int, str], *, depth: int) -> dict[int, tuple[str, ...]]`;
   `verification_summary() -> {"checked": int, "mismatches": int, "disabled": bool}`; `reset_verification()`;
-  `WalkAnomaly`. Env `GITCORPUS_WALK_VERIFY_PCT` (default 10, clamped 0–100). Exhausted-before-depth
-  walks are exact regardless of ordering; order-dependent walks are verify-sampled, mismatches are
-  substituted with the true result, and after 3 mismatches the process permanently falls back to spawns.
+  `WalkAnomaly`. Env `GITCORPUS_WALK_VERIFY_PCT` (default 0, clamped 0–100, at most 2 spawns per call;
+  exhausted-before-depth walks are exempt, since they are exact regardless of ordering). Order-dependent
+  walks are verify-sampled, mismatches are substituted with the true result, and after 3 mismatches the
+  process permanently falls back to spawns.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1598,7 +1599,7 @@ git commit -m "detect: honest git-mode estimate in hours instead of clone-MB min
 
 ```markdown
 | `GITCORPUS_CLONES_ROOT` | `clones` | Clone root for detection scans. Point this at a non-synced disk (e.g. `D:\gitcrawl-clones`) so OneDrive/backup watchers do not churn the git objects. |
-| `GITCORPUS_WALK_VERIFY_PCT` | `10` | Percentage of order-dependent PR windows additionally verified against `git rev-list`; mismatches self-heal and disable the in-process path after 3. Gates/tests set `100`. |
+| `GITCORPUS_WALK_VERIFY_PCT` | `0` | Percentage of order-dependent PR windows additionally verified against `git rev-list`; off by default, capped at 2 spawns per `walk_windows` call, and exhausted-before-depth walks are never sampled. Mismatches self-heal and disable the in-process path after 3. Gates/tests set `100`. |
 ```
 
 - [ ] **Step 2: Commit**
