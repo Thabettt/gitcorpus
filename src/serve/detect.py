@@ -55,6 +55,7 @@ def build_detect_runner(engine: Engine) -> Runner:
                     keep=spec.clone_keep,
                     timeout=clone_timeout_seconds(),
                     workers=settings.detect_concurrency,
+                    processes=4,
                 ),
             )
         from serve.runner import build_deps

@@ -273,6 +273,30 @@ def test_git_error_tail_falls_back_to_str():
 
 
 @needs_git
+def test_read_blobs_reads_paths_in_one_batch_with_binary_content(tmp_path):
+    repo_dir = tmp_path / "r"
+    repo_dir.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Jane",
+        "GIT_AUTHOR_EMAIL": "jane@example.com",
+        "GIT_COMMITTER_NAME": "Jane",
+        "GIT_COMMITTER_EMAIL": "jane@example.com",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, env=env)
+    (repo_dir / "README").write_bytes(b"hello\n")
+    (repo_dir / "bin").write_bytes(b"\xff\xfe\x00binary\n")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=repo_dir, check=True, env=env)
+
+    blobs = GitRepo(repo_dir).read_blobs(["README", "bin", "missing.txt"])
+    assert blobs["README"] == "hello\n"
+    assert "\ufffd" in blobs["bin"]
+    assert "binary" in blobs["bin"]
+    assert blobs["missing.txt"] is None
+
+
+@needs_git
 def test_real_git_tree_blob_and_log(tmp_path):
     repo_dir = tmp_path / "r"
     repo_dir.mkdir()

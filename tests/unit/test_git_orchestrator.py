@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -33,6 +35,10 @@ class FakeRepo(GitRepo):
         if result is None:
             raise GitError(list(args), 128, "fake")
         return result
+
+    def read_blobs(self, paths):
+        self.calls.append(("read_blobs", *paths))
+        return {path: self._handler(("show", f"HEAD:{path}")) for path in paths}
 
 
 def happy_handler(args):
@@ -444,6 +450,63 @@ def test_cancelled_git_detection_leaves_checkpointed_items(clean_db, tmp_path, m
     assert (tmp_path / "clones" / f"detect-{detect_run}").exists()
 
 
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+
+
+def _make_local_repo(dest: Path) -> None:
+    dest.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    (dest / "CLAUDE.md").write_text("# guidance\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Jane",
+        "GIT_AUTHOR_EMAIL": "jane@example.com",
+        "GIT_COMMITTER_NAME": "Jane",
+        "GIT_COMMITTER_EMAIL": "jane@example.com",
+    }
+    subprocess.run(["git", "add", "."], cwd=dest, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "feat: x"], cwd=dest, check=True, env=env)
+    (dest / MARKER_NAME).write_text("", encoding="utf-8")
+
+
+@needs_git
+def test_run_git_detection_spreads_workers_over_processes(clean_db, tmp_path):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    run_dir = tmp_path / "clones" / f"detect-{detect_run}"
+    _make_local_repo(run_dir / "octo__one")
+    _make_local_repo(run_dir / "octo__two")
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file", "commit_trailer"})),
+        PACK,
+        config=GitScanConfig(
+            scan_root=str(tmp_path / "clones"),
+            keep=True,
+            workers=4,
+            processes=2,
+        ),
+    )
+    assert payload.result_summary["repos_scanned"] == 2
+    assert payload.result_summary["repos_unavailable"] == 0
+    assert all(item.detection["agents"] == ["Claude Code"] for item in payload.items)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+            {"run": detect_run},
+        ).scalar()
+    assert rows == 2
+    assert (run_dir / "octo__one" / MARKER_NAME).exists()
+
+
 def test_run_git_detection_reads_the_commit_window_once_per_repo(clean_db, tmp_path, monkeypatch):
     engine = clean_db()
     source_id = seed_source(engine)
@@ -489,7 +552,7 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     )
     captured: dict[str, int] = {}
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, walk_workers):
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, walk_workers, walk_pool=None):
         captured.update(
             depth=depth,
             attempts=attempts,
@@ -534,10 +597,19 @@ def test_remove_tree_retries_after_a_transient_failure(tmp_path, monkeypatch):
             return
         real(path, *args, **kwargs)
 
+    monkeypatch.setattr("detect.git_orchestrator._spawn_rmdir", lambda path: None)
     monkeypatch.setattr("detect.git_orchestrator.shutil.rmtree", flaky)
     monkeypatch.setattr("detect.git_orchestrator.time.sleep", lambda _: None)
     _remove_tree(target)
     assert len(calls) == 2
+    assert not target.exists()
+
+
+def test_remove_tree_deletes_a_real_directory(tmp_path):
+    target = tmp_path / "run"
+    (target / "a" / "b").mkdir(parents=True)
+    (target / "a" / "b" / "file").write_text("x", encoding="utf-8")
+    _remove_tree(target)
     assert not target.exists()
 
 

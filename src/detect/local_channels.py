@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from detect.attribution import (
     Hit,
@@ -24,7 +25,6 @@ from detect.gitio import (
     list_pr_refs,
     list_tree_entries,
     parse_merge_branches,
-    read_blob,
     read_commits,
     read_log,
     retry_call,
@@ -85,7 +85,8 @@ def detect_files_local(
             fetch_blobs(repo, needed)
         except _GIT_FAILURES:
             pass
-    ignore_text = read_blob(repo, ".gitignore")
+    contents = repo.read_blobs([".gitignore", *probe_order])
+    ignore_text = contents.get(".gitignore")
     if ignore_text:
         ignored = tuple(
             line.strip()
@@ -105,7 +106,7 @@ def detect_files_local(
         {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
     )[:CONTENT_PROBE_LIMIT]
     for path in probe_paths:
-        text = read_blob(repo, path)
+        text = contents.get(path)
         if text is None:
             continue
         for hit in hits:
@@ -175,6 +176,7 @@ def detect_pr_commits_local(
     attempts: int = 4,
     retry_delay: float = 1.0,
     walk_workers: int = 8,
+    walk_pool: ThreadPoolExecutor | None = None,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
 
@@ -193,7 +195,7 @@ def detect_pr_commits_local(
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     try:
-        walks = walk_pr_shas(repo, refs, depth=depth, workers=walk_workers)
+        walks = walk_pr_shas(repo, refs, depth=depth, workers=walk_workers, pool=walk_pool)
     except _GIT_FAILURES as exc:
         return ChannelResult(
             status="partial",

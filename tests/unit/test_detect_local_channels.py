@@ -48,6 +48,10 @@ class FakeRepo(GitRepo):
             raise GitError(list(args), 128, "fake")
         return result
 
+    def read_blobs(self, paths):
+        self.calls.append(("read_blobs", *paths))
+        return {path: self._handler(("show", f"HEAD:{path}")) for path in paths}
+
 
 def _tree(handler_args_value: str):
     def handler(args):

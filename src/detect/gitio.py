@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from lib import cancellation
 from lib.batching import chunked
@@ -107,13 +107,14 @@ def _terminate(process: subprocess.Popen) -> None:
     process.communicate()
 
 
-def run_git(
+def _run_git_process(
     argv: Sequence[str],
     *,
     cwd: Path | str,
-    timeout: float | None = None,
-    stdin: BinaryIO | None = None,
-) -> str:
+    timeout: float | None,
+    stdin: BinaryIO | None,
+    text: bool,
+) -> str | bytes:
     process = subprocess.Popen(
         ["git", *argv],
         cwd=str(cwd),
@@ -121,9 +122,8 @@ def run_git(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=git_env(),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        text=text,
+        **({"encoding": "utf-8", "errors": "replace"} if text else {}),
     )
     deadline = None if timeout is None else time.monotonic() + timeout
     try:
@@ -144,8 +144,29 @@ def run_git(
         _terminate(process)
         raise
     if process.returncode != 0:
-        raise GitError(["git", *argv], process.returncode, stderr or "")
-    return stdout or ""
+        message = stderr.decode("utf-8", errors="replace") if not text else (stderr or "")
+        raise GitError(["git", *argv], process.returncode, message)
+    return stdout or ("" if text else b"")
+
+
+def run_git(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    timeout: float | None = None,
+    stdin: BinaryIO | None = None,
+) -> str:
+    return cast(str, _run_git_process(argv, cwd=cwd, timeout=timeout, stdin=stdin, text=True))
+
+
+def run_git_bytes(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    timeout: float | None = None,
+    stdin: BinaryIO | None = None,
+) -> bytes:
+    return cast(bytes, _run_git_process(argv, cwd=cwd, timeout=timeout, stdin=stdin, text=False))
 
 
 @dataclass
@@ -161,6 +182,52 @@ class GitRepo:
             timeout=self.timeout if timeout is None else timeout,
             stdin=stdin,
         )
+
+    def read_blobs(self, paths: Sequence[str]) -> dict[str, str | None]:
+        return _read_blobs_batch(self, paths)
+
+
+def _read_blobs_batch(repo: GitRepo, paths: Sequence[str]) -> dict[str, str | None]:
+    # One `cat-file --batch` process returns every requested blob in a single
+    # round trip; per-blob `git show` calls would pay a process spawn (and on
+    # a filtered clone, a lazy fetch) apiece. Any failure degrades to the
+    # per-path reads so the caller keeps today's semantics.
+    if not paths:
+        return {}
+    request = "".join(f"HEAD:{path}\n" for path in paths)
+    handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-paths")
+    try:
+        handle.write(request.encode("utf-8"))
+        handle.close()
+        with open(handle.name, "rb") as stdin:
+            data = run_git_bytes(
+                ["cat-file", "--batch"],
+                cwd=repo.dest,
+                timeout=repo.timeout,
+                stdin=stdin,
+            )
+    except (GitError, subprocess.TimeoutExpired):
+        return {path: read_blob(repo, path) for path in paths}
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(handle.name)
+    results: dict[str, str | None] = {}
+    cursor = 0
+    try:
+        for path in paths:
+            end = data.index(b"\n", cursor)
+            header = data[cursor:end]
+            cursor = end + 1
+            if header.endswith(b" missing"):
+                results[path] = None
+                continue
+            size = int(header.rsplit(b" ", 1)[1])
+            content = data[cursor : cursor + size]
+            cursor += size + 1
+            results[path] = content.decode("utf-8", errors="replace")
+    except (ValueError, IndexError):
+        return {path: read_blob(repo, path) for path in paths}
+    return results
 
 
 def clone_lean(
@@ -329,7 +396,12 @@ def list_pr_refs(repo: GitRepo) -> dict[int, str]:
 
 
 def walk_pr_shas(
-    repo: GitRepo, refs: Mapping[int, str], *, depth: int, workers: int = _WALK_WORKERS
+    repo: GitRepo,
+    refs: Mapping[int, str],
+    *,
+    depth: int,
+    workers: int = _WALK_WORKERS,
+    pool: ThreadPoolExecutor | None = None,
 ) -> dict[int, tuple[str, ...]]:
     def walk_one(item: tuple[int, str]) -> tuple[int, tuple[str, ...]]:
         number, sha = item
@@ -337,12 +409,12 @@ def walk_pr_shas(
         return number, tuple(line for line in output.splitlines() if line)
 
     items = sorted(refs.items())
+    if pool is not None:
+        return dict(pool.map(walk_one, items))
     if workers <= 1 or len(items) <= 1:
-        walks = dict(walk_one(item) for item in items)
-    else:
-        with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
-            walks = dict(pool.map(walk_one, items))
-    return walks
+        return dict(walk_one(item) for item in items)
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as local:
+        return dict(local.map(walk_one, items))
 
 
 def read_commits(repo: GitRepo, shas: Sequence[str]) -> dict[str, CommitRecord]:
