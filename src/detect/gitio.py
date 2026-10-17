@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -31,8 +32,30 @@ _PR_REFS_SNAPSHOT = ".gitcorpus-pr-refs.json"
 _PR_SNAPSHOT_VERSION = 1
 
 
+def _configured_tokens() -> list[str]:
+    from lib.gh_client import load_tokens
+
+    return load_tokens()
+
+
+def _auth_payload(token: str) -> str:
+    return base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+
+
+def _basic_auth_value(token: str) -> str:
+    return f"Authorization: Basic {_auth_payload(token)}"
+
+
+def _scrub_secrets(text: str) -> str:
+    for token in _configured_tokens():
+        text = text.replace(_auth_payload(token), "<redacted>")
+        text = text.replace(token, "<redacted>")
+    return text
+
+
 class GitError(RuntimeError):
     def __init__(self, argv: Sequence[str], returncode: int, stderr: str) -> None:
+        stderr = _scrub_secrets(stderr)
         message = (
             f"{' '.join(str(part) for part in argv)} -> exit {returncode}: {stderr[:_STDERR_LIMIT]}"
         )
@@ -60,15 +83,23 @@ def git_env() -> dict[str, str]:
     env["GIT_CONFIG_VALUE_0"] = "0"
     env["GIT_CONFIG_KEY_1"] = "maintenance.auto"
     env["GIT_CONFIG_VALUE_1"] = "false"
+    # Authenticating HTTPS traffic lifts GitHub's per-IP anonymous-clone
+    # throttling; the header rides GIT_CONFIG_* (never argv) and failure output
+    # is scrubbed, so the token cannot leak into logs or notes.
+    tokens = _configured_tokens()
+    if tokens:
+        env["GIT_CONFIG_COUNT"] = "3"
+        env["GIT_CONFIG_KEY_2"] = "http.extraHeader"
+        env["GIT_CONFIG_VALUE_2"] = _basic_auth_value(tokens[0])
     return env
 
 
 def git_error_tail(exc: BaseException) -> str:
     """Last non-empty stderr line of a git failure, capped for notes."""
-    stderr = getattr(exc, "stderr", "") or ""
+    stderr = _scrub_secrets(getattr(exc, "stderr", "") or "")
     line = next((text.strip() for text in reversed(stderr.splitlines()) if text.strip()), "")
     if not line:
-        line = str(exc)
+        line = _scrub_secrets(str(exc))
     return line[:160]
 
 

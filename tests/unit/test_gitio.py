@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -144,7 +145,14 @@ def test_read_log_uses_limit_and_parses():
     assert records[0].sha == "a1"
 
 
-def test_git_env_disables_maintenance_and_optional_locks():
+def _basic_auth_header(token: str) -> str:
+    payload = base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+    return f"Authorization: Basic {payload}"
+
+
+def test_git_env_disables_maintenance_and_optional_locks(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     env = gitio.git_env()
     assert env["GIT_OPTIONAL_LOCKS"] == "0"
     assert env["GIT_CONFIG_COUNT"] == "2"
@@ -155,6 +163,36 @@ def test_git_env_disables_maintenance_and_optional_locks():
     assert env["GIT_ASKPASS"] == ""
     assert env["SSH_ASKPASS"] == ""
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_git_env_adds_the_first_github_tokens_authorization_header(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKENS", "tok-one, tok-two")
+    monkeypatch.setenv("GITHUB_TOKEN", "tok-fallback")
+    env = gitio.git_env()
+    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_KEY_2"] == "http.extraHeader"
+    assert env["GIT_CONFIG_VALUE_2"] == _basic_auth_header("tok-one")
+
+
+def test_git_env_falls_back_to_the_single_github_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok-single")
+    env = gitio.git_env()
+    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_KEY_2"] == "http.extraHeader"
+    assert env["GIT_CONFIG_VALUE_2"] == _basic_auth_header("tok-single")
+
+
+def test_git_env_keeps_two_config_entries_and_no_header_without_a_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    env = gitio.git_env()
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert "GIT_CONFIG_KEY_2" not in env
+    assert "GIT_CONFIG_VALUE_2" not in env
+    assert not any(
+        value.startswith("Authorization: Basic") for key, value in env.items() if "CONFIG" in key
+    )
 
 
 def test_clone_lean_uses_depth_and_blob_filter(tmp_path, monkeypatch):
@@ -283,6 +321,63 @@ def test_git_error_tail_prefers_the_last_non_empty_stderr_line():
 
 def test_git_error_tail_falls_back_to_str():
     assert git_error_tail(TimeoutError("timed out")) == "timed out"
+
+
+def test_git_error_scrubs_every_configured_token_and_its_base64_payload(monkeypatch):
+    token = "ghs_secret_value_123"
+    payload = base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+    monkeypatch.setenv("GITHUB_TOKENS", f"{token}, other-token")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    exc = GitError(["git", "fetch"], 128, f"fatal: bad credentials {token}\nheader {payload}\n")
+    assert token not in str(exc)
+    assert token not in exc.stderr
+    assert payload not in str(exc)
+    assert payload not in exc.stderr
+    assert str(exc).count("<redacted>") == 2
+
+
+def test_git_error_scrubs_the_single_github_token(monkeypatch):
+    token = "ghp_single_secret_456"
+    payload = base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    exc = GitError(["git", "fetch"], 128, f"error: rejected {token} via {payload}")
+    assert token not in str(exc)
+    assert payload not in str(exc)
+    assert "<redacted>" in str(exc)
+
+
+def test_git_error_tail_scrubs_git_error_output(monkeypatch):
+    token = "ghs_tail_secret_789"
+    payload = base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+    monkeypatch.setenv("GITHUB_TOKENS", token)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    exc = GitError(["git", "fetch"], 128, f"line one\n\nfatal: auth {token} {payload}\n")
+    tail = git_error_tail(exc)
+    assert token not in tail
+    assert payload not in tail
+    assert "<redacted>" in tail
+
+
+def test_git_error_tail_scrubs_non_git_error_output(monkeypatch):
+    token = "ghp_tail_fallback_987"
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+
+    class Coded(Exception):
+        stderr = f"fatal: {token} rejected"
+
+    assert token not in git_error_tail(Coded())
+    assert token not in git_error_tail(RuntimeError(f"failed with {token}"))
+
+
+def test_scrub_secrets_leaves_clean_text_untouched(monkeypatch):
+    text = "fatal: could not read from remote repository\nplumbing e0110bad\n"
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_clean_text_000")
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    assert gitio._scrub_secrets(text) == text
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert gitio._scrub_secrets(text) == text
 
 
 @needs_git
