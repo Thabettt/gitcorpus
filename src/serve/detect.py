@@ -686,6 +686,7 @@ def register_detect(
             disk_free_mb=free_mb,
         )
         workers = max(1, settings.detect_concurrency)
+        effective_workers = min(workers, 32)
         git_estimate = {
             "repos": clone_estimate.repos,
             "estimated_mb": round(clone_estimate.estimated_mb, 1),
@@ -693,8 +694,8 @@ def register_detect(
             "workers": workers,
             "depth": depth,
             "keep": keep,
-            "minutes_low": round(clone_estimate.repos * 1.0 / workers / 60, 1),
-            "minutes_high": round(clone_estimate.repos * 4.0 / workers / 60, 1),
+            "hours_low": round(clone_estimate.repos * 4.0 / effective_workers / 3600.0, 2),
+            "hours_high": round(clone_estimate.repos * 12.0 / effective_workers / 3600.0, 2),
             "warnings": list(clone_estimate.warnings),
         }
         return templates.TemplateResponse(

@@ -18,7 +18,7 @@
       <tr class="{% if selected == 'git' %}estimate-selected{% endif %}">
         <td><strong>Local clone (git)</strong>{% if selected == 'git' %} — selected{% endif %}</td>
         <td>≈{{ git.estimated_mb }} MB of lean clones ({{ git.free_mb }} MB free)</td>
-        <td>≈{{ git.minutes_low }}–{{ git.minutes_high }} min at {{ git.workers }} workers</td>
+        <td>≈{{ git.hours_low }}–{{ git.hours_high }} h at up to {{ git.workers }} workers</td>
         <td>{% if git.keep %}≈{{ git.estimated_mb }} MB kept on disk{% else %}&lt;1 GB peak (each clone deleted after its scan){% endif %}</td>
       </tr>
     </tbody>
@@ -30,5 +30,5 @@
   <p class="flag warn">Local clone: {{ git.warnings | join("; ") }}</p>
   {% endif %}
   <p class="muted">Clone options: depth {{ git.depth }} commits · {{ "clones kept on disk" if git.keep else "clones deleted after each scan" }}.</p>
-  <p class="muted">Git time uses the measured 1–4 s per repo (clone + reads; repos with large PR histories can take longer). Sizes come from the corpus's stored repo sizes. Real times vary with machine performance and network conditions — a stable internet connection matters more than CPU speed.</p>
+  <p class="muted">Git time assumes 4–12 s of transport and scan work per repo with at most 32 effective workers; repos with very large PR histories skew toward the high end. Sizes come from the corpus's stored repo sizes. Real times vary with machine performance and network conditions — a stable internet connection matters more than CPU speed.</p>
 </div>
