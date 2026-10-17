@@ -818,3 +818,33 @@ def test_unavailable_repos_listed_with_reasons(clean_db, tmp_path, monkeypatch):
         {"full_name": "octo/two", "reason": "fatal"}
     ]
     assert payload.result_summary["unavailable_reasons"] == {"fatal": 1}
+
+
+def test_per_repo_deletion_does_not_block_the_parent(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine, {"kind": "detect"}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+    )
+    removed: list[str] = []
+
+    def tracking_remove(path):
+        removed.append(str(path))
+        _remove_tree(path)
+
+    monkeypatch.setattr("detect.git_orchestrator._remove_tree", tracking_remove)
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    assert len(removed) >= 3  # two per-repo dirs plus the final run-dir sweep

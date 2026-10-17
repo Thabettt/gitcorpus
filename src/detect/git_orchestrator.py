@@ -286,8 +286,6 @@ def _scan_worker_main(
                     failure = f"{scan.full_name}: {scan.document['notes'][0]}"
             else:
                 breaker.record_success()
-            if not cfg.keep:
-                _remove_tree(run_dir / scan.full_name.replace("/", "__"))
             out_queue.put(("scan", scan, failure))
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -371,6 +369,7 @@ def _run_git_detection_processes(
     failures: list[str] = []
     stopped_for_disk = False
     cancelled = False
+    deletion_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="detect-rm")
     try:
         while True:
             cancellation.check()
@@ -386,6 +385,11 @@ def _run_git_detection_processes(
                 stopped_for_disk = True
                 continue
             scan = scans[-1]
+            deferred_transient = (
+                message[2] is None and scan.document.get("failure_class") == "transient"
+            )
+            if not cfg.keep and not deferred_transient:
+                deletion_pool.submit(_remove_tree, run_dir / scan.full_name.replace("/", "__"))
             _persist_scan(engine, run_id, scan, pack)
             progress.report("detecting", len(scans), total)
         while True:
@@ -407,10 +411,15 @@ def _run_git_detection_processes(
         raise
     finally:
         if not cancelled:
+            deletion_pool.shutdown(wait=True)
             for process in workers:
                 process.join(timeout=5)
                 if process.is_alive():
                     process.terminate()
+            if not cfg.keep:
+                _remove_tree(run_dir)
+        else:
+            deletion_pool.shutdown(wait=False, cancel_futures=True)
         out_queue.close()
     lost = (not cancelled) and len(scans) < total and not stopped_for_disk
     if lost:
@@ -457,6 +466,7 @@ def run_git_detection(
         breaker = CircuitBreaker(*local_values())
         scans = []
         cancelled = False
+        deletion_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="detect-rm")
 
         def scan_repo(candidate: Mapping) -> _RepoScan:
             return _scan_one(
@@ -517,6 +527,7 @@ def run_git_detection(
                     future = next(iter(ready))
                     cancellation.check()
                     candidate = in_flight.pop(future)
+                    deferred = False
                     try:
                         scan = future.result()
                     except RunCancelled:
@@ -536,8 +547,10 @@ def run_git_detection(
                         breaker.record_success()
                     scans.append(scan)
                     _persist_scan(engine, run_id, scan, pack)
-                    if not cfg.keep:
-                        _remove_tree(run_dir / scan.full_name.replace("/", "__"))
+                    if not cfg.keep and not deferred:
+                        deletion_pool.submit(
+                            _remove_tree, run_dir / scan.full_name.replace("/", "__")
+                        )
                     done += 1
                     progress.report("detecting", done, total)
             except RunCancelled:
@@ -546,6 +559,7 @@ def run_git_detection(
             finally:
                 pool.shutdown(wait=not cancelled, cancel_futures=True)
         finally:
+            deletion_pool.shutdown(wait=not cancelled, cancel_futures=True)
             # On a stop, skip the sweep so the status flips immediately; the
             # leftovers are reclaimed by the console's flush action or the resume.
             if not cfg.keep and not cancelled:

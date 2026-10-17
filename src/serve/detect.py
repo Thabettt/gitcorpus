@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,10 @@ from store.settings import load_run_settings
 DETECTIONS_PAGE_SIZE = 15
 
 
+def detect_clone_root() -> str:
+    return os.environ.get("GITCORPUS_CLONES_ROOT", "clones")
+
+
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
         spec = parse_detect_spec(spec_doc)
@@ -63,6 +68,7 @@ def build_detect_runner(engine: Engine) -> Runner:
                     timeout=clone_timeout_seconds(),
                     workers=settings.detect_concurrency,
                     processes=4,
+                    scan_root=detect_clone_root(),
                 ),
             )
         from serve.runner import build_deps

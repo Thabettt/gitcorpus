@@ -104,3 +104,37 @@ def test_api_runner_bounds_detect_concurrency_by_the_request_limit(clean_db, mon
     assert runner(1, detect_spec_to_dict(spec)) is sentinel
     assert captured["max_concurrent"] == 18
     assert captured["concurrency"] == 18
+
+
+def test_detect_clone_root_env_override(monkeypatch):
+    from serve.detect import detect_clone_root
+
+    monkeypatch.delenv("GITCORPUS_CLONES_ROOT", raising=False)
+    assert detect_clone_root() == "clones"
+    monkeypatch.setenv("GITCORPUS_CLONES_ROOT", r"D:\gitcrawl-clones")
+    assert detect_clone_root() == r"D:\gitcrawl-clones"
+
+
+def test_git_runner_passes_the_clone_root_to_the_scan_config(clean_db, monkeypatch):
+    engine = clean_db()
+    freeze_pack(engine, PACK)
+    sentinel = RunPayload(total_count=0, items=[])
+    captured: dict[str, str] = {}
+
+    def fake_git(*args, config=None, **kwargs):
+        captured["scan_root"] = config.scan_root
+        return sentinel
+
+    monkeypatch.setattr("serve.detect.run_git_detection", fake_git)
+    monkeypatch.setenv("GITCORPUS_CLONES_ROOT", r"D:\gitcrawl-clones")
+
+    spec = DetectOptions(
+        source_run_id=1,
+        pack_version="v1",
+        agents=None,
+        channels=frozenset({"file"}),
+        source="git",
+    )
+    runner = build_detect_runner(engine)
+    assert runner(1, detect_spec_to_dict(spec)) is sentinel
+    assert captured["scan_root"] == r"D:\gitcrawl-clones"
