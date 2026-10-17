@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
@@ -41,10 +41,12 @@ from serve.repo_import import (
     import_repos_as_run,
     parse_repo_file,
 )
-from store.models import DetectionEvidence, RunItem, Runs, TracePack
+from store.models import RunItem, Runs, TracePack
 from store.settings import load_run_settings
 
 DETECTIONS_PAGE_SIZE = 15
+DETECTION_REPOS_PAGE_SIZE = 25
+DETECTION_REPO_EVIDENCE_CAP = 300
 
 
 def detect_clone_root() -> str:
@@ -253,26 +255,49 @@ def _evidence_summary(evidence: dict) -> str:
 
 def detect_detail_response(request: Request, engine: Engine, row) -> HTMLResponse:
     run_id = int(row["id"])
-    summary = _run_detail_summary(row, _item_count(engine, run_id))
+    raw_page = request.query_params.get("page", "").strip()
+    page_number = int(raw_page) if raw_page.isdigit() and int(raw_page) > 0 else 1
+    total_repos = _item_count(engine, run_id)
+    pages = max(1, (total_repos + DETECTION_REPOS_PAGE_SIZE - 1) // DETECTION_REPOS_PAGE_SIZE)
+    page_number = min(page_number, pages)
+    summary = _run_detail_summary(row, total_repos)
     with engine.connect() as connection:
         item_rows = list(
             connection.execute(
                 select(RunItem)
                 .where(RunItem.run_id == run_id)
                 .order_by(RunItem.stargazers.desc().nullslast(), RunItem.repo_id)
+                .offset((page_number - 1) * DETECTION_REPOS_PAGE_SIZE)
+                .limit(DETECTION_REPOS_PAGE_SIZE)
             ).mappings()
         )
-        evidence_rows = list(
-            connection.execute(
-                select(DetectionEvidence)
-                .where(DetectionEvidence.run_id == run_id)
-                .order_by(
-                    DetectionEvidence.repo_id,
-                    DetectionEvidence.agent,
-                    DetectionEvidence.channel,
-                )
-            ).mappings()
-        )
+        repo_ids = [item["repo_id"] for item in item_rows if item["repo_id"] is not None]
+        totals: dict[int, int] = {}
+        evidence_rows: list = []
+        if repo_ids:
+            totals = {
+                int(repo_id): int(count)
+                for repo_id, count in connection.execute(
+                    text(
+                        "SELECT repo_id, count(*) FROM detection_evidence"
+                        " WHERE run_id = :run AND repo_id = ANY(:ids) GROUP BY repo_id"
+                    ),
+                    {"run": run_id, "ids": repo_ids},
+                ).all()
+            }
+            evidence_rows = list(
+                connection.execute(
+                    text(
+                        "SELECT repo_id, agent, channel, evidence FROM ("
+                        " SELECT repo_id, agent, channel, evidence,"
+                        " row_number() OVER (PARTITION BY repo_id ORDER BY agent, channel, id)"
+                        " AS rank FROM detection_evidence"
+                        " WHERE run_id = :run AND repo_id = ANY(:ids)"
+                        ") ranked WHERE rank <= :cap ORDER BY repo_id, agent, channel"
+                    ),
+                    {"run": run_id, "ids": repo_ids, "cap": DETECTION_REPO_EVIDENCE_CAP},
+                ).mappings()
+            )
     by_repo: dict[int, list] = {}
     for evidence in evidence_rows:
         by_repo.setdefault(evidence["repo_id"], []).append(evidence)
@@ -280,10 +305,13 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     for item in item_rows:
         rollup = item["detection"] or {}
         grouped: dict[str, list] = {}
+        shown = 0
         for evidence in by_repo.get(item["repo_id"], []):
             grouped.setdefault(evidence["channel"], []).append(
                 {"agent": evidence["agent"], "summary": _evidence_summary(evidence["evidence"])}
             )
+            shown += 1
+        total = int(totals.get(item["repo_id"], 0))
         repos.append(
             {
                 "repo_id": item["repo_id"],
@@ -293,6 +321,9 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "notes": rollup.get("notes", []),
                 "channels": grouped,
                 "channel_names": sorted(grouped),
+                "evidence_shown": shown,
+                "evidence_total": total,
+                "evidence_truncated": total > shown,
             }
         )
     spec = row["filter_spec"] or {}
@@ -302,6 +333,8 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     depth = clone.get("depth")
     if spec.get("source") == "git" and isinstance(depth, int) and not isinstance(depth, bool):
         windows = {**windows, "commits": depth, "prs": depth}
+    first_repo = (page_number - 1) * DETECTION_REPOS_PAGE_SIZE + 1
+    last_repo = min(page_number * DETECTION_REPOS_PAGE_SIZE, total_repos)
     return templates.TemplateResponse(
         request,
         "detect_detail.html",
@@ -315,6 +348,10 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
                 "windows": windows,
                 "repos": repos,
+                "page": page_number,
+                "pages": pages,
+                "total_repos": total_repos,
+                "repos_label": f"repos {first_repo}–{last_repo} of {total_repos}",
                 "filter_agents": sorted({agent for repo in repos for agent in repo["agents"]}),
                 "filter_channels": sorted(
                     {channel for repo in repos for channel in repo["channels"]}

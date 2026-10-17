@@ -8,7 +8,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from serve.app import create_app
-from serve.detect import latest_detect_for_run
+from serve.detect import (
+    DETECTION_REPO_EVIDENCE_CAP,
+    DETECTION_REPOS_PAGE_SIZE,
+    latest_detect_for_run,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -88,6 +92,19 @@ def make_client(engine):
 
 
 def seed_detect_run(engine, source_id: int, spec_override: dict | None = None) -> int:
+    return seed_detect_run_scaled(
+        engine, source_id, repo_count=1, hits_per_repo=1, spec_override=spec_override
+    )
+
+
+def seed_detect_run_scaled(
+    engine,
+    source_id: int,
+    *,
+    repo_count: int,
+    hits_per_repo: int,
+    spec_override: dict | None = None,
+) -> int:
     spec = {
         "version": 1,
         "kind": "detect",
@@ -101,11 +118,11 @@ def seed_detect_run(engine, source_id: int, spec_override: dict | None = None) -
     if spec_override:
         spec.update(spec_override)
     summary = {
-        "repos_scanned": 1,
-        "repos_with_signal": 1,
+        "repos_scanned": repo_count,
+        "repos_with_signal": repo_count,
         "repos_unavailable": 0,
-        "agents": {"Claude Code": 1},
-        "channels": {"file": 1},
+        "agents": {"Claude Code": repo_count},
+        "channels": {"file": repo_count},
         "pack_version": "test-pack",
         "agents_selected": "all",
         "windows": {"commits": 100, "prs": 100, "issues": 100},
@@ -134,21 +151,51 @@ def seed_detect_run(engine, source_id: int, spec_override: dict | None = None) -
             ),
             {"src": source_id, "spec": json.dumps(spec), "summary": json.dumps(summary)},
         ).scalar_one()
-        connection.execute(
-            text(
-                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers, detection)"
-                " VALUES (:run, 1, 'octo/one', 10, CAST(:detection AS jsonb))"
-            ),
-            {"run": run_id, "detection": json.dumps(detection)},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence,"
-                " pack_version)"
-                " VALUES (:run, 1, 'Claude Code', 'file', CAST(:evidence AS jsonb), 'test-pack')"
-            ),
-            {"run": run_id, "evidence": json.dumps(evidence)},
-        )
+        for repo_id in range(1, repo_count + 1):
+            if repo_id > 1:
+                connection.execute(
+                    text(
+                        "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                        " VALUES (:id, :node, :full_name, 1, :name, 'public')"
+                    ),
+                    {
+                        "id": repo_id,
+                        "node": f"n{repo_id}",
+                        "full_name": f"octo/r{repo_id}",
+                        "name": f"r{repo_id}",
+                    },
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO run_items (run_id, repo_id, full_name, stargazers, detection)"
+                    " VALUES (:run, :repo, :full_name, :stargazers, CAST(:detection AS jsonb))"
+                ),
+                {
+                    "run": run_id,
+                    "repo": repo_id,
+                    "full_name": "octo/one" if repo_id == 1 else f"octo/r{repo_id}",
+                    "stargazers": 1000 - repo_id,
+                    "detection": json.dumps(detection),
+                },
+            )
+        hits = [
+            {
+                "run": run_id,
+                "repo": repo_id,
+                "evidence": json.dumps({**evidence, "row": n}),
+            }
+            for repo_id in range(1, repo_count + 1)
+            for n in range(1, hits_per_repo + 1)
+        ]
+        if hits:
+            connection.execute(
+                text(
+                    "INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence,"
+                    " pack_version) VALUES (:run, :repo, 'Claude Code', 'file',"
+                    " CAST(:evidence AS jsonb), 'test-pack')"
+                ),
+                hits,
+            )
     return int(run_id)
 
 
@@ -324,3 +371,38 @@ def test_detections_use_their_own_numbering(clean):
     assert "Detection #2" in detail
     assert f"search #{source}" in detail
     assert f'data-field="run">run {second}</span>' in detail
+
+
+def test_detection_detail_paginates_repos(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    repo_count = DETECTION_REPOS_PAGE_SIZE + 5
+    detect_id = seed_detect_run_scaled(clean, source, repo_count=repo_count, hits_per_repo=1)
+    client = make_client(clean)
+    page1 = client.get(f"/detections/{detect_id}")
+    assert page1.status_code == 200
+    assert 'id="detection-repo-1"' in page1.text
+    assert f'id="detection-repo-{DETECTION_REPOS_PAGE_SIZE}"' in page1.text
+    assert f'id="detection-repo-{DETECTION_REPOS_PAGE_SIZE + 1}"' not in page1.text
+    assert f"repos 1–{DETECTION_REPOS_PAGE_SIZE} of {repo_count}" in page1.text
+    assert 'href="?page=2"' in page1.text
+    page2 = client.get(f"/detections/{detect_id}?page=2")
+    assert f'id="detection-repo-{repo_count}"' in page2.text
+    assert 'id="detection-repo-1"' not in page2.text
+    assert 'href="?page=1"' in page2.text
+    assert f"repos {DETECTION_REPOS_PAGE_SIZE + 1}–{repo_count} of {repo_count}" in page2.text
+    clamped = client.get(f"/detections/{detect_id}?page=99")
+    assert f'id="detection-repo-{repo_count}"' in clamped.text
+
+
+def test_detection_detail_caps_repo_evidence(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    total_hits = DETECTION_REPO_EVIDENCE_CAP + 10
+    detect_id = seed_detect_run_scaled(clean, source, repo_count=1, hits_per_repo=total_hits)
+    client = make_client(clean)
+    response = client.get(f"/detections/{detect_id}")
+    assert response.status_code == 200
+    assert response.text.count('<li data-agent="Claude Code">') == DETECTION_REPO_EVIDENCE_CAP
+    truncated_note = f"Showing first {DETECTION_REPO_EVIDENCE_CAP} of {total_hits} evidence rows"
+    assert truncated_note in response.text

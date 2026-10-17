@@ -151,9 +151,23 @@
         </div>
         {% endif %}
       {% endfor %}
+      {% if repo.evidence_truncated %}
+      <p class="muted">Showing first {{ repo.evidence_shown }} of {{ repo.evidence_total }} evidence rows; the CSV export has every row.</p>
+      {% endif %}
     </div>
   </details>
   {% endfor %}
+  {% if detection.pages > 1 %}
+  <nav id="detection-pagination" class="pagination" aria-label="Repo pages">
+    {% if detection.page > 1 %}
+    <a id="detection-page-prev" class="button" href="?page={{ detection.page - 1 }}">Previous</a>
+    {% endif %}
+    <span id="detection-page-status" class="muted" data-page="{{ detection.page }}" data-pages="{{ detection.pages }}">{{ detection.repos_label }} · page {{ detection.page }} of {{ detection.pages }}</span>
+    {% if detection.page < detection.pages %}
+    <a id="detection-page-next" class="button" href="?page={{ detection.page + 1 }}">Next</a>
+    {% endif %}
+  </nav>
+  {% endif %}
   {% if detection.repos %}
   <p id="detection-no-matches" class="muted" hidden>No repos match these filters.</p>
   {% else %}
