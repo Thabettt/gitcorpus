@@ -62,13 +62,6 @@
           </ul>
         </label>
       </div>
-      <div class="field-grid" id="detect-git-fields">
-        <label class="field" for="detect-clone-depth">
-          <span class="field-label">Clone depth (last N commits)</span>
-          <input class="field-input" id="detect-clone-depth" name="clone_depth" type="number" min="1" max="5000" value="100">
-        </label>
-        <label class="checkbox"><input type="checkbox" name="clone_keep" value="true"> <span>Keep clones on disk after scanning (off = delete each repo after its scan)</span></label>
-      </div>
     </section>
     <section class="filter-section" id="detect-pack-section">
       <h2>Trace pack</h2>
@@ -119,12 +112,22 @@
     </section>
     <section class="filter-section" id="detect-scope-section">
       <h2>Scope</h2>
-      <p class="muted">Detection walks the frozen result list in star order (most stars first). A top-N limit is useful for pilot runs; the estimate below updates as you change options.</p>
+      <p class="muted">Detection walks the frozen result list in star order (most stars first). A top-N limit is useful for pilot runs; the estimate below updates as you change options — including the git clone depth and the kept-clones choice.</p>
       <div class="field-grid">
         <label class="field" for="detect-limit">
           <span class="field-label">Top-N repos</span>
           <input class="field-input" id="detect-limit" name="limit" type="number" min="1" placeholder="All {{ candidate_count }}">
           <span class="field-note muted">Blank = all {{ candidate_count }} frozen repos.</span>
+        </label>
+        <label class="field" for="detect-clone-depth" data-git-field>
+          <span class="field-label">Clone depth (last N commits)</span>
+          <input class="field-input" id="detect-clone-depth" name="clone_depth" type="number" min="1" max="5000" value="100">
+          <span class="field-note muted">Git method only — the history each lean clone carries.</span>
+        </label>
+        <label class="field" data-git-field>
+          <span class="field-label">Keep clones on disk</span>
+          <input class="field-input" type="checkbox" name="clone_keep" value="true">
+          <span class="field-note muted">Off = delete each repo after its scan.</span>
         </label>
       </div>
       <div id="detect-estimate"
@@ -169,7 +172,10 @@
     var labels = Array.prototype.slice.call(list.querySelectorAll("label"));
     function setAll(checked) {
       labels.forEach(function (label) {
-        label.querySelector("input[type=checkbox]").checked = checked;
+        var input = label.querySelector("input[type=checkbox]");
+        if (!input.disabled) {
+          input.checked = checked;
+        }
       });
       notifyChanged();
     }
@@ -198,20 +204,43 @@
       });
     });
   }
-  var gitFields = document.getElementById("detect-git-fields");
+  var gitFields = document.querySelectorAll("[data-git-field]");
   var gitRadio = document.getElementById("detect-source-git");
   var apiOnlyValues = { label: true, issue: true };
+  var unavailableNote = " (unavailable with git detection — API-only channel)";
   function syncMethod() {
     var gitSelected = !!(gitRadio && gitRadio.checked);
-    if (gitFields) {
-      gitFields.hidden = !gitSelected;
-    }
+    Array.prototype.forEach.call(gitFields, function (field) {
+      field.hidden = !gitSelected;
+    });
     Array.prototype.forEach.call(
       document.querySelectorAll("#detect-channels input[type=checkbox]"),
       function (input) {
-        if (apiOnlyValues[input.value]) {
-          input.closest("label").classList.toggle("channel-api-only", gitSelected);
+        if (!apiOnlyValues[input.value]) {
+          return;
         }
+        var label = input.closest("label");
+        var note = label.querySelector(".channel-note");
+        if (note && note.dataset.base === undefined) {
+          note.dataset.base = note.textContent;
+        }
+        if (gitSelected && !input.disabled) {
+          input.dataset.wasChecked = input.checked ? "1" : "0";
+          input.checked = false;
+          input.disabled = true;
+          if (note) {
+            note.textContent = note.dataset.base + unavailableNote;
+          }
+        } else if (input.disabled) {
+          input.disabled = false;
+          if (input.dataset.wasChecked !== undefined) {
+            input.checked = input.dataset.wasChecked === "1";
+          }
+          if (note) {
+            note.textContent = note.dataset.base;
+          }
+        }
+        label.classList.toggle("channel-api-only", gitSelected);
       }
     );
   }

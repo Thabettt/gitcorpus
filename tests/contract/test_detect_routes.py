@@ -612,6 +612,44 @@ def test_estimate_partial_shows_both_methods(clean):
     assert "MB of lean clones" in response.text
 
 
+def test_estimate_partial_highlights_the_selected_method(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    response = client.get(f"/partials/detections/{source}/estimate?source=git&limit=10")
+    assert "Local clone (git)</strong> — selected" in response.text
+    assert "GitHub API</strong> — selected" not in response.text
+    # The swapped-in partial must keep polling so method changes re-estimate.
+    assert f'hx-get="/partials/detections/{source}/estimate"' in response.text
+    assert 'hx-include="#detect-form"' in response.text
+
+
+def test_estimate_partial_reflects_keep_and_depth(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    response = client.get(
+        f"/partials/detections/{source}/estimate"
+        "?source=git&limit=10&clone_keep=true&clone_depth=250"
+    )
+    assert "MB kept on disk" in response.text
+    assert "depth 250 commits" in response.text
+    assert "clones kept on disk" in response.text
+    no_keep = client.get(f"/partials/detections/{source}/estimate?source=git&limit=10")
+    assert "deleted after each scan" in no_keep.text
+    assert "MB kept on disk" not in no_keep.text
+
+
+def test_options_page_moves_clone_fields_into_scope_and_disables_api_only_channels(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    body = client.get(f"/detections/from/{source}").text
+    assert body.index('id="detect-scope-section"') < body.index("data-git-field>")
+    assert body.count("data-git-field>") == 2
+    assert body.index("data-git-field>") < body.index('id="detect-estimate"')
+    assert "unavailable with git detection" in body
+    assert "input.disabled = true" in body
+
+
 def test_start_detection_records_git_source_and_clone(clean):
     client = make_client(clean)
     source = seed_find_run(clean)

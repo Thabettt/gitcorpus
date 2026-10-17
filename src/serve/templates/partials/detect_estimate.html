@@ -1,4 +1,8 @@
-<div id="detect-estimate">
+<div id="detect-estimate"
+     hx-get="/partials/detections/{{ run_id }}/estimate"
+     hx-trigger="change from:#detect-form"
+     hx-include="#detect-form"
+     hx-swap="outerHTML">
   <p class="muted">For {{ repos }} repos — the selected method is highlighted; the other stays fully available for any run.</p>
   <table class="estimate-table">
     <thead>
@@ -15,7 +19,7 @@
         <td><strong>Local clone (git)</strong>{% if selected == 'git' %} — selected{% endif %}</td>
         <td>≈{{ git.estimated_mb }} MB of lean clones ({{ git.free_mb }} MB free)</td>
         <td>≈{{ git.minutes_low }}–{{ git.minutes_high }} min at {{ git.workers }} workers</td>
-        <td>&lt;1 GB peak, or ≈{{ git.estimated_mb }} MB kept</td>
+        <td>{% if git.keep %}≈{{ git.estimated_mb }} MB kept on disk{% else %}&lt;1 GB peak (each clone deleted after its scan){% endif %}</td>
       </tr>
     </tbody>
   </table>
@@ -25,5 +29,6 @@
   {% if git.warnings %}
   <p class="flag warn">Local clone: {{ git.warnings | join("; ") }}</p>
   {% endif %}
-  <p class="muted">Git time uses the measured 1–4 s per repo (clone + reads); sizes come from the corpus's stored repo sizes.</p>
+  <p class="muted">Clone options: depth {{ git.depth }} commits · {{ "clones kept on disk" if git.keep else "clones deleted after each scan" }}.</p>
+  <p class="muted">Git time uses the measured 1–4 s per repo (clone + reads; repos with large PR histories can take longer). Sizes come from the corpus's stored repo sizes. Real times vary with machine performance and network conditions — a stable internet connection matters more than CPU speed.</p>
 </div>

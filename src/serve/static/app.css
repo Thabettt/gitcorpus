@@ -2328,4 +2328,5 @@ kbd {
 .estimate-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
 .estimate-table th, .estimate-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--gc-border); }
 .estimate-table tr.estimate-selected { background: var(--gc-accent-soft); }
-.field-grid[hidden] { display: none; }
+.field-grid[hidden],
+.field[hidden] { display: none; }

@@ -12,7 +12,12 @@ from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
 from detect.estimate import estimate
-from detect.git_orchestrator import GitScanConfig, _remove_tree, run_git_detection
+from detect.git_orchestrator import (
+    API_ONLY_CHANNELS,
+    GitScanConfig,
+    _remove_tree,
+    run_git_detection,
+)
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
 from detect.packs import load_frozen
 from enrich.cloner import CloneMode, estimate_clone, free_disk_mb
@@ -642,7 +647,17 @@ def register_detect(
         if len(raw_channels) == 1 and "," in raw_channels[0]:
             raw_channels = raw_channels[0].split(",")
         channels = [channel for channel in raw_channels if channel in CHANNELS] or list(CHANNELS)
+        selected = (request.query_params.get("source") or "api").strip()
+        if selected == "git":
+            # The API-only channels are disabled in the form while git is
+            # selected; the API estimate still prices a full API run.
+            for channel in API_ONLY_CHANNELS:
+                if channel not in channels:
+                    channels.append(channel)
         raw_limit = request.query_params.get("limit", "").strip()
+        raw_depth = request.query_params.get("clone_depth", "").strip()
+        depth = int(raw_depth) if raw_depth.isdigit() and int(raw_depth) > 0 else 100
+        keep = bool(request.query_params.get("clone_keep"))
         candidates = _candidate_count(engine, run_id)
         limit_value = int(raw_limit) if raw_limit.isdigit() and int(raw_limit) > 0 else None
         repos = min(candidates, limit_value) if limit_value is not None else candidates
@@ -670,6 +685,8 @@ def register_detect(
             "estimated_mb": round(clone_estimate.estimated_mb, 1),
             "free_mb": round(free_mb, 1),
             "workers": workers,
+            "depth": depth,
+            "keep": keep,
             "minutes_low": round(clone_estimate.repos * 1.0 / workers / 60, 1),
             "minutes_high": round(clone_estimate.repos * 4.0 / workers / 60, 1),
             "warnings": list(clone_estimate.warnings),
@@ -678,7 +695,8 @@ def register_detect(
             request,
             "partials/detect_estimate.html",
             {
-                "selected": (request.query_params.get("source") or "api").strip(),
+                "selected": selected,
+                "run_id": run_id,
                 "repos": repos,
                 "api": api_estimate,
                 "git": git_estimate,
