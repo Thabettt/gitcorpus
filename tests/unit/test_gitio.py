@@ -470,6 +470,21 @@ def test_fetch_pr_refs_skips_fetch_and_snapshot_when_no_pr_refs(tmp_path):
     assert not (tmp_path / ".git" / ".gitcorpus-pr-refs.json").exists()
 
 
+def test_fetch_pr_refs_survives_a_snapshot_write_failure(monkeypatch, tmp_path):
+    def handler(args):
+        if args[0] == "ls-remote":
+            return _LS_REMOTE_OUTPUT
+        return "" if args[0] == "fetch" else None
+
+    def failing_write(repo, refs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(gitio, "write_pr_refs_snapshot", failing_write)
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100) == {7: "sha1", 9: "sha2"}
+    assert [call[0] for call in fake.calls] == ["ls-remote", "fetch"]
+
+
 def test_fetch_pr_refs_chunks_large_ref_sets_over_stdin(monkeypatch, tmp_path):
     assert gitio._PR_FETCH_CHUNK_REFS == 2000
     monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 2)

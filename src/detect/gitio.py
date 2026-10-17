@@ -495,7 +495,12 @@ def fetch_pr_refs(repo: GitRepo, *, depth: int, chunk_refs: int | None = None) -
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(handle.name)
-    write_pr_refs_snapshot(repo, remote)
+    try:
+        write_pr_refs_snapshot(repo, remote)
+    except OSError:
+        # The snapshot only aids a later resume; failing to persist it must
+        # not sink a fetch whose objects are already in place.
+        pass
     return remote
 
 
