@@ -609,3 +609,24 @@ def test_classify_git_failure_reads_timeouts_as_transient():
     assert (
         gitio.classify_git_failure(subprocess.TimeoutExpired(["git", "fetch"], 600)) == "transient"
     )
+
+
+def test_retry_call_skips_retries_when_the_failure_is_not_retryable():
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def failing() -> str:
+        calls.append(1)
+        raise GitError(["git", "clone"], 128, "fatal: repository not found")
+
+    with pytest.raises(GitError):
+        retry_call(
+            failing,
+            attempts=4,
+            base_delay=1.0,
+            sleep=sleeps.append,
+            jitter=lambda: 0.0,
+            retryable=lambda exc: gitio.classify_git_failure(exc) != "dead",
+        )
+    assert len(calls) == 1
+    assert sleeps == []

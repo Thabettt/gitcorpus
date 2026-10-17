@@ -144,14 +144,21 @@ def retry_call[T](
     base_delay: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     jitter: Callable[[], float] = random.random,
+    retryable: Callable[[BaseException], bool] | None = None,
 ) -> T:
-    """Call ``fn`` retrying git failures with exponential jittered backoff."""
+    """Call ``fn`` retrying git failures with exponential jittered backoff.
+
+    ``retryable`` decides per-failure whether another attempt is worth it;
+    dead repositories fail fast instead of burning four attempts apiece.
+    """
     last: GitError | subprocess.TimeoutExpired | None = None
     for attempt in range(1, max(1, attempts) + 1):
         try:
             return fn()
         except (GitError, subprocess.TimeoutExpired) as exc:
             last = exc
+            if retryable is not None and not retryable(exc):
+                raise
             if attempt >= attempts:
                 raise
             delay = base_delay * (2 ** (attempt - 1)) * (1.0 + jitter())
