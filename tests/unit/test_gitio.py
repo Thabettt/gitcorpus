@@ -397,7 +397,7 @@ def test_fetch_pr_refs_requests_the_ls_remote_snapshot_explicitly():
         "--quiet",
         "--depth",
         "100",
-        "--filter=tree:0",
+        "--filter=blob:none",
         "--no-tags",
         "origin",
         "+refs/pull/7/head:refs/gc/pr/7",
@@ -430,7 +430,7 @@ def test_fetch_pr_refs_chunks_large_ref_sets(monkeypatch):
         "+refs/pull/4/head:refs/gc/pr/4",
     )
     assert fetches[2][-1:] == ("+refs/pull/5/head:refs/gc/pr/5",)
-    assert all("--depth" in call and "--filter=tree:0" in call for call in fetches)
+    assert all("--depth" in call and "--filter=blob:none" in call for call in fetches)
 
 
 def test_fetch_blobs_batches_objects_into_one_stdin_fetch():

@@ -347,7 +347,7 @@ def fetch_pr_refs(repo: GitRepo, *, depth: int, chunk_refs: int | None = None) -
             "--quiet",
             "--depth",
             str(depth),
-            "--filter=tree:0",
+            "--filter=blob:none",
             "--no-tags",
             "origin",
             *refspecs,
