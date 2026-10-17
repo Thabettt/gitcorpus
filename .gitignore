@@ -34,3 +34,6 @@ docs/superpowers/prompts/2026-10-02-overnight-queue-prompt.md
 docs/superpowers/prompts/2026-10-03-overnight-queue-prompt.md
 # Local worktrees (git-ignored by design)
 .worktrees/
+
+# Generated reports (operator data, never committed)
+docs/findings/2026-10-18-runs-master-report.md
