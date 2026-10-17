@@ -29,7 +29,7 @@ from detect.gitio import (
     retry_call,
 )
 from detect.packs import Pack
-from detect.repo_walk import walk_windows
+from detect.repo_walk import walk_windows_with_records
 from enrich.trees_first import FilePresence
 
 CONTENT_PROBE_LIMIT = 5
@@ -192,7 +192,7 @@ def detect_pr_commits_local(
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     try:
-        walks = walk_windows(repo, refs, depth=depth)
+        walks, walked_records = walk_windows_with_records(repo, refs, depth=depth)
     except _GIT_FAILURES as exc:
         return ChannelResult(
             status="partial",
@@ -203,14 +203,17 @@ def detect_pr_commits_local(
     for number in sorted(walks):
         for sha in walks[number]:
             sha_to_pr.setdefault(sha, number)
-    try:
-        records = read_commits(repo, sorted(sha_to_pr))
-    except _GIT_FAILURES as exc:
-        return ChannelResult(
-            status="partial",
-            note=f"commit read failed: {git_error_tail(exc)}",
-            stats=empty_stats,
-        )
+    records = {sha: walked_records[sha] for sha in sha_to_pr if sha in walked_records}
+    missing = [sha for sha in sorted(sha_to_pr) if sha not in walked_records]
+    if missing:
+        try:
+            records.update(read_commits(repo, missing))
+        except _GIT_FAILURES as exc:
+            return ChannelResult(
+                status="partial",
+                note=f"commit read failed: {git_error_tail(exc)}",
+                stats=empty_stats,
+            )
     hits: list[Hit] = []
     for sha, number in sorted(sha_to_pr.items(), key=lambda item: (item[1], item[0])):
         record = records.get(sha)

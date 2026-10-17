@@ -7,9 +7,10 @@ import random
 import re
 import subprocess
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
-from detect.gitio import GitRepo, git_env
+from detect.gitio import CommitRecord, GitRepo, git_env
 from lib import cancellation
 
 # Environment knob: percentage of order-dependent walks that are additionally
@@ -20,8 +21,8 @@ _MAX_MISMATCHES = 3
 _VERIFY_MAX_PER_REPO = 2
 
 _HDR = re.compile(rb"^([0-9a-f]{40}) (commit|tree|blob|tag) (\d+)$")
-_PARENT = re.compile(rb"^parent ([0-9a-f]{40})$", re.M)
-_COMMITTER_TS = re.compile(rb"^committer [^\n]*> (\d+) [+-]\d{4}$", re.M)
+_SHA = re.compile(r"[0-9a-f]{40}")
+_IDENT = re.compile(rb"^(.*?) <(.*?)> (\d+) ([+-]\d{4})$")
 
 _state: dict[str, object] = {"checked": 0, "mismatches": 0, "disabled": False}
 
@@ -47,6 +48,78 @@ def _verify_pct() -> int:
     return max(0, min(100, value))
 
 
+def _decode(data: bytes, encoding: str) -> str:
+    try:
+        return data.decode(encoding, errors="replace")
+    except LookupError:
+        return data.decode("utf-8", errors="replace")
+
+
+def _split_ident(oid: str, raw: bytes, encoding: str) -> tuple[str, str, int, str]:
+    match = _IDENT.match(raw)
+    if match is None:
+        raise WalkAnomaly(f"commit {oid} has a malformed ident: {raw[:80]!r}")
+    name = _decode(match.group(1), encoding).rstrip()
+    email = _decode(match.group(2), encoding)
+    return name, email, int(match.group(3)), match.group(4).decode("ascii")
+
+
+def _committed_at(epoch: int, tz: str) -> str:
+    offset = int(tz[1:3]) * 60 + int(tz[3:5])
+    if tz[0] == "-":
+        offset = -offset
+    try:
+        when = datetime.fromtimestamp(epoch + offset * 60, tz=UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise WalkAnomaly(f"committer epoch {epoch} is out of range") from exc
+    stamp = (
+        f"{when.year:04d}-{when.month:02d}-{when.day:02d}"
+        f"T{when.hour:02d}:{when.minute:02d}:{when.second:02d}"
+    )
+    if offset == 0:
+        return stamp + "Z"
+    sign = "-" if offset < 0 else "+"
+    hours, minutes = divmod(abs(offset), 60)
+    return f"{stamp}{sign}{hours:02d}:{minutes:02d}"
+
+
+def _parse_raw_commit(oid: str, raw: bytes) -> tuple[tuple[str, ...], int, CommitRecord]:
+    """Parse one raw commit object into (parents, committer epoch, record).
+
+    Only the header block (before the first blank line) is scanned; header
+    continuation lines (``gpgsig``, ``mergetag``) are skipped so they can
+    never inject false fields.
+    """
+    header, _sep, body = raw.partition(b"\n\n")
+    parents: list[str] = []
+    idents: dict[bytes, bytes] = {}
+    encoding = "utf-8"
+    for line in header.split(b"\n"):
+        if line.startswith(b" "):
+            continue
+        key, _space, value = line.partition(b" ")
+        if key == b"parent":
+            sha = value.decode("ascii", errors="replace")
+            if _SHA.fullmatch(sha):
+                parents.append(sha)
+        elif key == b"author" or key == b"committer":
+            idents[key] = value
+        elif key == b"encoding":
+            encoding = value.decode("ascii", errors="replace").strip()
+    author = _split_ident(oid, idents.get(b"author", b""), encoding)
+    committer = _split_ident(oid, idents.get(b"committer", b""), encoding)
+    record = CommitRecord(
+        sha=oid,
+        author_name=author[0],
+        author_email=author[1],
+        committer_name=committer[0],
+        committer_email=committer[1],
+        committed_at=_committed_at(committer[2], committer[3]),
+        message=_decode(body, encoding).rstrip("\n"),
+    )
+    return tuple(parents), committer[2], record
+
+
 class CatFileBatch:
     """One long-lived `git cat-file --batch` process per repository."""
 
@@ -63,8 +136,8 @@ class CatFileBatch:
         except OSError as exc:
             raise WalkAnomaly(f"cat-file failed to start: {exc}") from exc
 
-    def commit(self, oid: str) -> tuple[tuple[str, ...], int] | None:
-        """Return (parents, committer epoch) or None when the object is missing."""
+    def commit(self, oid: str) -> tuple[tuple[str, ...], int, CommitRecord] | None:
+        """Return (parents, committer epoch, record) or None when the object is missing."""
         if self._process.stdin is None or self._process.stdout is None:
             raise WalkAnomaly("cat-file pipes unavailable")
         try:
@@ -85,11 +158,7 @@ class CatFileBatch:
         size = int(match.group(3))
         body = self._process.stdout.read(size)
         self._process.stdout.read(1)
-        parents = tuple(item.group(1).decode() for item in _PARENT.finditer(body))
-        timestamp = _COMMITTER_TS.search(body)
-        if timestamp is None:
-            raise WalkAnomaly(f"commit {oid} has no committer timestamp")
-        return parents, int(timestamp.group(1))
+        return _parse_raw_commit(oid, body)
 
     def close(self) -> None:
         process = self._process
@@ -112,7 +181,7 @@ def _fallback(repo: GitRepo, sha: str, depth: int) -> tuple[str, ...]:
 
 def _walk_one(
     cat: CatFileBatch,
-    cache: dict[str, tuple[tuple[str, ...], int]],
+    cache: dict[str, tuple[tuple[str, ...], int, CommitRecord]],
     tip: str,
     depth: int,
     shallow: frozenset[str],
@@ -139,7 +208,7 @@ def _walk_one(
             if record is None:
                 raise WalkAnomaly(f"commit {oid} is missing")
             cache[oid] = record
-        parents, _ts = record
+        parents, _ts, _record = record
         for parent in parents:
             if parent in seen:
                 continue
@@ -208,8 +277,20 @@ def walk_windows(
     repo: GitRepo, refs: Mapping[int, str], *, depth: int
 ) -> dict[int, tuple[str, ...]]:
     """PR tip → first ``depth`` commits, set-identical to per-tip rev-list."""
+    windows, _records = walk_windows_with_records(repo, refs, depth=depth)
+    return windows
+
+
+def walk_windows_with_records(
+    repo: GitRepo, refs: Mapping[int, str], *, depth: int
+) -> tuple[dict[int, tuple[str, ...]], dict[str, CommitRecord]]:
+    """PR tip → first ``depth`` commits plus the records parsed from the walk.
+
+    Walks served by ``rev-list`` (fallback/verify substitution) carry no
+    records; callers backfill those SHAs through ``read_commits``.
+    """
     if not refs:
-        return {}
+        return {}, {}
     grouped = _group_numbers_by_tip(refs)
     git_dir = Path(repo.dest) / ".git"
     alternates = git_dir / "objects" / "info" / "alternates"
@@ -219,13 +300,13 @@ def walk_windows(
             shas = _fallback(repo, sha, depth)
             for number in numbers:
                 fallback_results[number] = shas
-        return fallback_results
+        return fallback_results, {}
     shallow = _load_shallow(git_dir)
     pct = _verify_pct()
     verify_budget = _VERIFY_MAX_PER_REPO
     results: dict[int, tuple[str, ...]] = {}
     exact = not bool(_state["disabled"])
-    cache: dict[str, tuple[tuple[str, ...], int]] = {}
+    cache: dict[str, tuple[tuple[str, ...], int, CommitRecord]] = {}
     cat: CatFileBatch | None = None
     try:
         if exact:
@@ -252,4 +333,5 @@ def walk_windows(
     finally:
         if cat is not None:
             cat.close()
-    return results
+    records = {sha: cache[sha][2] for shas in results.values() for sha in shas if sha in cache}
+    return results, records

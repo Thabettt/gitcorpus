@@ -8,12 +8,13 @@ from pathlib import Path
 import pytest
 
 import detect.repo_walk as repo_walk
-from detect.gitio import GitRepo
+from detect.gitio import GitRepo, read_commits
 from detect.repo_walk import (
     CatFileBatch,
     reset_verification,
     verification_summary,
     walk_windows,
+    walk_windows_with_records,
 )
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
@@ -278,3 +279,237 @@ def test_cat_file_batch_close_survives_posix_communicate_semantics(tmp_path, mon
     cat.close()
 
     assert cat._process.poll() is not None
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    dest = tmp_path / "r"
+    dest.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True, env=ENV)
+    return dest
+
+
+def _commit_message(
+    dest: Path,
+    message: str | bytes,
+    *,
+    date: str | None = None,
+    flags: tuple[str, ...] = (),
+    config: tuple[str, ...] = (),
+) -> str:
+    payload = message if isinstance(message, bytes) else message.encode("utf-8")
+    (dest / ".git" / "test-message").write_bytes(payload)
+    env = dict(ENV)
+    if date is not None:
+        env["GIT_AUTHOR_DATE"] = date
+        env["GIT_COMMITTER_DATE"] = date
+    command = ["git"]
+    for setting in config:
+        command.extend(["-c", setting])
+    command.extend(["commit", "-q", "--allow-empty", "-F", ".git/test-message", *flags])
+    subprocess.run(["git", "add", "-A"], cwd=dest, check=True, env=ENV)
+    subprocess.run(command, cwd=dest, check=True, env=env)
+    return _rev_parse(dest, "HEAD")
+
+
+def _hash_commit(dest: Path, raw: bytes) -> str:
+    return (
+        subprocess.run(
+            ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+            cwd=dest,
+            check=True,
+            env=ENV,
+            input=raw,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+
+
+@needs_git
+def test_walked_records_match_read_commits_for_varied_commit_shapes(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    (dest / "f.txt").write_text("0\n", encoding="utf-8")
+    plain = _commit_message(dest, "feat: plain\n", date="2026-01-01T00:00:00+00:00")
+    (dest / "f.txt").write_text("1\n", encoding="utf-8")
+    multiline = _commit_message(
+        dest,
+        "feat: multi-line\n\nbody paragraph\n\nSigned-off-by: Jane <jane@example.com>\n",
+        date="2026-01-02T00:00:00+00:00",
+    )
+    (dest / "f.txt").write_text("2\n", encoding="utf-8")
+    rollover = _commit_message(dest, "feat: rollover\n", date="2026-01-03T23:30:00-05:00")
+    empty = _commit_message(
+        dest,
+        b"",
+        date="2026-01-04T00:00:00+00:00",
+        flags=("--allow-empty", "--allow-empty-message"),
+    )
+    repo = GitRepo(dest)
+    windows, walked = walk_windows_with_records(repo, {1: empty}, depth=100)
+    shas = sorted(windows[1])
+    assert set(windows[1]) == set(_rev_list(dest, empty, 100))
+    assert set(walked) == set(windows[1])
+    assert {sha: walked[sha] for sha in shas} == read_commits(repo, shas)
+    assert walked[plain].committed_at == "2026-01-01T00:00:00Z"
+    assert walked[rollover].committed_at == "2026-01-03T23:30:00-05:00"
+    assert walked[multiline].message == (
+        "feat: multi-line\n\nbody paragraph\n\nSigned-off-by: Jane <jane@example.com>"
+    )
+    assert walked[empty].message == ""
+
+
+@needs_git
+def test_walked_records_match_git_reencoding_for_iso_8859_1_message(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    sha = _commit_message(
+        dest,
+        "sujet: café à la crème\n".encode("iso-8859-1"),
+        date="2026-02-01T00:00:00+00:00",
+        config=("i18n.commitEncoding=ISO-8859-1",),
+    )
+    repo = GitRepo(dest)
+    windows, walked = walk_windows_with_records(repo, {1: sha}, depth=10)
+    assert windows[1] == (sha,)
+    assert walked[sha] == read_commits(repo, [sha])[sha]
+    assert walked[sha].message == "sujet: café à la crème"
+
+
+@needs_git
+def test_walked_gpg_signed_commit_matches_read_commits(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    parent = _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    tree = _rev_parse(dest, "HEAD^{tree}")
+    bogus = "f" * 40
+    raw = (
+        f"tree {tree}\n"
+        f"parent {parent}\n"
+        "author Jane <jane@example.com> 1770000000 +0000\n"
+        "committer Jane <jane@example.com> 1770000000 +0000\n"
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n"
+        " \n"
+        f" parent {bogus}\n"
+        " iQIzBAABCgAdFiEEtesttesttest\n"
+        " =abcd\n"
+        " -----END PGP SIGNATURE-----\n"
+        "\n"
+        "feat: signed work\n\nwith a body\n"
+    ).encode()
+    sha = _hash_commit(dest, raw)
+    repo = GitRepo(dest)
+    windows, walked = walk_windows_with_records(repo, {1: sha}, depth=10)
+    assert windows[1] == (sha, parent)
+    assert walked[sha] == read_commits(repo, [sha])[sha]
+    assert walked[parent] == read_commits(repo, [parent])[parent]
+    cat = CatFileBatch(dest)
+    try:
+        parsed = cat.commit(sha)
+    finally:
+        cat.close()
+    assert parsed is not None
+    parents, epoch, record = parsed
+    assert parents == (parent,)
+    assert epoch == 1770000000
+    assert record == read_commits(repo, [sha])[sha]
+
+
+@needs_git
+def test_walked_merge_commit_preserves_parent_order(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    (dest / "f.txt").write_text("0\n", encoding="utf-8")
+    base = _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=dest, check=True, env=ENV)
+    (dest / "s.txt").write_text("s\n", encoding="utf-8")
+    side = _commit_message(dest, "feat: side\n", date="2026-01-02T00:00:00+00:00")
+    subprocess.run(["git", "checkout", "-q", "-"], cwd=dest, check=True, env=ENV)
+    (dest / "m.txt").write_text("m\n", encoding="utf-8")
+    main = _commit_message(dest, "feat: main\n", date="2026-01-03T00:00:00+00:00")
+    merge_env = {
+        **ENV,
+        "GIT_AUTHOR_DATE": "2026-01-04T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-01-04T00:00:00+00:00",
+    }
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-q", "-m", "Merge branch 'side'", "side"],
+        cwd=dest,
+        check=True,
+        env=merge_env,
+    )
+    merge = _rev_parse(dest, "HEAD")
+    assert (_rev_parse(dest, f"{merge}^1"), _rev_parse(dest, f"{merge}^2")) == (main, side)
+    cat = CatFileBatch(dest)
+    try:
+        parsed = cat.commit(merge)
+    finally:
+        cat.close()
+    assert parsed is not None
+    parents, _epoch, _record = parsed
+    assert parents == (main, side)
+    repo = GitRepo(dest)
+    _windows, walked = walk_windows_with_records(repo, {1: merge}, depth=100)
+    oracle = read_commits(repo, [merge, main, side, base])
+    assert {sha: walked[sha] for sha in oracle} == oracle
+
+
+@needs_git
+def test_message_line_looking_like_parent_is_not_parsed_as_parent(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    (dest / "f.txt").write_text("0\n", encoding="utf-8")
+    base = _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=dest, check=True, env=ENV)
+    (dest / "s.txt").write_text("s\n", encoding="utf-8")
+    side = _commit_message(dest, "feat: side\n", date="2026-01-02T00:00:00+00:00")
+    subprocess.run(["git", "checkout", "-q", "-"], cwd=dest, check=True, env=ENV)
+    (dest / "m.txt").write_text("m\n", encoding="utf-8")
+    head = _commit_message(
+        dest,
+        "feat: body mentions a parent\n\n"
+        f"parent {side}\n"
+        "committer Jane <jane@example.com> 1 +0000\n",
+        date="2026-01-03T00:00:00+00:00",
+    )
+    repo = GitRepo(dest)
+    windows, walked = walk_windows_with_records(repo, {1: head}, depth=100)
+    assert windows[1] == _rev_list(dest, head, 100)
+    assert side not in windows[1]
+    oracle = read_commits(repo, [head, base])
+    assert {sha: walked[sha] for sha in oracle} == oracle
+    cat = CatFileBatch(dest)
+    try:
+        parsed = cat.commit(head)
+    finally:
+        cat.close()
+    assert parsed is not None
+    assert parsed[0] == (base,)
+
+
+@needs_git
+def test_walked_records_parity_for_batched_shas(tmp_path):
+    reset_verification()
+    dest = _repo(tmp_path, 12)
+    repo = GitRepo(dest)
+    head = _rev_parse(dest, "HEAD")
+    older = _rev_parse(dest, "HEAD~5")
+    windows, walked = walk_windows_with_records(repo, {1: head, 2: older}, depth=4)
+    shas = sorted({sha for shas in windows.values() for sha in shas})
+    assert set(walked) == set(shas)
+    assert {sha: walked[sha] for sha in shas} == read_commits(repo, shas)
+
+
+def test_walk_windows_with_records_falls_back_without_records(tmp_path):
+    class FakeRepo(GitRepo):
+        def __init__(self):
+            super().__init__(tmp_path / "not-a-repo")
+
+        def git(self, *args, timeout=None, stdin=None):
+            assert args[:2] == ("rev-list", "-n")
+            return "s1\ns2\n"
+
+    windows, records = walk_windows_with_records(FakeRepo(), {9: "aaa"}, depth=100)
+    assert windows == {9: ("s1", "s2")}
+    assert records == {}

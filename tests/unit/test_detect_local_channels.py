@@ -3,7 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from detect.gitio import GitError, GitRepo
+import detect.repo_walk as repo_walk
+from detect.gitio import CommitRecord, GitError, GitRepo
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
@@ -11,6 +12,7 @@ from detect.local_channels import (
     detect_pr_commits_local,
 )
 from detect.packs import Pack, Pattern
+from detect.repo_walk import reset_verification
 
 PACK = Pack(
     version="v1",
@@ -320,3 +322,110 @@ def test_detect_branch_local_parses_merge_messages():
         (9, "cursor/tool"),
     }
     assert {h.agent for h in result.hits} == {"Claude Code", "Cursor"}
+
+
+_A_TIP = "a1" * 20
+_A_PARENT = "a2" * 20
+_B_TIP = "b0" * 20
+_A_NODES = {
+    _A_TIP: (
+        (_A_PARENT,),
+        200,
+        CommitRecord(
+            sha=_A_TIP,
+            author_name="Jane",
+            author_email="jane@example.com",
+            committer_name="Jane",
+            committer_email="jane@example.com",
+            committed_at="2026-02-02T00:00:00Z",
+            message="chore: tip",
+        ),
+    ),
+    _A_PARENT: (
+        (),
+        100,
+        CommitRecord(
+            sha=_A_PARENT,
+            author_name="Claude",
+            author_email="noreply@anthropic.com",
+            committer_name="Claude",
+            committer_email="noreply@anthropic.com",
+            committed_at="2026-02-01T00:00:00Z",
+            message="feat: pr work",
+        ),
+    ),
+}
+
+
+class _StubCatFileBatch:
+    def __init__(self, nodes):
+        self._nodes = nodes
+
+    def commit(self, oid):
+        return self._nodes.get(oid)
+
+    def close(self):
+        pass
+
+
+def test_detect_pr_commits_local_reads_no_git_log_when_walker_supplied_records(
+    tmp_path, monkeypatch
+):
+    reset_verification()
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    monkeypatch.setattr(repo_walk, "CatFileBatch", lambda dest: _StubCatFileBatch(_A_NODES))
+    logged: list[tuple[str, ...]] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return f"{_A_TIP}\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "for-each-ref":
+            return f"refs/gc/pr/7 {_A_TIP}\n"
+        if args[0] == "log":
+            logged.append(args)
+            return ""
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    assert result.status == "ok"
+    assert logged == []
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {(7, _A_PARENT)}
+    assert result.stats["propagated_oids"] == (_A_PARENT,)
+
+
+def test_detect_pr_commits_local_backfills_only_missing_records(tmp_path, monkeypatch):
+    reset_verification()
+    monkeypatch.delenv("GITCORPUS_WALK_VERIFY_PCT", raising=False)
+    monkeypatch.setattr(repo_walk, "CatFileBatch", lambda dest: _StubCatFileBatch(_A_NODES))
+    logged: list[tuple[str, ...]] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return f"{_A_TIP}\trefs/pull/7/head\n{_B_TIP}\trefs/pull/9/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "for-each-ref":
+            return f"refs/gc/pr/7 {_A_TIP}\nrefs/gc/pr/9 {_B_TIP}\n"
+        if args[0] == "rev-list":
+            return "c1\nc2\n"
+        if args[0] == "log":
+            logged.append(args)
+            return "".join(
+                f"{sha}\x1fClaude\x1fnoreply@anthropic.com\x1fClaude\x1fnoreply@anthropic.com"
+                f"\x1f2026-02-03T00:00:00Z\x1fbackfilled {sha}\x1e\n"
+                for sha in args[3:]
+            )
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, depth=100)
+    assert result.status == "ok"
+    assert len(logged) == 1
+    assert logged[0][3:] == ("c1", "c2")
+    assert {(h.evidence["pr"], h.evidence["commit"]) for h in result.hits} == {
+        (7, _A_PARENT),
+        (9, "c1"),
+        (9, "c2"),
+    }
+    assert result.stats["propagated_oids"] == (_A_PARENT, "c1", "c2")
