@@ -75,7 +75,6 @@ _DEAD_PHRASES = (
     "authentication failed",
     "returned error: 404",
     "returned error: 401",
-    "returned error: 403",
 )
 _TRANSIENT_PHRASES = (
     "could not resolve host",
@@ -87,10 +86,14 @@ _TRANSIENT_PHRASES = (
     "timed out",
     "early eof",
     "rpc failed",
+    "returned error: 403",  # anonymous clones: rate limiting, not privacy
+    "returned error: 429",
     "returned error: 500",
     "returned error: 502",
     "returned error: 503",
     "returned error: 504",
+    "rate limit",
+    "abuse detection",
 )
 _LOCAL_PHRASES = (
     "index.lock",

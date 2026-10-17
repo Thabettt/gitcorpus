@@ -83,8 +83,8 @@ Implementation:
 
 | Class | Signals (stderr) | Policy |
 |---|---|---|
-| dead | `Repository not found`, `could not read Username`, `Authentication failed`, HTTP 401/403/404 | no retries; `unavailable: deleted_or_private` (fast) |
-| transient | `Could not resolve host`, `Couldn't connect`, `Connection reset`, `timed out`, `early EOF`, `RPC failed`, HTTP 5xx | requeue; eligible for retry wave (C5) |
+| dead | `Repository not found`, `could not read Username`, `Authentication failed`, HTTP 401/404 | no retries; `unavailable: deleted_or_private` (fast) |
+| transient | `Could not resolve host`, `Couldn't connect`, `Connection reset`, `timed out`, `early EOF`, `RPC failed`, HTTP 403/429/5xx, rate-limit/abuse text | requeue; eligible for retry wave (C5) |
 | local | `index.lock`, `cannot lock`, `Permission denied`, disk errors | inline retry via existing `retry_call` |
 | fatal | anything else | fail fast, record note |
 

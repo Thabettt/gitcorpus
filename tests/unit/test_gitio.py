@@ -581,6 +581,11 @@ def test_parse_merge_branches_handles_pr_local_and_fork_forms():
             "fatal: unable to access 'https://github.com/': returned error: 502",
             "transient",
         ),
+        (
+            "fatal: unable to access 'x': The requested URL returned error: 403",
+            "transient",
+        ),
+        ("remote: You have exceeded a secondary rate limit", "transient"),
         ("fatal: Unable to create '.../.git/index.lock': File exists", "local"),
         ("fatal: destination path 'x' already exists and is not an empty directory", "local"),
         ("something unexpected happened", "fatal"),
