@@ -59,7 +59,7 @@ def _split_ident(oid: str, raw: bytes, encoding: str) -> tuple[str, str, int, st
     match = _IDENT.match(raw)
     if match is None:
         raise WalkAnomaly(f"commit {oid} has a malformed ident: {raw[:80]!r}")
-    name = _decode(match.group(1), encoding).rstrip()
+    name = _decode(match.group(1).rstrip(b" \t\n\r"), encoding)
     email = _decode(match.group(2), encoding)
     return name, email, int(match.group(3)), match.group(4).decode("ascii")
 

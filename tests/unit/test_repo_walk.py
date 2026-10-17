@@ -295,10 +295,11 @@ def _commit_message(
     date: str | None = None,
     flags: tuple[str, ...] = (),
     config: tuple[str, ...] = (),
+    env_extra: dict[str, str] | None = None,
 ) -> str:
     payload = message if isinstance(message, bytes) else message.encode("utf-8")
     (dest / ".git" / "test-message").write_bytes(payload)
-    env = dict(ENV)
+    env = {**ENV, **(env_extra or {})}
     if date is not None:
         env["GIT_AUTHOR_DATE"] = date
         env["GIT_COMMITTER_DATE"] = date
@@ -375,6 +376,32 @@ def test_walked_records_match_git_reencoding_for_iso_8859_1_message(tmp_path):
     assert windows[1] == (sha,)
     assert walked[sha] == read_commits(repo, [sha])[sha]
     assert walked[sha].message == "sujet: café à la crème"
+
+
+@needs_git
+def test_walked_records_keep_non_ascii_trailing_whitespace_in_names(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    nbsp = "Jane\u00a0"
+    nbsp_sha = _commit_message(
+        dest,
+        "feat: nbsp name\n",
+        date="2026-01-01T00:00:00+00:00",
+        env_extra={"GIT_AUTHOR_NAME": nbsp, "GIT_COMMITTER_NAME": nbsp},
+    )
+    spaced_sha = _commit_message(
+        dest,
+        "feat: ascii trailing space\n",
+        date="2026-01-02T00:00:00+00:00",
+        env_extra={"GIT_AUTHOR_NAME": "Jane ", "GIT_COMMITTER_NAME": "Jane "},
+    )
+    repo = GitRepo(dest)
+    _windows, walked = walk_windows_with_records(repo, {1: spaced_sha}, depth=100)
+    oracle = read_commits(repo, [nbsp_sha, spaced_sha])
+    assert {sha: walked[sha] for sha in oracle} == oracle
+    assert walked[nbsp_sha].author_name == nbsp
+    assert walked[nbsp_sha].committer_name == nbsp
+    assert walked[spaced_sha].author_name == "Jane"
 
 
 @needs_git
