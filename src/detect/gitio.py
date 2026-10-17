@@ -90,7 +90,9 @@ def git_env() -> dict[str, str]:
     tokens = _configured_tokens()
     if tokens:
         env["GIT_CONFIG_COUNT"] = "3"
-        env["GIT_CONFIG_KEY_2"] = "http.extraHeader"
+        # Scoped to github.com: a bare http.extraHeader would attach the token
+        # to every HTTPS remote the process touches.
+        env["GIT_CONFIG_KEY_2"] = "http.https://github.com/.extraHeader"
         env["GIT_CONFIG_VALUE_2"] = _basic_auth_value(tokens[0])
     return env
 
@@ -509,6 +511,9 @@ def fetch_pr_refs(
         chunk_refs = _PR_FETCH_CHUNK_REFS
     remote = remote_pr_refs(repo)
     if not remote:
+        # A kept clone must never resume from refs the remote no longer has.
+        with contextlib.suppress(OSError):
+            (Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT).unlink()
         return {}
     gated = gate is not None and len(remote) > _MONSTER_PR_THRESHOLD
     if gated:

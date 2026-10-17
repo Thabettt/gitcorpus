@@ -516,6 +516,21 @@ def test_message_line_looking_like_parent_is_not_parsed_as_parent(tmp_path):
 
 
 @needs_git
+def test_literal_record_separator_byte_survives_the_walk_but_truncates_in_parse_log(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    sha = _commit_message(
+        dest,
+        b"feat: before\x1e after\n",
+        date="2026-01-01T00:00:00+00:00",
+    )
+    repo = GitRepo(dest)
+    _windows, walked = walk_windows_with_records(repo, {1: sha}, depth=10)
+    assert walked[sha].message == "feat: before\x1e after"
+    assert read_commits(repo, [sha])[sha].message == "feat: before"
+
+
+@needs_git
 def test_walked_records_parity_for_batched_shas(tmp_path):
     reset_verification()
     dest = _repo(tmp_path, 12)

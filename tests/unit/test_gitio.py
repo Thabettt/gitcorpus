@@ -189,7 +189,7 @@ def test_git_env_adds_the_first_github_tokens_authorization_header(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "tok-fallback")
     env = gitio.git_env()
     assert env["GIT_CONFIG_COUNT"] == "3"
-    assert env["GIT_CONFIG_KEY_2"] == "http.extraHeader"
+    assert env["GIT_CONFIG_KEY_2"] == "http.https://github.com/.extraHeader"
     assert env["GIT_CONFIG_VALUE_2"] == _basic_auth_header("tok-one")
 
 
@@ -198,7 +198,7 @@ def test_git_env_falls_back_to_the_single_github_token(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "tok-single")
     env = gitio.git_env()
     assert env["GIT_CONFIG_COUNT"] == "3"
-    assert env["GIT_CONFIG_KEY_2"] == "http.extraHeader"
+    assert env["GIT_CONFIG_KEY_2"] == "http.https://github.com/.extraHeader"
     assert env["GIT_CONFIG_VALUE_2"] == _basic_auth_header("tok-single")
 
 
@@ -582,6 +582,22 @@ def test_fetch_pr_refs_skips_fetch_and_snapshot_when_no_pr_refs(tmp_path):
     assert fetch_pr_refs(fake, depth=100) == {}
     assert [call[0] for call in fake.calls] == ["ls-remote"]
     assert not (tmp_path / ".git" / ".gitcorpus-pr-refs.json").exists()
+
+
+def test_fetch_pr_refs_deletes_the_snapshot_when_the_fresh_listing_is_empty(tmp_path):
+    dest = _repo_dir(tmp_path)
+    snapshot = tmp_path / ".git" / ".gitcorpus-pr-refs.json"
+    seeded = FakeRepo(
+        lambda args: "s7\trefs/pull/7/head\n" if args[0] == "ls-remote" else "",
+        dest=dest,
+    )
+    assert fetch_pr_refs(seeded, depth=100) == {7: "s7"}
+    assert snapshot.exists()
+
+    emptied = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None, dest=dest)
+    assert fetch_pr_refs(emptied, depth=100) == {}
+    assert not snapshot.exists()
+    assert read_pr_refs_snapshot(emptied) is None
 
 
 def test_fetch_pr_refs_survives_a_snapshot_write_failure(monkeypatch, tmp_path):
