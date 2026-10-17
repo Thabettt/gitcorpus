@@ -208,8 +208,12 @@ def detect_pr_commits_local(
             sha_to_pr.setdefault(sha, number)
     try:
         records = read_commits(repo, sorted(sha_to_pr))
-    except GitError:
-        records = {}
+    except _GIT_FAILURES as exc:
+        return ChannelResult(
+            status="partial",
+            note=f"commit read failed: {git_error_tail(exc)}",
+            stats=empty_stats,
+        )
     hits: list[Hit] = []
     for sha, number in sorted(sha_to_pr.items(), key=lambda item: (item[1], item[0])):
         record = records.get(sha)

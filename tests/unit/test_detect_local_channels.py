@@ -284,6 +284,26 @@ def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial():
     assert result.stats["propagated_oids"] == ()
 
 
+def test_detect_pr_commits_local_reports_a_commit_read_failure_as_partial():
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "for-each-ref":
+            return "refs/gc/pr/7 aaa\n"
+        if args[0] == "rev-list":
+            return "s1\n"
+        if args[0] == "log":
+            raise GitError(list(args), 128, "fatal: bad object")
+        return None
+
+    result = detect_pr_commits_local(FakeRepo(handler), PACK, retry_delay=0.0)
+    assert result.status == "partial"
+    assert result.note == "commit read failed: fatal: bad object"
+    assert result.stats["propagated_oids"] == ()
+
+
 def test_detect_branch_local_parses_merge_messages():
     log = (
         "m1\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
