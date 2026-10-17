@@ -142,3 +142,29 @@ Pipeline rebuild implemented on branch `detect-fast-zero-loss` (plan:
 `docs/superpowers/plans/2026-10-17-fast-zero-loss-detection.md`): `blob:none` PR fetch, batched
 cat-file walker with fallback + verify sampling, failure taxonomy + circuit breaker + retry wave,
 unavailable reporting, configurable clones root, honest estimator. Gates run before the fresh full run.
+
+## VERIFICATION GATES — results (2026-10-17 evening)
+
+**Walk equivalence (PASS):** 52 repos (12 monster/storm incl. `PerryTS/perry` 8,010 tips, `vize`
+6,794, `dsx-ai-factory/infra-controller` 4,998; + 40 random) — ~25k tips walked in-process,
+**4,689 tips verified against `git rev-list -n 100`, `mismatches=0`**, 19.9 min total.
+Per-repo highlights: perry clone 1.8s / fetch 101.9s / all walks 57.3s (old pipeline: 510 packs,
+38 min in-flight, walk spawns ~7.5 min); `rust-stdx/stdx` full pipeline 7.7s (old: 15+ min hang).
+
+**End-to-end replay vs run 93 (PASS, explained divergences):** 120 random repos → 67 compared
+(53 skipped: run-93 `unavailable` docs — outage/dead/empty victims). **8 diffs, 0 regressions:**
+- 6 window-drift: diffs confined to window-relative fields (`first_signal_at`, `commit_ratio`,
+  `adoption_level`); e.g. `fuzhengwei/WaLiAPI` proven: repo `pushed_at` 2026-10-17T07:42Z (post-scan),
+  stored trailer commits (Sep 23 02:09/10:18) older than the current window's oldest commit
+  (Sep 23 20:22) — they fell out of the last-100; all 20 PR hits + branch + file identical.
+- 2 outage/storm recoveries: `citum/citum-core` and `zeroclaw-labs/zeroclaw` stored as
+  `pr_metadata partial` with "Could not resolve host" / `--filter=tree:0` fetch-failure notes;
+  fresh scans complete — zeroclaw recovers **14 agents vs 3 stored**, citum gains `Aider`.
+
+**Outage drill:** the mechanics are unit-tested (breaker trip/escalate/reset/cancel; transient retry
+wave; dead fast-fail); the two outage-recovery replay diffs demonstrate end-to-end recovery. The
+live DNS-block drill remains documented-only (needs an admin hosts edit).
+
+**Perf:** replay ran sequentially (single worker) at ≈13 s/repo; the walk gate's per-stage timings
+confirm transport ≈1-2s clone + 2-100s fetch (refset size) + sub-minute in-process walks. At 32-64
+workers the projected full-corpus time stays well inside the ≤3h target.
