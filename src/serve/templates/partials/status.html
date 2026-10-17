@@ -13,7 +13,7 @@
     {% if run.progress.percent is not none %}
     <span class="progress-track" role="progressbar" aria-label="Run progress" aria-valuenow="{{ run.progress.percent }}" aria-valuemin="0" aria-valuemax="100"><span class="progress-fill" style="width: {{ run.progress.percent }}%"></span></span>
     {% endif %}
-    <span id="run-eta" class="muted"{% if run.progress.eta_seconds is not none %} data-eta-seconds="{{ run.progress.eta_seconds }}"{% endif %}>{% if run.progress.eta %}est. {{ run.progress.eta }} left{% else %}estimating…{% endif %}</span>
+    <span id="run-eta" class="muted"{% if run.progress.eta_seconds is not none %} data-eta-seconds="{{ run.progress.eta_seconds }}"{% endif %}>{% if run.progress.eta %}est. {{ run.progress.eta }} left{% if run.progress.eta_provisional %} (provisional; can speed up){% endif %}{% else %}estimating…{% endif %}</span>
     {% endif %}
   </div>
   <h2>What happened</h2>

@@ -561,7 +561,10 @@ def _format_span(seconds: float | None) -> str | None:
     if minutes < 60:
         return f"{minutes}m {sec}s"
     hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes}m"
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
 
 
 def _elapsed_seconds(row) -> float | None:
@@ -580,12 +583,11 @@ def _progress_summary(row) -> dict | None:
     percent = int(done * 100 / total) if total else None
     eta = None
     phase_started = row["progress_started_at"] or row["started_at"]
-    if total and done >= 2 and phase_started is not None:
+    if total and done >= 1 and phase_started is not None:
         elapsed = max((datetime.now(UTC) - phase_started).total_seconds(), 0.0)
         if elapsed > 0:
-            candidate = elapsed * (total - done) / done
-            if candidate <= 24 * 3600:
-                eta = candidate
+            eta = elapsed * (total - done) / done
+    provisional = eta is not None and done < 10
     return {
         "phase": phase,
         "label": PROGRESS_PHASES.get(phase, phase),
@@ -594,6 +596,7 @@ def _progress_summary(row) -> dict | None:
         "percent": percent,
         "eta": _format_span(eta),
         "eta_seconds": int(eta) if eta is not None else None,
+        "eta_provisional": provisional,
     }
 
 

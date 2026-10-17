@@ -6,7 +6,7 @@
     {% if run.progress.percent is not none %}
     <span class="progress-track" role="progressbar" aria-label="Detection progress" aria-valuenow="{{ run.progress.percent }}" aria-valuemin="0" aria-valuemax="100"><span class="progress-fill" style="width: {{ run.progress.percent }}%"></span></span>
     {% endif %}
-    {% if run.progress.eta %}<span class="muted">est. {{ run.progress.eta }} left</span>{% endif %}
+    {% if run.progress.eta %}<span class="muted">est. {{ run.progress.eta }} left{% if run.progress.eta_provisional %} (provisional; can speed up){% endif %}</span>{% else %}<span class="muted">estimating…</span>{% endif %}
     {% endif %}
     {% if run.error %}<span class="flag error">{{ run.error }}</span>{% endif %}
   </div>
