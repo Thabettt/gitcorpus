@@ -382,7 +382,8 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     windows = spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100}
     clone = spec.get("clone") or {}
     depth = clone.get("depth")
-    if spec.get("source") == "git" and isinstance(depth, int) and not isinstance(depth, bool):
+    git_mode = spec.get("source") == "git"
+    if git_mode and isinstance(depth, int) and not isinstance(depth, bool):
         windows = {**windows, "commits": depth, "prs": depth}
     first_repo = (page_number - 1) * DETECTION_REPOS_PAGE_SIZE + 1
     last_repo = min(page_number * DETECTION_REPOS_PAGE_SIZE, total_repos)
@@ -398,6 +399,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "first_signal_label": _first_signal_label(result_summary.get("first_signal_at")),
                 "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
                 "windows": windows,
+                "git_mode": git_mode,
                 "repos": repos,
                 "page": page_number,
                 "pages": pages,

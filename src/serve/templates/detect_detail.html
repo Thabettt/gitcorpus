@@ -21,7 +21,7 @@
     <summary>Technical details</summary>
     <div class="run-meta">
       <span id="run-id" data-field="run">run {{ run.id }}</span>
-      <span id="run-source" data-field="source">source {{ "git (local clone)" if detection.summary.source == "git" else "api" }}</span>
+      <span id="run-source" data-field="source">source {{ "git (local clone)" if detection.git_mode else "api" }}</span>
       <span id="run-created" data-field="created">created {{ run.created_at }}</span>
       <span id="run-started" data-field="started">started {{ run.started_at }}</span>
       <span id="run-finished" data-field="finished">finished {{ run.finished_at }}</span>
@@ -78,7 +78,7 @@
         <summary aria-label="What first signal means">i</summary>
         <div class="info-pop-body">
           <p>The earliest date in the window with agent-attributed evidence: the committed date of the oldest matched commit, or the creation date of the oldest matched PR.</p>
-          <p>Because it comes from the {{ detection.windows.commits }}-commit and most-recent {{ detection.windows.prs }}-PR windows, it is a lower bound — real adoption may predate it. Full-history dating is the clone tier.</p>
+          <p>Because it comes from the {% if detection.git_mode %}last {{ detection.windows.commits }}-commit default-branch and every-PR-tip walk{% else %}{{ detection.windows.commits }}-commit and most-recent {{ detection.windows.prs }}-PR{% endif %} windows, it is a lower bound — real adoption may predate it. Full-history dating is the clone tier.</p>
         </div>
       </details>
       <h3>First signal</h3><p>{{ detection.first_signal_label or "—" }}</p>
@@ -92,7 +92,7 @@
   {% if detection.summary.partial_channels %}
   <p class="flag warn" id="detection-partials">Partial channels: {% for channel, note in detection.summary.partial_channels.items() %}{{ channel }} ({{ note }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
   {% endif %}
-  <p class="muted">Depth: {{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed). Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount. Hover or tap the ⓘ on any card for details.</p>
+  <p class="muted">Depth: {% if detection.git_mode %}last {{ detection.windows.commits }} commits on the default branch; every PR ref walked {{ detection.windows.commits }} commits deep — labels and issues are API-only (windowed){% else %}{{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed){% endif %}. Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount. Hover or tap the ⓘ on any card for details.</p>
 </section>
 <section class="panel" id="detection-evidence">
   <div class="panel-head">

@@ -355,7 +355,9 @@ def test_git_detection_detail_reports_clone_depth(clean):
     response = client.get(f"/detections/{detect_id}")
     assert response.status_code == 200
     assert "250 commits" in response.text
-    assert "Depth: 250 commits · 250 PRs" in response.text
+    assert "last 250 commits on the default branch" in response.text
+    assert "every PR ref walked 250 commits deep" in response.text
+    assert "labels and issues are API-only" in response.text
 
 
 def test_detections_use_their_own_numbering(clean):
