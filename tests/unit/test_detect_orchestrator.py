@@ -638,7 +638,7 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
     assert detections["agents"] == ["Claude Code", "Codex"]
     evidence_csv = list(Path(tmp_path).glob(f"*/{run_id}/detections.csv"))
     assert len(evidence_csv) == 1
-    with evidence_csv[0].open(newline="", encoding="utf-8") as handle:
+    with evidence_csv[0].open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.reader(handle)
         header = next(reader)
         rows = list(reader)

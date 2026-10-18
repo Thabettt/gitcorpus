@@ -414,7 +414,9 @@ def test_detections_export_renders_flat_evidence_csv(clean):
         f'filename="gitcorpus-detect-{detect_id}-evidence.csv"'
         in response.headers["content-disposition"]
     )
-    reader = csv.DictReader(io.StringIO(response.text))
+    assert response.content[:3] == b"\xef\xbb\xbf"
+    body = response.content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(body))
     assert reader.fieldnames == EVIDENCE_CSV_HEADER
     exported = list(reader)
     with clean.connect() as connection:
@@ -446,6 +448,63 @@ def test_detections_export_renders_flat_evidence_csv(clean):
     trailer = next(row for row in exported if row["channel"] == "commit_trailer")
     assert trailer["snippet"] == "Co-authored-by: Claude"
     assert trailer["commit_sha"] == "b2"
+
+
+def test_detections_export_is_single_line_and_reads_back(clean):
+    from serve.runs import DETECT_REPO_CSV_HEADER
+
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    rows = [
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "commit_trailer",
+            "evidence": {"commit": "b1", "snippet": "first\n\nsecond"},
+        },
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "commit_trailer",
+            "evidence": {"commit": "b2", "snippet": "single line"},
+        },
+        {
+            "repo": 1,
+            "agent": "Codex",
+            "channel": "pr_metadata",
+            "evidence": {"pr": 7, "commit": "a1", "propagated": True},
+        },
+    ]
+    detect_id = seed_detect_run_with_evidence(clean, source, rows)
+    client = make_client(clean)
+    response = client.get(f"/runs/{detect_id}/export?format=detections")
+    assert response.status_code == 200
+    assert response.content[:3] == b"\xef\xbb\xbf"
+    body = response.content.decode("utf-8-sig")
+    with clean.connect() as connection:
+        stored = connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+            {"run": detect_id},
+        ).scalar_one()
+    raw_records = list(csv.reader(io.StringIO(body)))
+    assert len(raw_records) == stored + 1
+    assert all(len(record) == len(EVIDENCE_CSV_HEADER) for record in raw_records)
+    assert body.count("\n") == stored + 1
+    exported = list(csv.DictReader(io.StringIO(body)))
+    assert len(exported) == stored == len(rows)
+    by_commit = {row["commit_sha"]: row for row in exported}
+    assert by_commit["b1"]["snippet"] == "first\\n\\nsecond"
+    assert by_commit["b2"]["snippet"] == "single line"
+    assert all(
+        "\n" not in value and "\r" not in value for row in exported for value in row.values()
+    )
+    repo_response = client.get(f"/runs/{detect_id}/export?format=csv")
+    assert repo_response.status_code == 200
+    assert repo_response.content[:3] == b"\xef\xbb\xbf"
+    repo_body = repo_response.content.decode("utf-8-sig")
+    repo_records = list(csv.reader(io.StringIO(repo_body)))
+    assert repo_records[0] == DETECT_REPO_CSV_HEADER
+    assert repo_body.count("\n") == len(repo_records)
 
 
 def test_detect_repo_export_has_detection_rollup_columns(clean):
@@ -482,7 +541,10 @@ def test_detect_repo_export_has_detection_rollup_columns(clean):
         f'filename="gitcorpus-detect-{detect_id}-repos.csv"'
         in response.headers["content-disposition"]
     )
-    reader = csv.DictReader(io.StringIO(response.text))
+    assert response.content[:3] == b"\xef\xbb\xbf"
+    body = response.content.decode("utf-8-sig")
+    assert body.count("\n") == 2
+    reader = csv.DictReader(io.StringIO(body))
     assert reader.fieldnames == DETECT_REPO_CSV_HEADER
     by_id = {row["repo_id"]: row for row in reader}
     assert set(by_id) == {"1"}
@@ -561,7 +623,8 @@ def test_detections_export_streams_bounded_batches(clean):
     ]
     detect_id = seed_detect_run_with_evidence(clean, source, rows)
     chunks = list(_detections_chunks(clean, detect_id, batch_rows=2))
-    assert chunks[0].decode("utf-8").startswith("run_id,")
+    assert chunks[0].startswith(b"\xef\xbb\xbf")
+    assert chunks[0].decode("utf-8-sig").startswith("run_id,")
     sizes = [
         len([line for line in chunk.decode("utf-8").splitlines() if line]) for chunk in chunks[1:]
     ]

@@ -179,11 +179,17 @@ def _snapshot_items(
                 on_progress(done, total)
 
 
+def _single_line(value: str) -> str:
+    return value.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+
+
 def _csv_cell(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, str):
+        return _single_line(value)
     return str(value)
 
 
@@ -296,7 +302,7 @@ def evidence_csv_row(row: Mapping[str, object]) -> list[str]:
 
 
 def _write_detections(path: Path, rows: Iterable[dict]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(EVIDENCE_CSV_HEADER)
         for row in rows:

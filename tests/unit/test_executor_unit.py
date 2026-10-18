@@ -265,22 +265,43 @@ def test_evidence_row_formats_detected_at_as_utc_iso():
     assert text_moment["detected_at"] == "2026-10-18T04:15:22+00:00"
 
 
+def test_csv_cell_flattens_newlines_to_literal_escapes():
+    assert executor._csv_cell("a\r\nb\nc") == "a\\nb\\nc"
+    assert executor._csv_cell("plain text") == "plain text"
+
+
+def test_evidence_row_flattens_snippet_and_keeps_evidence_json_newline_free():
+    evidence = {"commit": "a1", "snippet": "first\n\nsecond", "propagated": True}
+    cells = _cells(_evidence_row(channel="commit_trailer", evidence=evidence))
+    assert cells["snippet"] == "first\\n\\nsecond"
+    assert cells["evidence_json"] == json.dumps(evidence, sort_keys=True)
+    assert "\n" not in cells["evidence_json"]
+
+
 def test_write_bundle_streams_detections_from_source(tmp_path):
-    rows = [_evidence_row(evidence={"path": "CLAUDE.md"})]
+    rows = [
+        _evidence_row(evidence={"path": "CLAUDE.md"}),
+        _evidence_row(evidence={"snippet": "first\n\nsecond"}),
+    ]
     payload = RunPayload(total_count=1, items=[], detections_source=lambda: iter(rows))
     run = {"filter_hash": "hash-a", "id": 9, "filter_spec": {}, "api_version": "2022-11-28"}
     bundle_dir = executor._write_bundle(run, payload, str(tmp_path))
     assert bundle_dir.endswith("/hash-a/9/")
     detections_csv = tmp_path / "hash-a" / "9" / "detections.csv"
     assert detections_csv.exists()
-    with detections_csv.open(newline="", encoding="utf-8") as handle:
+    raw = detections_csv.read_bytes()
+    assert raw[:3] == b"\xef\xbb\xbf"
+    assert raw.count(b"\n") == len(rows) + 1
+    with detections_csv.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.reader(handle)
         header = next(reader)
         first = next(reader)
+        second = next(reader)
     assert header == executor.EVIDENCE_CSV_HEADER
     assert first[executor.EVIDENCE_CSV_HEADER.index("full_name")] == "octo/one"
     assert first[executor.EVIDENCE_CSV_HEADER.index("path")] == "CLAUDE.md"
     assert first[executor.EVIDENCE_CSV_HEADER.index("channel")] == "file"
+    assert second[executor.EVIDENCE_CSV_HEADER.index("snippet")] == "first\\n\\nsecond"
 
 
 def test_write_bundle_omits_detections_without_source(tmp_path):

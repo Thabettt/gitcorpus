@@ -259,6 +259,7 @@ def _detections_chunks(
     engine: Engine, run_id: int, *, batch_rows: int = EVIDENCE_BATCH_ROWS
 ) -> Iterator[bytes]:
     buffer = io.StringIO()
+    buffer.write("\ufeff")
     csv.writer(buffer).writerow(EVIDENCE_CSV_HEADER)
     yield buffer.getvalue().encode("utf-8")
     with engine.connect() as connection:
@@ -316,6 +317,7 @@ def _detect_repo_chunks(
     engine: Engine, run_id: int, *, batch_rows: int = DETECT_REPO_BATCH_ROWS
 ) -> Iterator[bytes]:
     buffer = io.StringIO()
+    buffer.write("\ufeff")
     csv.writer(buffer).writerow(DETECT_REPO_CSV_HEADER)
     yield buffer.getvalue().encode("utf-8")
     with engine.connect() as connection:
