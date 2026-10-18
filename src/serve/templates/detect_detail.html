@@ -113,7 +113,7 @@
           <summary aria-label="What the evidence export contains">i</summary>
           <div class="info-pop-body">
             <p>This file carries every stored evidence row for the run — agent, channel, and the commit, path, or PR details — with the raw evidence JSON, regenerated live from the database so nothing is capped by Excel's row limit.</p>
-            <p>CSV is a flat table for spreadsheets; JSON preserves the nested evidence objects (and carries the exact detected-at moment).</p>
+            <p>CSV is a flat table for spreadsheets; JSON preserves the nested evidence objects (and carries the exact detected-at moment). CSV cells that start with a formula character (= + -) are quoted with a leading apostrophe so spreadsheets show the literal text.</p>
           </div>
         </details>
       </form>
@@ -127,7 +127,7 @@
           <summary aria-label="What the repos export contains">i</summary>
           <div class="info-pop-body">
             <p>One row per scanned repo in CSV, one object per repo in JSON — the corpus fields plus a detection rollup: agents, adoption level, commit ratio, and per-channel evidence counts.</p>
-            <p>Use it to join detection results back onto the search corpus. CSV and JSON hold the same columns; the filenames and the tools that open them differ.</p>
+            <p>Repo metadata the detection run did not carry (language, license, stars date, geography) is filled from the stored repo records, so the file is complete for joining. Use it to join detection results back onto the search corpus. CSV and JSON hold the same columns; the filenames and the tools that open them differ.</p>
           </div>
         </details>
       </form>
@@ -166,7 +166,10 @@
         {% for channel in detection.filter_channels %}<option value="{{ channel }}"{{ ' selected' if channel == detection.filters.channel }}>{{ channel }}</option>{% endfor %}
       </select>
     </label>
-    <button class="button" type="submit" id="detection-filter-apply">Filter</button>
+    <div class="field filter-submit">
+      <span class="field-label" aria-hidden="true">&nbsp;</span>
+      <button class="button" type="submit" id="detection-filter-apply">Filter</button>
+    </div>
   </form>
   {% for repo in detection.repos %}
   <details class="evidence-repo" id="detection-repo-{{ repo.repo_id }}">

@@ -1966,7 +1966,12 @@ kbd {
 }
 /* Per-repo evidence blocks (detection pages) */
 #detection-filters {
-  margin-bottom: 0.75rem;
+  align-items: flex-start;
+  gap: 0.85rem 1rem;
+  margin: 0.9rem 0 1rem;
+}
+#detection-filters .filter-submit {
+  flex: 0 0 auto;
 }
 .evidence-repo {
   background: var(--gc-surface);
@@ -2034,10 +2039,25 @@ kbd {
 /* Export groups in the detection evidence panel head */
 .export-group {
   position: relative;
-  padding-right: 1.75rem;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
 }
 .export-group .info-pop {
-  top: 0.35rem;
+  position: static;
+}
+.export-group .field-input {
+  width: auto;
+  max-width: min(18rem, 100%);
+}
+#detection-evidence .panel-head {
+  align-items: center;
+}
+#detection-evidence .panel-head .form-actions {
+  margin-top: 0;
+  gap: 0.6rem 1.25rem;
 }
 .info-pop > summary {
   align-items: center;
