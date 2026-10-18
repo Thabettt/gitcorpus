@@ -66,9 +66,10 @@
       <details class="info-pop">
         <summary aria-label="What the windowed commit ratio means">i</summary>
         <div class="info-pop-body">
-          <p>The share of the last {{ detection.windows.commits }} commits on the default branch attributed to a detected agent — via author/committer identity match, a matching commit trailer, or PR→commit propagation (a detected PR tagging its author’s commits).</p>
-          <p>Levels, per the papers: experimental &lt;1% · limited 1–5% · consistent 5–20% · pervasive &gt;20%.</p>
-          <p>Windowed, not full history: older adoption is invisible. Merge/revert/version-bump noise and generic CI bots are excluded from both sides, so treat it as a conservative lower bound.</p>
+          <p>“How much of this repo’s recent work was written with a coding agent?” For each repo we look at the latest {{ detection.windows.commits }} commits on its default branch, and count a commit as agent-assisted when its author, its message (an agent co-author or signature line), or the pull request behind it points to a detected agent.</p>
+          <p>Example: a repo where 12 of its counted commits are flagged shows 12%. The number on this card pools every repo in the run — all flagged commits ÷ all counted commits — so repos with more commits count more; it is not the average of the per-repo percentages.</p>
+          <p>Housekeeping commits (merges, reverts, version bumps) and CI bots are skipped on both sides, and only the latest {{ detection.windows.commits }} commits are seen: older history and quietly-used agents stay invisible, so treat this as a conservative lower bound.</p>
+          <p>Levels used by the papers: experimental &lt;1% · limited 1–5% · consistent 5–20% · pervasive &gt;20%.</p>
         </div>
       </details>
       <h3>Windowed commit ratio</h3><p>{{ detection.ratio_label }}{% if detection.summary.adoption_level %} <span class="muted">{{ detection.summary.adoption_level }}</span>{% endif %}</p>
