@@ -6,6 +6,9 @@ import os
 def main() -> None:
     import uvicorn
 
+    from lib.procguard import contain_process_tree
+
+    contain_process_tree()
     url = os.environ.get("DATABASE_URL")
     if url:
         from sqlalchemy import create_engine

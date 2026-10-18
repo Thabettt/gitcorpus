@@ -43,6 +43,7 @@ from detect.packs import Pack
 from enrich.cloner import LOW_DISK_THRESHOLD_MB, MARKER_NAME, free_disk_mb
 from lib import cancellation, progress
 from lib.cancellation import RunCancelled
+from lib.procguard import contain_process_tree
 from serve.executor import RunPayload, RunPayloadItem
 from store.models import DetectionEvidence, RunItem
 
@@ -377,6 +378,7 @@ def _run_git_detection_processes(
 ) -> tuple[list[_RetainedScan], list[str], bool, bool]:
     processes = max(2, cfg.processes)
     threads = max(1, cfg.workers // processes)
+    contain_process_tree()
     mp_context = multiprocessing.get_context("spawn")
     out_queue = mp_context.Queue()
     cancel_event = mp_context.Event()
