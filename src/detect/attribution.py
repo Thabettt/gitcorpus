@@ -20,6 +20,68 @@ _NOISE_PATTERNS = (
     re.compile(r"\[skip ci\]", re.IGNORECASE),
 )
 
+AMBIGUOUS = frozenset(
+    {
+        "aider",
+        "claude",
+        "copilot",
+        "cline",
+        "junie",
+        "cursor",
+        "coderabbit",
+        "chatgpt",
+        "roomote",
+        "codex",
+    }
+)
+
+_BOUNDARY = r"(?<![A-Za-z0-9_-])(?:{})(?![A-Za-z0-9_-])"
+
+_LINE_PREFIX = r"[ \t>*•\-\U0001F300-\U0001FAFF\u2600-\u27BF]*"
+
+_TRAILER_TOKENS = (
+    "co-authored-by|authored-by|author|committer|signed-off-by|assisted-by|"
+    "co-developed-by|developed-by|generated-by|written-by|ai-assisted"
+)
+_TRAILER_LINE = re.compile(rf"^{_LINE_PREFIX}(?:{_TRAILER_TOKENS}):[ \t]*(.*)$", re.IGNORECASE)
+
+_FOOTER_VERBS = (
+    "generated|created|written|made|built|assisted|co-authored|authored|powered|developed"
+)
+_FOOTER_LINE = re.compile(
+    rf"^{_LINE_PREFIX}(?:{_FOOTER_VERBS})\b.{{0,40}}?\b(?:with|by|using)\b", re.IGNORECASE
+)
+
+_GENERIC_TOKEN_LINE = re.compile(rf"^{_LINE_PREFIX}([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
+_PROSE_TOKENS = frozenset(
+    {"note", "warning", "fix", "fixes", "todo", "example", "update", "changes"}
+)
+
+
+def is_ambiguous(pattern: str) -> bool:
+    return pattern.lower() in AMBIGUOUS
+
+
+def boundary_wrap(pattern: str) -> str:
+    return _BOUNDARY.format(pattern)
+
+
+def _trailer_lines(message: str) -> list[str]:
+    lines = message.split("\n")
+    last_blank = -1
+    for index, line in enumerate(lines):
+        if not line.strip():
+            last_blank = index
+    extracts: list[str] = []
+    for index, line in enumerate(lines):
+        if _TRAILER_LINE.match(line) or _FOOTER_LINE.match(line):
+            extracts.append(line)
+        elif index > last_blank:
+            token = _GENERIC_TOKEN_LINE.match(line)
+            if token is not None and token.group(1).lower() not in _PROSE_TOKENS:
+                extracts.append(line)
+    return extracts
+
 
 @dataclass(frozen=True)
 class Hit:
@@ -36,6 +98,10 @@ class ChannelRegex:
 
 def redact_emails(text: str) -> str:
     return _EMAIL.sub("<email>", text)
+
+
+def _snippet(text: str, start: int, end: int) -> str:
+    return redact_emails(text[max(0, start - 30) : end + 70])[:100]
 
 
 def is_noise_commit(message: str) -> bool:
@@ -65,7 +131,12 @@ def _selected(patterns: Sequence[Pattern], agents: frozenset[str] | None) -> tup
     return tuple(pattern for pattern in patterns if pattern.agent in agents)
 
 
-def build_channel_regex(patterns: Sequence[Pattern], *, is_files: bool = False) -> ChannelRegex:
+def build_channel_regex(
+    patterns: Sequence[Pattern],
+    *,
+    is_files: bool = False,
+    is_authors: bool = False,
+) -> ChannelRegex:
     groups: dict[str, list[str]] = {}
     names: dict[str, str] = {}
     for pattern in patterns:
@@ -77,11 +148,14 @@ def build_channel_regex(patterns: Sequence[Pattern], *, is_files: bool = False) 
                 raw = raw.replace(".", "\\.")
             if not raw.startswith("(?:^|/)") and not raw.startswith("^"):
                 raw = "(?:^|/)" + raw
+        if is_authors and is_ambiguous(raw):
+            raw = boundary_wrap(raw)
         groups.setdefault(name, []).append(raw)
     if not groups:
         return ChannelRegex(regex=None, names={})
     parts = [f"(?P<{name}>{'|'.join(pats)})" for name, pats in groups.items()]
-    return ChannelRegex(regex=re.compile("|".join(parts)), names=names)
+    flags = re.IGNORECASE if is_authors else 0
+    return ChannelRegex(regex=re.compile("|".join(parts), flags), names=names)
 
 
 _MATCHER_CACHE: dict[str, dict[str, ChannelRegex]] = {}
@@ -101,9 +175,14 @@ def matchers_for(pack: Pack, agents: frozenset[str] | None = None) -> dict[str, 
     key = _cache_key(pack, agents)
     cached = _MATCHER_CACHE.get(key)
     if cached is None:
+        author_patterns = _selected(pack.authors, agents)
         cached = {
             "file": build_channel_regex(_selected(pack.files, agents), is_files=True),
-            "author": build_channel_regex(_selected(pack.authors, agents)),
+            "author": build_channel_regex(author_patterns, is_authors=True),
+            "author_email": build_channel_regex(
+                tuple(pattern for pattern in author_patterns if "@" in pattern.pattern),
+                is_authors=True,
+            ),
             "branch": build_channel_regex(_selected(pack.branches, agents)),
             "label": build_channel_regex(_selected(pack.labels, agents)),
             "bot": build_channel_regex(pack.bots),
@@ -216,25 +295,45 @@ def match_bots(
 def match_commit_messages(
     pack: Pack, messages: Iterable[tuple[str, str]], agents: frozenset[str] | None = None
 ) -> list[Hit]:
-    channel = matchers_for(pack, agents)["author"]
+    channels = matchers_for(pack, agents)
+    channel = channels["author"]
     if channel.regex is None:
         return []
+    email_channel = channels["author_email"]
     hits: list[Hit] = []
+    seen: set[tuple[str, str]] = set()
     for commit, message in messages:
         if not message or is_noise_commit(message):
             continue
-        for match in channel.regex.finditer(message):
-            if match.lastgroup is None:
-                continue
-            window = message[max(0, match.start() - 30) : match.end() + 70]
-            snippet = redact_emails(window)[:100]
-            hits.append(
-                Hit(
-                    channel.names[match.lastgroup],
-                    "commit_trailer",
-                    {"commit": commit, "snippet": snippet},
+        extracts = _trailer_lines(message)
+        has_email = "@" in message
+        if not extracts and not has_email:
+            continue
+        snippets: dict[str, str] = {}
+        tier1_email = False
+        for line in extracts:
+            for match in channel.regex.finditer(line):
+                if match.lastgroup is None:
+                    continue
+                if "@" in match.group():
+                    tier1_email = True
+                snippets.setdefault(
+                    channel.names[match.lastgroup], _snippet(line, match.start(), match.end())
                 )
-            )
+        if has_email and not tier1_email and email_channel.regex is not None:
+            for match in email_channel.regex.finditer(message):
+                if match.lastgroup is None:
+                    continue
+                agent = email_channel.names[match.lastgroup]
+                if agent in snippets:
+                    continue
+                snippets[agent] = _snippet(message, match.start(), match.end())
+        for agent, snippet in snippets.items():
+            key = (commit, agent)
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(Hit(agent, "commit_trailer", {"commit": commit, "snippet": snippet}))
     return dedupe_hits(hits)
 
 

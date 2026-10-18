@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from detect.attribution import (
+    AMBIGUOUS,
     CODEX_PR_BODY_MARKER,
     Hit,
     adoption_level,
     build_channel_regex,
     clear_matcher_cache,
     dedupe_hits,
+    is_ambiguous,
     is_noise_commit,
     match_author_identities,
     match_branches,
@@ -19,7 +23,7 @@ from detect.attribution import (
     propagate_pr_commits,
     redact_emails,
 )
-from detect.packs import Pack, Pattern
+from detect.packs import Pack, Pattern, load_pack_file
 from enrich.trees_first import FilePresence
 
 PACK = Pack(
@@ -41,6 +45,9 @@ PACK = Pack(
     generic_weights={"AGENTS.md": 0.3},
     exclusions=frozenset({"CONVENTIONS.md"}),
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+PACK_2026_10_19 = load_pack_file(ROOT / "packs" / "2026-10-19.json")
 
 
 def presence(paths, *, source="tree"):
@@ -199,3 +206,109 @@ def test_dedupe_collapses_identical_hits():
         Hit("Claude Code", "file", {"path": "CLAUDE.md"}),
     ]
     assert dedupe_hits(hits) == [hits[0]]
+
+
+def test_ambiguous_membership_is_case_insensitive():
+    assert AMBIGUOUS == frozenset(
+        {
+            "aider",
+            "claude",
+            "copilot",
+            "cline",
+            "junie",
+            "cursor",
+            "coderabbit",
+            "chatgpt",
+            "roomote",
+            "codex",
+        }
+    )
+    assert is_ambiguous("Cursor") and is_ambiguous("cursor")
+    assert not is_ambiguous("cursoragent")
+
+
+def test_commit_message_prose_traps_do_not_match():
+    hits = match_commit_messages(
+        PACK_2026_10_19,
+        [
+            ("t1", "fix: push declined due to branch protection"),
+            ("t2", "refactor: rename assoc_cursor to cursor_id"),
+            ("t3", "refactor(aider): move the aider launcher"),
+            ("t4", "fix: raider subsystem crash"),
+        ],
+    )
+    assert hits == []
+
+
+def test_commit_messages_case_insensitive_trailers_match():
+    cases = [
+        ("Co-authored-by: Cursor", "Cursor"),
+        ("Generated with Cursor", "Cursor"),
+        ("Generated with CodeRabbit", "Coderabbit"),
+        ("Generated with Junie", "Junie"),
+        ("Generated with Roomote", "Roo Code"),
+        ("Built with Aider", "Aider"),
+        ("Generated with Cline", "Cline"),
+        ("generated with claude code", "Claude Code"),
+        ("Generated with Codex", "Codex"),
+        ("Co-authored-by: factory-droid[bot]", "Factory Droid"),
+    ]
+    for index, (message, agent) in enumerate(cases):
+        hits = match_commit_messages(PACK_2026_10_19, [(f"c{index}", message)])
+        assert [(h.agent, h.channel) for h in hits] == [(agent, "commit_trailer")], message
+
+
+def test_commit_message_footer_in_second_to_last_paragraph_matches():
+    message = (
+        "msg\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n"
+        "Co-Authored-By: Claude <noreply@anthropic.com>"
+    )
+    hits = match_commit_messages(PACK_2026_10_19, [("c1", message)])
+    assert [(h.agent, h.channel) for h in hits] == [("Claude Code", "commit_trailer")]
+
+
+def test_quoted_and_bulleted_footer_lines_match():
+    hits = match_commit_messages(
+        PACK_2026_10_19,
+        [("c1", "> Co-authored-by: Cursor"), ("c2", "- Generated with Aider")],
+    )
+    assert [(h.agent, h.evidence["commit"]) for h in hits] == [("Cursor", "c1"), ("Aider", "c2")]
+
+
+def test_human_name_in_a_trailer_value_does_not_match_claude():
+    hits = match_commit_messages(
+        PACK_2026_10_19, [("c1", "Co-authored-by: Jean-Claude Van Damme <jc@x.com>")]
+    )
+    assert hits == []
+
+
+def test_commit_message_email_only_salvage_matches():
+    hits = match_commit_messages(
+        PACK_2026_10_19, [("c1", "contact noreply@anthropic.com for help")]
+    )
+    assert [(h.agent, h.channel) for h in hits] == [("Claude Code", "commit_trailer")]
+    assert "<email>" in hits[0].evidence["snippet"]
+    assert "noreply@anthropic.com" not in str(hits[0].evidence)
+
+
+def test_generic_token_in_prose_does_not_match():
+    hits = match_commit_messages(PACK_2026_10_19, [("c1", "Note: cursor position was wrong")])
+    assert hits == []
+
+
+def test_commit_message_prefers_the_tier1_snippet():
+    message = "Generated with Cursor\n\ncontact cursoragent@cursor.com for help"
+    hits = match_commit_messages(PACK_2026_10_19, [("c1", message)])
+    assert [(h.agent, h.evidence["snippet"]) for h in hits] == [("Cursor", "Generated with Cursor")]
+
+
+def test_commit_message_emits_at_most_one_hit_per_commit_and_agent():
+    message = (
+        "feat: x\n\n"
+        "Generated with Cursor\n\n"
+        "Co-authored-by: Cursor <cursoragent@cursor.com>\n"
+        "Co-authored-by: Cursor"
+    )
+    hits = match_commit_messages(PACK_2026_10_19, [("c1", message), ("c1", message)])
+    assert [(h.agent, h.channel) for h in hits] == [("Cursor", "commit_trailer")]
