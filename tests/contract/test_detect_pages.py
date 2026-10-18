@@ -412,7 +412,7 @@ def test_detections_export_renders_flat_evidence_csv(clean):
     assert response.headers["content-type"].startswith("text/csv")
     assert response.headers.get("x-gitcorpus-regenerated") == "true"
     assert (
-        f'filename="gitcorpus-detect-{detect_id}-evidence.csv"'
+        f'filename="gitcorpus-detect-{detect_id}-test-pack-evidence.csv"'
         in response.headers["content-disposition"]
     )
     assert response.content[:3] == b"\xef\xbb\xbf"
@@ -428,9 +428,9 @@ def test_detections_export_renders_flat_evidence_csv(clean):
     assert len(exported) == stored == len(rows)
     file_row = next(row for row in exported if row["channel"] == "file")
     assert file_row["full_name"] == "octo/one"
-    assert file_row["run_id"] == str(detect_id)
+    assert "run_id" not in file_row
+    assert "pack_version" not in file_row
     assert file_row["agent"] == "Claude Code"
-    assert file_row["pack_version"] == "test-pack"
     assert file_row["path"] == "CLAUDE.md"
     assert file_row["path_source"] == "tree"
     assert file_row["file_size"] == "12"
@@ -567,7 +567,7 @@ def test_detect_repo_export_has_detection_rollup_columns(clean):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
     assert (
-        f'filename="gitcorpus-detect-{detect_id}-repos.csv"'
+        f'filename="gitcorpus-detect-{detect_id}-test-pack-repos.csv"'
         in response.headers["content-disposition"]
     )
     assert response.content[:3] == b"\xef\xbb\xbf"
@@ -589,6 +589,164 @@ def test_detect_repo_export_has_detection_rollup_columns(clean):
     assert row["commit_trailer_rows"] == "0"
     assert row["unavailable"] == "false"
     assert row["adoption_level"] == "pervasive"
+
+
+def test_detect_repo_export_handles_signal_less_repos(clean):
+    from serve.runs import DETECT_REPO_CSV_HEADER
+
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    rows = [
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "file",
+            "evidence": {"path": "CLAUDE.md"},
+        },
+        {
+            "repo": 3,
+            "agent": "Codex",
+            "channel": "file",
+            "evidence": {"path": "AGENTS.md"},
+        },
+    ]
+    detect_id = seed_detect_run_with_evidence(clean, source, rows)
+    client = make_client(clean)
+    body = client.get(f"/runs/{detect_id}/export?format=csv").content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(body))
+    assert reader.fieldnames == DETECT_REPO_CSV_HEADER
+    by_id = {row["repo_id"]: row for row in reader}
+    assert set(by_id) == {"1", "2", "3"}
+    assert by_id["2"]["agents"] == ""
+    assert by_id["2"]["has_signal"] == "false"
+    assert by_id["2"]["adoption_level"] == "none"
+    assert by_id["1"]["agents"] == "Claude Code"
+    assert by_id["3"]["agents"] == "Codex"
+
+
+def test_detect_exports_resolve_imported_placeholder_repo_ids(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES"
+                "  (-9, 'import:octo/imported', 'octo/imported', 1, 'imported', 'public'),"
+                "  (-8, 'import:octo/ghost', 'octo/ghost', 1, 'ghost', 'public'),"
+                "  (555555, 'R_555555', 'old/imported', 1, 'imported', 'public')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO run_items (run_id, repo_id, full_name)"
+                " VALUES (:run, 555555, 'octo/imported')"
+            ),
+            {"run": source},
+        )
+        detect_id = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version, status, kind,"
+                " source_run_id, finished_at)"
+                " VALUES ('detect-import', CAST(:spec AS jsonb), '2022-11-28', 'done', 'detect',"
+                " :src, now()) RETURNING id"
+            ),
+            {
+                "src": source,
+                "spec": json.dumps(
+                    {
+                        "version": 1,
+                        "kind": "detect",
+                        "source_run_id": source,
+                        "pack_version": "test-pack",
+                        "agents": None,
+                        "channels": ["file"],
+                        "limit": None,
+                        "windows": {"commits": 100, "prs": 100, "issues": 100},
+                    }
+                ),
+            },
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers, detection)"
+                " VALUES"
+                " (:run, -9, 'octo/imported', 5,"
+                '  \'{"agents": ["Claude Code"], "channels": {"file": "ok"},'
+                '    "unavailable": false, "first_signal_at": null, "commit_ratio": null,'
+                '    "adoption_level": "experimental", "notes": []}\'::jsonb),'
+                " (:run, -8, 'octo/ghost', 3,"
+                '  \'{"agents": [], "channels": {}, "unavailable": false,'
+                '    "first_signal_at": null, "commit_ratio": null,'
+                '    "adoption_level": "none", "notes": []}\'::jsonb)'
+            ),
+            {"run": detect_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence,"
+                " pack_version) VALUES"
+                " (:run, -9, 'Claude Code', 'file', '{\"path\": \"CLAUDE.md\"}'::jsonb,"
+                "  'test-pack'),"
+                " (:run, -8, 'Claude Code', 'file', '{\"path\": \"AGENTS.md\"}'::jsonb,"
+                "  'test-pack')"
+            ),
+            {"run": detect_id},
+        )
+    client = make_client(clean)
+    body = client.get(f"/runs/{detect_id}/export?format=detections").content.decode("utf-8-sig")
+    by_name = {row["full_name"]: row for row in csv.DictReader(io.StringIO(body))}
+    assert by_name["octo/imported"]["repo_id"] == "555555"
+    assert by_name["octo/ghost"]["repo_id"] == "-8"
+    items = client.get(f"/runs/{detect_id}/export?format=detections-json").json()
+    by_name = {item["full_name"]: item for item in items}
+    assert by_name["octo/imported"]["repo_id"] == 555555
+    assert by_name["octo/ghost"]["repo_id"] == -8
+    repos_body = client.get(f"/runs/{detect_id}/export?format=csv").content.decode("utf-8-sig")
+    repos = {row["full_name"]: row for row in csv.DictReader(io.StringIO(repos_body))}
+    assert repos["octo/imported"]["repo_id"] == "555555"
+    assert repos["octo/ghost"]["repo_id"] == "-8"
+    repos_items = client.get(f"/runs/{detect_id}/export?format=json").json()["items"]
+    repos_by_name = {item["full_name"]: item for item in repos_items}
+    assert repos_by_name["octo/imported"]["repo_id"] == 555555
+    assert repos_by_name["octo/ghost"]["repo_id"] == -8
+
+
+def test_detect_repo_export_backfills_metadata_from_repos_when_the_run_lacks_it(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    with clean.connect() as connection:
+        stored = connection.scalar(
+            text("SELECT language FROM run_items WHERE run_id = :run"), {"run": detect_id}
+        )
+    assert stored is None
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE repos SET language = 'Rust', license_spdx = 'MIT',"
+                " pushed_at = '2025-12-30T12:00:00Z', archived = false WHERE id = 1"
+            )
+        )
+        connection.execute(
+            text("UPDATE owners SET country_iso = 'DE', geo_confidence = 'name' WHERE id = 1")
+        )
+    client = make_client(clean)
+    body = client.get(f"/runs/{detect_id}/export?format=csv").content.decode("utf-8-sig")
+    row = next(csv.DictReader(io.StringIO(body)))
+    assert row["language"] == "Rust"
+    assert row["license_spdx"] == "MIT"
+    assert row["pushed_at"] == "2025-12-30T12:00:00Z"
+    assert row["archived"] == "false"
+    assert row["country_iso"] == "DE"
+    assert row["geo_confidence"] == "name"
+    item = client.get(f"/runs/{detect_id}/export?format=json").json()["items"][0]
+    assert item["language"] == "Rust"
+    assert item["license_spdx"] == "MIT"
+    assert item["pushed_at"] == "2025-12-30T12:00:00Z"
+    assert item["archived"] is False
+    assert item["country_iso"] == "DE"
+    assert item["geo_confidence"] == "name"
 
 
 def test_detect_json_export_includes_detection_rollup(clean):
@@ -695,7 +853,7 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
     assert response.headers["content-type"].startswith("application/json")
     assert response.headers.get("x-gitcorpus-regenerated") == "true"
     assert (
-        f'filename="gitcorpus-detect-{detect_id}-evidence.json"'
+        f'filename="gitcorpus-detect-{detect_id}-test-pack-evidence.json"'
         in response.headers["content-disposition"]
     )
     payload = json.loads(response.text)
@@ -708,21 +866,17 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
     assert len(payload) == stored == len(rows)
     first = payload[0]
     assert set(first) == {
-        "run_id",
         "repo_id",
         "full_name",
         "agent",
         "channel",
-        "pack_version",
         "detected_at",
         "evidence",
     }
-    assert first["run_id"] == detect_id
     assert first["repo_id"] == 1
     assert first["full_name"] == "octo/one"
     assert first["agent"] == "Claude Code"
     assert first["channel"] == "file"
-    assert first["pack_version"] == "test-pack"
     assert first["detected_at"].endswith("Z")
     assert first["evidence"] == {"path": "CLAUDE.md", "size": 12}
     trailer = next(item for item in payload if item["channel"] == "commit_trailer")
@@ -747,7 +901,7 @@ def test_detections_export_streams_bounded_batches(clean):
     detect_id = seed_detect_run_with_evidence(clean, source, rows)
     chunks = list(_detections_chunks(clean, detect_id, batch_rows=2))
     assert chunks[0].startswith(b"\xef\xbb\xbf")
-    assert chunks[0].decode("utf-8-sig").startswith("run_id,")
+    assert chunks[0].decode("utf-8-sig").startswith("repo_id,")
     sizes = [
         len([line for line in chunk.decode("utf-8").splitlines() if line]) for chunk in chunks[1:]
     ]
@@ -775,7 +929,7 @@ def test_detections_json_export_streams_bounded_batches(clean):
     assert chunks[0] == b"["
     assert chunks[-1] == b"]"
     partitions = chunks[1:-1]
-    assert [part.count(b'"run_id"') for part in partitions] == [2, 2, 1]
+    assert [part.count(b'"repo_id"') for part in partitions] == [2, 2, 1]
     assert partitions[0].startswith(b"{")
     assert all(part.startswith(b",") for part in partitions[1:])
     payload = json.loads(b"".join(chunks).decode("utf-8"))

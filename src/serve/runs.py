@@ -4,10 +4,11 @@ import csv
 import io
 import json
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,7 +31,7 @@ from enrich.cloner import (
 )
 from lib.deadlines import clone_timeout_seconds
 from serve.executor import _CSV_HEADER, EVIDENCE_CSV_HEADER, _csv_cell, evidence_csv_row
-from store.models import Repo, RunItem, Runs
+from store.models import Owner, Repo, RunItem, Runs
 
 _MEDIA_TYPES = {
     "json": "application/json",
@@ -124,30 +125,51 @@ def _row_for_run(engine: Engine, run_id: int) -> RowMapping:
     return row
 
 
-def _item_rows(engine: Engine, run_id: int) -> list[RowMapping]:
-    with engine.connect() as connection:
-        return list(
-            connection.execute(
-                select(
-                    RunItem.repo_id,
-                    RunItem.full_name,
-                    RunItem.stargazers,
-                    RunItem.pushed_at,
-                    RunItem.archived,
-                    RunItem.language,
-                    RunItem.license_spdx,
-                    RunItem.country_iso,
-                    RunItem.geo_confidence,
-                    RunItem.virtuals,
-                    RunItem.detection,
-                )
-                .where(RunItem.run_id == run_id)
-                .order_by(RunItem.stargazers.desc().nullslast(), RunItem.repo_id)
-            ).mappings()
+_SNAPSHOT_COLUMNS = (
+    ("pushed_at", RunItem.pushed_at, Repo.pushed_at),
+    ("archived", RunItem.archived, Repo.archived),
+    ("language", RunItem.language, Repo.language),
+    ("license_spdx", RunItem.license_spdx, Repo.license_spdx),
+    ("country_iso", RunItem.country_iso, Owner.country_iso),
+    ("geo_confidence", RunItem.geo_confidence, Owner.geo_confidence),
+)
+
+
+def _item_rows(
+    engine: Engine, run_id: int, *, backfill_metadata: bool = False
+) -> list[Mapping[str, object]]:
+    # Detection runs only snapshot repo_id/full_name/stargazers in run_items;
+    # join the repos (and owners) tables so their exported corpus carries the
+    # full metadata. Find-run exports keep their run-time snapshot untouched:
+    # the stored columns are authoritative even where they are null.
+    columns = [RunItem.repo_id, RunItem.full_name, RunItem.stargazers]
+    for name, item_column, live_column in _SNAPSHOT_COLUMNS:
+        column = func.coalesce(item_column, live_column) if backfill_metadata else item_column
+        columns.append(column.label(name))
+    columns.extend((RunItem.virtuals, RunItem.detection))
+    statement = select(*columns).select_from(RunItem)
+    if backfill_metadata:
+        statement = statement.outerjoin(Repo, Repo.id == RunItem.repo_id).outerjoin(
+            Owner, Owner.id == Repo.owner_id
         )
+    statement = statement.where(RunItem.run_id == run_id).order_by(
+        RunItem.stargazers.desc().nullslast(), RunItem.repo_id
+    )
+    with engine.connect() as connection:
+        rows = list(connection.execute(statement).mappings())
+    if not backfill_metadata:
+        return rows
+    resolved = _resolved_negative_ids(engine, run_id)
+    return [
+        {
+            **dict(row),
+            "repo_id": _resolved_repo_id(row["repo_id"], row["full_name"], resolved),
+        }
+        for row in rows
+    ]
 
 
-def _snapshot(row: RowMapping, *, include_detection: bool = False) -> dict:
+def _snapshot(row: Mapping[str, object], *, include_detection: bool = False) -> dict:
     snapshot = {
         "repo_id": row["repo_id"],
         "full_name": row["full_name"],
@@ -195,7 +217,7 @@ def _json_chunks(
         )
     yield b'"items": ['
     first = True
-    for row in _item_rows(engine, run_id):
+    for row in _item_rows(engine, run_id, backfill_metadata=include_detection):
         chunk = json.dumps(_snapshot(row, include_detection=include_detection), ensure_ascii=False)
         yield chunk.encode() if first else b"," + chunk.encode()
         first = False
@@ -226,22 +248,55 @@ def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
 
 
 _EVIDENCE_STREAM_SQL = text(
-    "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version,"
-    " e.run_id, e.detected_at"
+    "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.detected_at"
     " FROM detection_evidence e"
     " LEFT JOIN run_items i ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
     " WHERE e.run_id = :run"
     " ORDER BY e.repo_id, e.agent, e.channel, e.id"
 )
 
+
+def _resolved_negative_ids(engine: Engine, run_id: int) -> dict[str, int]:
+    """Map import placeholder ids (negative) to the real repo id when known.
+
+    CSV imports create repos with negative placeholder ids; later runs that
+    hydrated the same repository recorded its real GitHub id in their run
+    items. Resolve by full name for the placeholders of this run only;
+    placeholders with no known real id are left alone.
+    """
+    statement = text(
+        "SELECT neg.full_name, max(pos.repo_id)"
+        " FROM ("
+        "   SELECT DISTINCT full_name FROM run_items"
+        "   WHERE run_id = :run AND repo_id < 0"
+        " ) neg"
+        " JOIN run_items pos ON pos.full_name = neg.full_name AND pos.repo_id > 0"
+        " GROUP BY neg.full_name"
+    )
+    with engine.connect() as connection:
+        return {str(row[0]): int(row[1]) for row in connection.execute(statement, {"run": run_id})}
+
+
+def _resolved_repo_id(repo_id: object, full_name: object, resolved: Mapping[str, int]) -> object:
+    if not isinstance(repo_id, int) or repo_id >= 0:
+        return repo_id
+    real = resolved.get(str(full_name)) if full_name is not None else None
+    return real if real is not None else repo_id
+
+
 _DETECT_REPO_STREAM_SQL = text(
-    "SELECT i.repo_id, i.full_name, i.stargazers, i.pushed_at, i.archived, i.language,"
-    " i.license_spdx, i.country_iso, i.geo_confidence, i.detection,"
+    "SELECT i.repo_id, i.full_name, i.stargazers,"
+    " COALESCE(i.pushed_at, r.pushed_at), COALESCE(i.archived, r.archived),"
+    " COALESCE(i.language, r.language), COALESCE(i.license_spdx, r.license_spdx),"
+    " COALESCE(i.country_iso, o.country_iso), COALESCE(i.geo_confidence, o.geo_confidence),"
+    " i.detection,"
     " COALESCE(c.total_rows, 0), COALESCE(c.signal_rows, 0), COALESCE(c.bot_rows, 0),"
     " COALESCE(c.file_rows, 0), COALESCE(c.author_rows, 0), COALESCE(c.branch_rows, 0),"
     " COALESCE(c.label_rows, 0), COALESCE(c.commit_trailer_rows, 0),"
     " COALESCE(c.pr_metadata_rows, 0), COALESCE(c.issue_rows, 0)"
     " FROM run_items i"
+    " LEFT JOIN repos r ON r.id = i.repo_id"
+    " LEFT JOIN owners o ON o.id = r.owner_id"
     " LEFT JOIN ("
     "   SELECT repo_id,"
     "     count(*) AS total_rows,"
@@ -268,6 +323,7 @@ def _detections_chunks(
     buffer.write("\ufeff")
     csv.writer(buffer).writerow(EVIDENCE_CSV_HEADER)
     yield buffer.getvalue().encode("utf-8")
+    resolved = _resolved_negative_ids(engine, run_id)
     with engine.connect() as connection:
         result = connection.execution_options(stream_results=True).execute(
             _EVIDENCE_STREAM_SQL, {"run": run_id}
@@ -281,28 +337,24 @@ def _detections_chunks(
                     evidence_csv_row(
                         {
                             "full_name": row[0],
-                            "repo_id": row[1],
+                            "repo_id": _resolved_repo_id(row[1], row[0], resolved),
                             "agent": row[2],
                             "channel": row[3],
                             "evidence": row[4],
-                            "pack_version": row[5],
-                            "run_id": row[6],
-                            "detected_at": row[7],
+                            "detected_at": row[5],
                         }
                     )
                 )
             yield buffer.getvalue().encode("utf-8")
 
 
-def _detection_json_object(row) -> dict:
+def _detection_json_object(row, repo_id: object) -> dict:
     return {
-        "run_id": row[6],
-        "repo_id": row[1],
+        "repo_id": repo_id,
         "full_name": row[0],
         "agent": row[2],
         "channel": row[3],
-        "pack_version": row[5],
-        "detected_at": _iso(row[7]),
+        "detected_at": _iso(row[5]),
         "evidence": row[4],
     }
 
@@ -311,6 +363,7 @@ def _detections_json_chunks(
     engine: Engine, run_id: int, *, batch_rows: int = EVIDENCE_BATCH_ROWS
 ) -> Iterator[bytes]:
     yield b"["
+    resolved = _resolved_negative_ids(engine, run_id)
     with engine.connect() as connection:
         result = connection.execution_options(stream_results=True).execute(
             _EVIDENCE_STREAM_SQL, {"run": run_id}
@@ -318,7 +371,11 @@ def _detections_json_chunks(
         first = True
         for partition in result.partitions(max(1, batch_rows)):
             objects = [
-                json.dumps(_detection_json_object(row), ensure_ascii=False) for row in partition
+                json.dumps(
+                    _detection_json_object(row, _resolved_repo_id(row[1], row[0], resolved)),
+                    ensure_ascii=False,
+                )
+                for row in partition
             ]
             if not objects:
                 continue
@@ -328,11 +385,11 @@ def _detections_json_chunks(
     yield b"]"
 
 
-def _detect_repo_cells(row) -> list[str]:
+def _detect_repo_cells(row, resolved_ids: Mapping[str, int]) -> list[str]:
     document = row[9] if isinstance(row[9], dict) else {}
     agents = document.get("agents") or []
     cells = [
-        _csv_cell(row[0]),
+        _csv_cell(_resolved_repo_id(row[0], row[1], resolved_ids)),
         _csv_cell(row[1]),
         _csv_cell(row[2]),
         _csv_cell(_iso(row[3])),
@@ -360,6 +417,7 @@ def _detect_repo_chunks(
     buffer.write("\ufeff")
     csv.writer(buffer).writerow(DETECT_REPO_CSV_HEADER)
     yield buffer.getvalue().encode("utf-8")
+    resolved = _resolved_negative_ids(engine, run_id)
     with engine.connect() as connection:
         result = connection.execution_options(stream_results=True).execute(
             _DETECT_REPO_STREAM_SQL, {"run": run_id}
@@ -369,7 +427,7 @@ def _detect_repo_chunks(
             buffer.truncate(0)
             writer = csv.writer(buffer)
             for row in partition:
-                writer.writerow(_detect_repo_cells(row))
+                writer.writerow(_detect_repo_cells(row, resolved))
             yield buffer.getvalue().encode("utf-8")
 
 
@@ -405,6 +463,23 @@ def export_bundle(
     return _csv_chunks(engine, run_id), _MEDIA_TYPES[format]
 
 
+_FILENAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _pack_segment(run_row: Row) -> str:
+    """`-<pack version>` for detect export filenames, sanitized, when known.
+
+    The evidence exports no longer repeat run_id/pack_version on every row;
+    the filename identifies both instead.
+    """
+    spec = run_row["filter_spec"]
+    pack = spec.get("pack_version") if isinstance(spec, dict) else None
+    if not pack:
+        return ""
+    clean = _FILENAME_UNSAFE.sub("-", str(pack)).strip("-._")
+    return f"-{clean[:40]}" if clean else ""
+
+
 def export_run(
     engine: Engine, run_id: int, *, format: str = "json", runs_root: str = "runs"
 ) -> StreamingResponse:
@@ -417,11 +492,12 @@ def export_run(
         regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
     chunks, media_type = export_bundle(engine, run_id, format=format, runs_root=runs_root)
     if detect:
+        stem = f"gitcorpus-detect-{run_id}{_pack_segment(run_row)}"
         filename = {
-            "detections": f"gitcorpus-detect-{run_id}-evidence.csv",
-            "detections-json": f"gitcorpus-detect-{run_id}-evidence.json",
-            "csv": f"gitcorpus-detect-{run_id}-repos.csv",
-            "json": f"gitcorpus-detect-{run_id}.json",
+            "detections": f"{stem}-evidence.csv",
+            "detections-json": f"{stem}-evidence.json",
+            "csv": f"{stem}-repos.csv",
+            "json": f"{stem}.json",
         }[format]
     else:
         filename = f"gitcorpus-{run_row['filter_hash']}-{run_id}.{format}"

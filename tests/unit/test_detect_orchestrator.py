@@ -647,9 +647,11 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
     from serve.executor import EVIDENCE_CSV_HEADER
 
     assert header == EVIDENCE_CSV_HEADER
+    assert "run_id" not in header
+    assert "pack_version" not in header
     path_cell = rows[0][EVIDENCE_CSV_HEADER.index("path")]
     assert path_cell == "CLAUDE.md"
-    assert rows[0][EVIDENCE_CSV_HEADER.index("run_id")] == str(run_id)
+    assert rows[0][EVIDENCE_CSV_HEADER.index("repo_id")] == "1"
     assert rows[0][EVIDENCE_CSV_HEADER.index("detected_at")]
 
 

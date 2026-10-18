@@ -127,12 +127,10 @@ def _cells(row):
 
 def test_evidence_header_is_the_flat_schema():
     assert executor.EVIDENCE_CSV_HEADER == [
-        "run_id",
         "repo_id",
         "full_name",
         "agent",
         "channel",
-        "pack_version",
         "detected_at",
         "commit_sha",
         "path",

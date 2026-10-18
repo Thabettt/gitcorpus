@@ -232,12 +232,10 @@ def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
 
 
 EVIDENCE_CSV_HEADER = [
-    "run_id",
     "repo_id",
     "full_name",
     "agent",
     "channel",
-    "pack_version",
     "detected_at",
     "commit_sha",
     "path",
@@ -292,12 +290,10 @@ def evidence_csv_row(row: Mapping[str, object]) -> list[str]:
     raw = row.get("evidence")
     evidence: Mapping[str, object] = raw if isinstance(raw, Mapping) else {}
     flat: dict[str, object] = {
-        "run_id": row.get("run_id"),
         "repo_id": row.get("repo_id"),
         "full_name": row.get("full_name"),
         "agent": row.get("agent"),
         "channel": row.get("channel"),
-        "pack_version": row.get("pack_version"),
     }
     for key, name in _FLAT_EVIDENCE_KEYS:
         if key in evidence:
