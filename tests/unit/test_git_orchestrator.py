@@ -884,6 +884,50 @@ def test_per_repo_deletion_does_not_block_the_parent(clean_db, tmp_path, monkeyp
     assert len(removed) >= 3  # two per-repo dirs plus the final run-dir sweep
 
 
+def test_run_git_detection_records_compact_repo_filter_facets(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine, {"kind": "detect"}, api_version="2022-11-28", kind="detect", source_run_id=source_id
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    config = GitScanConfig(depth=100, keep=False, scan_root=str(tmp_path / "clones"), workers=1)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file", "commit_trailer", "branch"})),
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+    with engine.connect() as connection:
+        facets = set(
+            connection.execute(
+                text(
+                    "SELECT repo_id, agent, channel FROM detection_repo_filters"
+                    " WHERE run_id = :run"
+                ),
+                {"run": detect_run},
+            ).all()
+        )
+        expected = set(
+            connection.execute(
+                text(
+                    "SELECT DISTINCT repo_id, agent, channel FROM detection_evidence"
+                    " WHERE run_id = :run"
+                ),
+                {"run": detect_run},
+            ).all()
+        )
+    assert facets == expected
+    assert facets
+
+
 def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_path, monkeypatch):
     engine = clean_db()
     source_id = seed_source(engine)
@@ -921,6 +965,17 @@ def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_pa
     assert len(streamed) == expected > 0
     assert {row["full_name"] for row in streamed} == {"octo/one", "octo/two"}
     sample = streamed[0]
-    assert set(sample) == {"full_name", "repo_id", "agent", "channel", "evidence", "pack_version"}
-    assert isinstance(sample["evidence"], str)
+    assert set(sample) == {
+        "full_name",
+        "repo_id",
+        "agent",
+        "channel",
+        "evidence",
+        "pack_version",
+        "run_id",
+        "detected_at",
+    }
+    assert isinstance(sample["evidence"], dict)
+    assert sample["run_id"] == detect_run
+    assert sample["detected_at"] is not None
     assert payload.items[0].detection["agents"] == ["Claude Code"]

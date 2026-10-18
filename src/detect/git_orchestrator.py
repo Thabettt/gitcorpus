@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import json
 import multiprocessing
 import os
 import queue
@@ -45,7 +44,7 @@ from lib import cancellation, progress
 from lib.cancellation import RunCancelled
 from lib.procguard import contain_process_tree
 from serve.executor import RunPayload, RunPayloadItem
-from store.models import DetectionEvidence, RunItem
+from store.models import DetectionEvidence, DetectionRepoFilter, RunItem
 
 LOCAL_CHANNELS = (
     "file",
@@ -183,9 +182,26 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
         }
         for hit in scan.hits
     ]
+    facets = sorted({(hit.agent, hit.channel) for hit in scan.hits})
     with engine.begin() as connection:
         if rows:
             connection.execute(insert(DetectionEvidence), rows)
+        if facets:
+            connection.execute(
+                pg_insert(DetectionRepoFilter)
+                .values(
+                    [
+                        {
+                            "run_id": run_id,
+                            "repo_id": scan.repo_id,
+                            "agent": agent,
+                            "channel": channel,
+                        }
+                        for agent, channel in facets
+                    ]
+                )
+                .on_conflict_do_nothing()
+            )
         connection.execute(
             pg_insert(RunItem)
             .values(
@@ -230,10 +246,11 @@ def _retain(scan: _RepoScan) -> _RetainedScan:
 
 def _stream_detections(engine: Engine, run_id: int):
     statement = text(
-        "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version"
+        "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version,"
+        " e.run_id, e.detected_at"
         " FROM detection_evidence e JOIN run_items i"
         " ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
-        " WHERE e.run_id = :run ORDER BY e.repo_id, e.agent, e.channel"
+        " WHERE e.run_id = :run ORDER BY e.repo_id, e.agent, e.channel, e.id"
     )
     with engine.connect() as connection:
         rows = connection.execution_options(stream_results=True).execute(statement, {"run": run_id})
@@ -243,8 +260,10 @@ def _stream_detections(engine: Engine, run_id: int):
                 "repo_id": row[1],
                 "agent": row[2],
                 "channel": row[3],
-                "evidence": json.dumps(row[4], sort_keys=True),
+                "evidence": row[4],
                 "pack_version": row[5],
+                "run_id": row[6],
+                "detected_at": row[7],
             }
 
 

@@ -284,6 +284,87 @@ def test_run_detection_checkpoints_run_items_per_repo(clean_db):
     assert rows[0]["detection"]["agents"] == ["Claude Code", "Codex"]
 
 
+def test_run_detection_records_compact_repo_filter_facets(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    seen: list[str] = []
+    queries: list[str] = []
+    deps = make_deps(engine, make_handler(seen, queries))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, agents=["Claude Code", "Codex"])
+    run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+
+    with engine.connect() as connection:
+        facets = set(
+            connection.execute(
+                text(
+                    "SELECT repo_id, agent, channel FROM detection_repo_filters"
+                    " WHERE run_id = :run"
+                ),
+                {"run": run_id},
+            ).all()
+        )
+        expected = set(
+            connection.execute(
+                text(
+                    "SELECT DISTINCT repo_id, agent, channel FROM detection_evidence"
+                    " WHERE run_id = :run"
+                ),
+                {"run": run_id},
+            ).all()
+        )
+    assert facets == expected
+    assert ("Claude Code", "file") in {(agent, channel) for _, agent, channel in facets}
+
+
+def test_reset_run_artifacts_clears_evidence_and_facets(clean_db):
+    from serve.executor import reset_run_artifacts
+
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    seen: list[str] = []
+    deps = make_deps(engine, make_handler(seen, []))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    options = make_options(source_id, agents=["Claude Code"])
+    run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"), {"run": run_id}
+        ).scalar_one()
+        assert connection.execute(
+            text("SELECT count(*) FROM detection_repo_filters WHERE run_id = :run"),
+            {"run": run_id},
+        ).scalar_one()
+    reset_run_artifacts(engine, run_id)
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+                {"run": run_id},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM detection_repo_filters WHERE run_id = :run"),
+                {"run": run_id},
+            ).scalar_one()
+            == 0
+        )
+
+
 def test_run_detection_never_persists_emails(clean_db):
     engine = clean_db()
     source_id = seed_source_run(engine)
@@ -558,8 +639,14 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
     evidence_csv = list(Path(tmp_path).glob(f"*/{run_id}/detections.csv"))
     assert len(evidence_csv) == 1
     with evidence_csv[0].open(newline="", encoding="utf-8") as handle:
-        header = next(csv.reader(handle))
-    assert header == ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+        reader = csv.reader(handle)
+        header = next(reader)
+        rows = list(reader)
+    from serve.executor import EVIDENCE_CSV_HEADER
+
+    assert header == EVIDENCE_CSV_HEADER
+    path_cell = rows[0][EVIDENCE_CSV_HEADER.index("path")]
+    assert path_cell == "CLAUDE.md"
 
 
 def test_summary_contributions_reproduce_batch_summary():

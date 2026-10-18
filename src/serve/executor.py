@@ -207,15 +207,100 @@ def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
             )
 
 
-_DETECTIONS_HEADER = ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+EVIDENCE_CSV_HEADER = [
+    "run_id",
+    "repo_id",
+    "full_name",
+    "agent",
+    "channel",
+    "pack_version",
+    "detected_at",
+    "commit_sha",
+    "path",
+    "path_source",
+    "file_size",
+    "file_empty",
+    "file_generic",
+    "file_weight",
+    "pr_number",
+    "branch_head",
+    "branch_match",
+    "label",
+    "issue_number",
+    "issue_role",
+    "login",
+    "identity_field",
+    "snippet",
+    "propagated",
+    "evidence_json",
+]
+
+_FLAT_EVIDENCE_KEYS = (
+    ("commit", "commit_sha"),
+    ("path", "path"),
+    ("source", "path_source"),
+    ("size", "file_size"),
+    ("empty", "file_empty"),
+    ("generic", "file_generic"),
+    ("weight", "file_weight"),
+    ("pr", "pr_number"),
+    ("head", "branch_head"),
+    ("match", "branch_match"),
+    ("label", "label"),
+    ("number", "issue_number"),
+    ("role", "issue_role"),
+    ("snippet", "snippet"),
+    ("propagated", "propagated"),
+)
+
+
+def _evidence_moment(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return str(value)
+
+
+def evidence_csv_row(row: Mapping[str, object]) -> list[str]:
+    raw = row.get("evidence")
+    evidence: Mapping[str, object] = raw if isinstance(raw, Mapping) else {}
+    flat: dict[str, object] = {
+        "run_id": row.get("run_id"),
+        "repo_id": row.get("repo_id"),
+        "full_name": row.get("full_name"),
+        "agent": row.get("agent"),
+        "channel": row.get("channel"),
+        "pack_version": row.get("pack_version"),
+    }
+    for key, name in _FLAT_EVIDENCE_KEYS:
+        if key in evidence:
+            flat[name] = evidence[key]
+    if "login" in evidence:
+        flat["login"] = evidence["login"]
+    elif "author" in evidence:
+        flat["login"] = evidence["author"]
+    if "field" in evidence:
+        flat["identity_field"] = evidence["field"]
+    cells = []
+    for name in EVIDENCE_CSV_HEADER:
+        if name == "detected_at":
+            cells.append(_evidence_moment(row.get("detected_at")))
+        elif name == "evidence_json":
+            cells.append(json.dumps(evidence, sort_keys=True))
+        else:
+            cells.append(_csv_cell(flat.get(name)))
+    return cells
 
 
 def _write_detections(path: Path, rows: Iterable[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(_DETECTIONS_HEADER)
+        writer.writerow(EVIDENCE_CSV_HEADER)
         for row in rows:
-            writer.writerow([_csv_cell(row.get(name)) for name in _DETECTIONS_HEADER])
+            writer.writerow(evidence_csv_row(row))
 
 
 def _write_bundle(run: dict, payload: RunPayload, runs_root: str) -> str:
@@ -425,6 +510,11 @@ def reset_run_artifacts(engine: Engine, run_id: int) -> None:
         if connection.scalar(text("SELECT to_regclass('detection_evidence')")) is not None:
             connection.execute(
                 text("DELETE FROM detection_evidence WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+        if connection.scalar(text("SELECT to_regclass('detection_repo_filters')")) is not None:
+            connection.execute(
+                text("DELETE FROM detection_repo_filters WHERE run_id = :run_id"),
                 {"run_id": run_id},
             )
 

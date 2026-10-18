@@ -99,9 +99,13 @@
   <div class="panel-head">
     <h2>Per-repo evidence</h2>
     <div class="form-actions">
+      {% if run.polling %}
+      <p class="muted">Exports unlock when the run finishes.</p>
+      {% else %}
       <a id="detection-export" class="button" href="/runs/{{ run.id }}/export?format=detections">Export evidence CSV</a>
       <a class="button" href="/runs/{{ run.id }}/export?format=json">Export JSON</a>
       <a class="button" href="/runs/{{ run.id }}/export?format=csv">Export CSV</a>
+      {% endif %}
     </div>
   </div>
   {% if detection.summary.unavailable_reasons %}
@@ -117,28 +121,29 @@
     </div>
   </details>
   {% endif %}
-  <div id="detection-filters" class="filter-row">
+  <form id="detection-filters" class="filter-row" method="get" action="/detections/{{ run.id }}">
     <label class="field" for="detection-filter-signal">
       <span class="field-label">Has signal</span>
-      <input type="checkbox" id="detection-filter-signal">
+      <input type="checkbox" id="detection-filter-signal" name="signal" value="1"{{ ' checked' if detection.filters.signal }}>
     </label>
     <label class="field" for="detection-filter-agent">
       <span class="field-label">Agent</span>
-      <select class="field-input" id="detection-filter-agent">
+      <select class="field-input" id="detection-filter-agent" name="agent">
         <option value="">All agents</option>
-        {% for agent in detection.filter_agents %}<option value="{{ agent }}">{{ agent }}</option>{% endfor %}
+        {% for agent in detection.filter_agents %}<option value="{{ agent }}"{{ ' selected' if agent == detection.filters.agent }}>{{ agent }}</option>{% endfor %}
       </select>
     </label>
     <label class="field" for="detection-filter-channel">
       <span class="field-label">Channel</span>
-      <select class="field-input" id="detection-filter-channel">
+      <select class="field-input" id="detection-filter-channel" name="channel">
         <option value="">All channels</option>
-        {% for channel in detection.filter_channels %}<option value="{{ channel }}">{{ channel }}</option>{% endfor %}
+        {% for channel in detection.filter_channels %}<option value="{{ channel }}"{{ ' selected' if channel == detection.filters.channel }}>{{ channel }}</option>{% endfor %}
       </select>
     </label>
-  </div>
+    <button class="button" type="submit" id="detection-filter-apply">Filter</button>
+  </form>
   {% for repo in detection.repos %}
-  <details class="evidence-repo" id="detection-repo-{{ repo.repo_id }}" data-agents="{{ repo.agents | join('|') }}" data-channels="{{ repo.channel_names | join('|') }}">
+  <details class="evidence-repo" id="detection-repo-{{ repo.repo_id }}">
     <summary>{{ repo.full_name }}{% if repo.agents %} · {{ repo.agents | join(", ") }}{% else %} · no signals{% endif %}{% if repo.unavailable %} <span class="badge incomplete">unavailable</span>{% endif %}</summary>
     <div class="evidence-body">
       {% if repo.notes %}<p class="muted">{{ repo.notes | join("; ") }}</p>{% endif %}
@@ -155,19 +160,20 @@
       <p class="muted">Showing first {{ repo.evidence_shown }} of {{ repo.evidence_total }} evidence rows; the CSV export has every row.</p>{% endif %}
     </div>
   </details>
-  {% endfor %}{% if detection.pages > 1 %}
+  {% endfor %}{% if detection.repos and (detection.pages > 1 or detection.filters.active) %}
   <nav id="detection-pagination" class="pagination" aria-label="Repo pages">
-    {% if detection.page > 1 %}
-    <a id="detection-page-prev" class="button" href="?page={{ detection.page - 1 }}">Previous</a>
+    {% if detection.prev_href %}
+    <a id="detection-page-prev" class="button" href="{{ detection.prev_href }}">Previous</a>
     {% endif %}
     <span id="detection-page-status" class="muted" data-page="{{ detection.page }}" data-pages="{{ detection.pages }}">{{ detection.repos_label }} · page {{ detection.page }} of {{ detection.pages }}</span>
-    {% if detection.page < detection.pages %}
-    <a id="detection-page-next" class="button" href="?page={{ detection.page + 1 }}">Next</a>
+    {% if detection.next_href %}
+    <a id="detection-page-next" class="button" href="{{ detection.next_href }}">Next</a>
     {% endif %}
   </nav>
   {% endif %}
   {% if detection.repos %}
-  <p id="detection-no-matches" class="muted" hidden>No repos match these filters.</p>
+  {% elif detection.filters.active %}
+  <p id="detection-no-matches" class="muted">No repos match these filters.</p>
   {% else %}
   <div class="empty-state"><p>No repos were scanned.</p></div>
   {% endif %}
@@ -175,59 +181,13 @@
 <script>
 (function () {
   "use strict";
-  var signal = document.getElementById("detection-filter-signal");
-  var agent = document.getElementById("detection-filter-agent");
-  var channel = document.getElementById("detection-filter-channel");
-  var empty = document.getElementById("detection-no-matches");
-  if (!signal || !agent || !channel) {
+  var form = document.getElementById("detection-filters");
+  if (!form) {
     return;
   }
-  var repos = Array.prototype.slice.call(
-    document.querySelectorAll("#detection-evidence details.evidence-repo")
-  );
-  function hasSignals(repo) {
-    return repo.querySelector(".evidence-channel") !== null;
-  }
-  function apply() {
-    var wantSignal = signal.checked;
-    var wantAgent = agent.value;
-    var wantChannel = channel.value;
-    var filteringEvidence = wantAgent !== "" || wantChannel !== "";
-    var visible = 0;
-    repos.forEach(function (repo) {
-      var sectionsShown = 0;
-      Array.prototype.forEach.call(
-        repo.querySelectorAll(".evidence-channel"),
-        function (section) {
-          var channelOk =
-            wantChannel === "" || section.getAttribute("data-channel") === wantChannel;
-          var hits = section.querySelectorAll("li");
-          var hitsShown = 0;
-          Array.prototype.forEach.call(hits, function (hit) {
-            var show =
-              channelOk &&
-              (wantAgent === "" || hit.getAttribute("data-agent") === wantAgent);
-            hit.hidden = !show;
-            if (show) hitsShown += 1;
-          });
-          section.hidden = !channelOk || hitsShown === 0;
-          if (!section.hidden) sectionsShown += 1;
-        }
-      );
-      var show;
-      if (filteringEvidence) {
-        show = sectionsShown > 0;
-      } else {
-        show = !wantSignal || hasSignals(repo);
-      }
-      repo.hidden = !show;
-      if (show) visible += 1;
-    });
-    if (empty) empty.hidden = visible > 0;
-  }
-  signal.addEventListener("change", apply);
-  agent.addEventListener("change", apply);
-  channel.addEventListener("change", apply);
+  form.addEventListener("change", function () {
+    form.submit();
+  });
 })();
 </script>
 {% endif %}

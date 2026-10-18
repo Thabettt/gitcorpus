@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextvars
-import json
 from collections.abc import Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -19,7 +18,7 @@ from lib import audit, cancellation, progress
 from lib.cancellation import RunCancelled
 from lib.deadlines import Deadline, request_deadline_seconds
 from serve.executor import RunPayload, RunPayloadItem
-from store.models import DetectionEvidence, Repo, RunItem
+from store.models import DetectionEvidence, DetectionRepoFilter, Repo, RunItem
 
 CHANNELS = ("file", "author", "branch", "label", "bot", "commit_trailer", "pr_metadata", "issue")
 _HISTORY_KEYS = ("author", "commit_trailer", "bot")
@@ -397,9 +396,26 @@ def run_detection(
                     }
                     for hit in scan.hits
                 ]
+                facets = sorted({(hit.agent, hit.channel) for hit in scan.hits})
                 with deps.engine.begin() as connection:
                     if rows:
                         connection.execute(insert(DetectionEvidence), rows)
+                    if facets:
+                        connection.execute(
+                            pg_insert(DetectionRepoFilter)
+                            .values(
+                                [
+                                    {
+                                        "run_id": run_id,
+                                        "repo_id": scan.repo_id,
+                                        "agent": agent,
+                                        "channel": channel,
+                                    }
+                                    for agent, channel in facets
+                                ]
+                            )
+                            .on_conflict_do_nothing()
+                        )
                     connection.execute(
                         pg_insert(RunItem)
                         .values(
@@ -450,7 +466,7 @@ def run_detection(
             "repo_id": scan.repo_id,
             "agent": hit.agent,
             "channel": hit.channel,
-            "evidence": json.dumps(hit.evidence, sort_keys=True),
+            "evidence": hit.evidence,
             "pack_version": pack.version,
         }
         for scan in scans

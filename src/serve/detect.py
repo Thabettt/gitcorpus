@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -304,36 +305,150 @@ def _evidence_summary(evidence: dict) -> str:
     return json.dumps(evidence, sort_keys=True)[:120]
 
 
+def _detection_filter_state(request: Request) -> dict:
+    params = request.query_params
+    return {
+        "signal": params.get("signal") in ("1", "true", "on"),
+        "agent": (params.get("agent") or "").strip(),
+        "channel": (params.get("channel") or "").strip(),
+    }
+
+
+def _detection_filter_href(page: int, filters: dict) -> str:
+    query = {"page": str(page)}
+    if filters["signal"]:
+        query["signal"] = "1"
+    if filters["agent"]:
+        query["agent"] = filters["agent"]
+    if filters["channel"]:
+        query["channel"] = filters["channel"]
+    return "?" + urlencode(query)
+
+
 def detect_detail_response(request: Request, engine: Engine, row) -> HTMLResponse:
     run_id = int(row["id"])
     raw_page = request.query_params.get("page", "").strip()
     page_number = int(raw_page) if raw_page.isdigit() and int(raw_page) > 0 else 1
-    total_repos = _item_count(engine, run_id)
+    filters = _detection_filter_state(request)
+    agent_filter = filters["agent"]
+    channel_filter = filters["channel"]
+    filtering = bool(filters["signal"] or agent_filter or channel_filter)
+
+    evidence_clauses: list[str] = []
+    evidence_params: dict[str, object] = {"run": run_id}
+    if agent_filter:
+        evidence_clauses.append("agent = :agent")
+        evidence_params["agent"] = agent_filter
+    if channel_filter:
+        evidence_clauses.append("channel = :channel")
+        evidence_params["channel"] = channel_filter
+    facet_clauses: list[str] = []
+    facet_params: dict[str, object] = {"run": run_id}
+    if agent_filter:
+        facet_clauses.append("agent = :agent")
+        facet_params["agent"] = agent_filter
+    if channel_filter:
+        facet_clauses.append("channel = :channel")
+        facet_params["channel"] = channel_filter
+    if filters["signal"]:
+        facet_clauses.append("channel <> 'bot'")
+    facet_where = "".join(f" AND {clause}" for clause in facet_clauses)
+
+    unfiltered_total = _item_count(engine, run_id)
+    if filtering:
+        with engine.connect() as connection:
+            total_repos = int(
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM ("
+                        " SELECT DISTINCT repo_id FROM detection_repo_filters"
+                        f" WHERE run_id = :run{facet_where}"
+                        ") m JOIN run_items i ON i.run_id = :run AND i.repo_id = m.repo_id"
+                    ),
+                    facet_params,
+                ).scalar_one()
+            )
+    else:
+        total_repos = unfiltered_total
     pages = max(1, (total_repos + DETECTION_REPOS_PAGE_SIZE - 1) // DETECTION_REPOS_PAGE_SIZE)
     page_number = min(page_number, pages)
-    summary = _run_detail_summary(row, total_repos)
+    summary = _run_detail_summary(row, unfiltered_total)
     with engine.connect() as connection:
-        item_rows = list(
-            connection.execute(
-                select(RunItem)
-                .where(RunItem.run_id == run_id)
-                .order_by(RunItem.stargazers.desc().nullslast(), RunItem.repo_id)
-                .offset((page_number - 1) * DETECTION_REPOS_PAGE_SIZE)
-                .limit(DETECTION_REPOS_PAGE_SIZE)
-            ).mappings()
-        )
+        if filtering:
+            item_rows = (
+                connection.execute(
+                    text(
+                        "SELECT i.repo_id, i.full_name, i.stargazers, i.detection"
+                        " FROM ("
+                        " SELECT DISTINCT repo_id FROM detection_repo_filters"
+                        f" WHERE run_id = :run{facet_where}"
+                        ") m JOIN run_items i ON i.run_id = :run AND i.repo_id = m.repo_id"
+                        " ORDER BY i.stargazers DESC NULLS LAST, i.repo_id"
+                        " OFFSET :offset LIMIT :limit"
+                    ),
+                    {
+                        **facet_params,
+                        "offset": (page_number - 1) * DETECTION_REPOS_PAGE_SIZE,
+                        "limit": DETECTION_REPOS_PAGE_SIZE,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        else:
+            item_rows = (
+                connection.execute(
+                    text(
+                        "SELECT i.repo_id, i.full_name, i.stargazers, i.detection"
+                        " FROM run_items i WHERE i.run_id = :run"
+                        " ORDER BY i.stargazers DESC NULLS LAST, i.repo_id"
+                        " OFFSET :offset LIMIT :limit"
+                    ),
+                    {
+                        "run": run_id,
+                        "offset": (page_number - 1) * DETECTION_REPOS_PAGE_SIZE,
+                        "limit": DETECTION_REPOS_PAGE_SIZE,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        filter_agents = [
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT agent FROM detection_repo_filters"
+                    " WHERE run_id = :run ORDER BY agent"
+                ),
+                {"run": run_id},
+            )
+        ]
+        filter_channels = [
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT channel FROM detection_repo_filters"
+                    " WHERE run_id = :run ORDER BY channel"
+                ),
+                {"run": run_id},
+            )
+        ]
         repo_ids = [item["repo_id"] for item in item_rows if item["repo_id"] is not None]
         totals: dict[int, int] = {}
         evidence_rows: list = []
         if repo_ids:
+            evidence_where = "WHERE run_id = :run AND repo_id = ANY(:ids)"
+            if evidence_clauses:
+                evidence_where += " AND " + " AND ".join(evidence_clauses)
+            evidence_params["ids"] = repo_ids
             totals = {
                 int(repo_id): int(count)
                 for repo_id, count in connection.execute(
                     text(
                         "SELECT repo_id, count(*) FROM detection_evidence"
-                        " WHERE run_id = :run AND repo_id = ANY(:ids) GROUP BY repo_id"
+                        f" {evidence_where} GROUP BY repo_id"
                     ),
-                    {"run": run_id, "ids": repo_ids},
+                    evidence_params,
                 ).all()
             }
             evidence_rows = list(
@@ -343,10 +458,10 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                         " SELECT repo_id, agent, channel, evidence,"
                         " row_number() OVER (PARTITION BY repo_id ORDER BY agent, channel, id)"
                         " AS rank FROM detection_evidence"
-                        " WHERE run_id = :run AND repo_id = ANY(:ids)"
+                        f" {evidence_where}"
                         ") ranked WHERE rank <= :cap ORDER BY repo_id, agent, channel"
                     ),
-                    {"run": run_id, "ids": repo_ids, "cap": DETECTION_REPO_EVIDENCE_CAP},
+                    {**evidence_params, "cap": DETECTION_REPO_EVIDENCE_CAP},
                 ).mappings()
             )
     by_repo: dict[int, list] = {}
@@ -387,6 +502,9 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
         windows = {**windows, "commits": depth, "prs": depth}
     first_repo = (page_number - 1) * DETECTION_REPOS_PAGE_SIZE + 1
     last_repo = min(page_number * DETECTION_REPOS_PAGE_SIZE, total_repos)
+    repos_label = f"repos {first_repo}–{last_repo} of {total_repos}"
+    if filtering:
+        repos_label += " (filtered)"
     return templates.TemplateResponse(
         request,
         "detect_detail.html",
@@ -404,10 +522,17 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "page": page_number,
                 "pages": pages,
                 "total_repos": total_repos,
-                "repos_label": f"repos {first_repo}–{last_repo} of {total_repos}",
-                "filter_agents": sorted({agent for repo in repos for agent in repo["agents"]}),
-                "filter_channels": sorted(
-                    {channel for repo in repos for channel in repo["channels"]}
+                "repos_label": repos_label,
+                "filter_agents": filter_agents,
+                "filter_channels": filter_channels,
+                "filters": {"active": filtering, **filters},
+                "prev_href": (
+                    _detection_filter_href(page_number - 1, filters) if page_number > 1 else None
+                ),
+                "next_href": (
+                    _detection_filter_href(page_number + 1, filters)
+                    if page_number < pages
+                    else None
                 ),
             },
             "csrf_token": request.state.csrf_token,

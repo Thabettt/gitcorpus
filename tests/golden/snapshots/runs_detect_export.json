@@ -3,8 +3,8 @@
   "status": 200,
   "headers": {
     "content-type": "text/csv; charset=utf-8",
-    "content-disposition": "attachment; filename=\"gitcorpus-golden-detect-952.detections\"",
+    "content-disposition": "attachment; filename=\"gitcorpus-detect-952-evidence.csv\"",
     "x-gitcorpus-regenerated": "true"
   },
-  "body": "full_name,repo_id,agent,channel,evidence,pack_version\nocto/alpha,911,Claude Code,file,\"{\"\"path\"\": \"\"CLAUDE.md\"\"}\",golden-pack\nocto/alpha,911,Codex,pr_metadata,\"{\"\"commit\"\": \"\"a1\"\", \"\"pr\"\": 7, \"\"propagated\"\": true}\",golden-pack\n"
+  "body": "run_id,repo_id,full_name,agent,channel,pack_version,detected_at,commit_sha,path,path_source,file_size,file_empty,file_generic,file_weight,pr_number,branch_head,branch_match,label,issue_number,issue_role,login,identity_field,snippet,propagated,evidence_json\n952,911,octo/alpha,Claude Code,file,golden-pack,2026-01-02T00:00:03Z,,CLAUDE.md,,,,,,,,,,,,,,,,\"{\"\"path\"\": \"\"CLAUDE.md\"\"}\"\n952,911,octo/alpha,Codex,pr_metadata,golden-pack,2026-01-02T00:00:03Z,a1,,,,,,,7,,,,,,,,,true,\"{\"\"commit\"\": \"\"a1\"\", \"\"pr\"\": 7, \"\"propagated\"\": true}\"\n"
 }

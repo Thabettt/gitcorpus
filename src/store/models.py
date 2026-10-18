@@ -293,6 +293,18 @@ class DetectionEvidence(Base):
     )
 
 
+class DetectionRepoFilter(Base):
+    __tablename__ = "detection_repo_filters"
+    __table_args__ = (Index("drf_run_agent_idx", "run_id", "agent", "channel", "repo_id"),)
+
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    repo_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("repos.id"), primary_key=True)
+    agent: Mapped[str] = mapped_column(Text, primary_key=True)
+    channel: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
 class SavedFilter(Base):
     __tablename__ = "saved_filters"
 

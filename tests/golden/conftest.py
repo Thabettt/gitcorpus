@@ -144,10 +144,18 @@ GOLDEN_SEED_SQL = (
           "adoption_level": "pervasive", "notes": []}'::jsonb)
     """,
     """
-    INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence, pack_version)
-    VALUES (952, 911, 'Claude Code', 'file', '{"path": "CLAUDE.md"}'::jsonb, 'golden-pack'),
+    INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence, pack_version,
+        detected_at)
+    VALUES (952, 911, 'Claude Code', 'file', '{"path": "CLAUDE.md"}'::jsonb, 'golden-pack',
+            '2026-01-02T00:00:03Z'),
            (952, 911, 'Codex', 'pr_metadata',
-            '{"pr": 7, "commit": "a1", "propagated": true}'::jsonb, 'golden-pack')
+            '{"pr": 7, "commit": "a1", "propagated": true}'::jsonb, 'golden-pack',
+            '2026-01-02T00:00:03Z')
+    """,
+    """
+    INSERT INTO detection_repo_filters (run_id, repo_id, agent, channel)
+    VALUES (952, 911, 'Claude Code', 'file'),
+           (952, 911, 'Codex', 'pr_metadata')
     """,
 )
 

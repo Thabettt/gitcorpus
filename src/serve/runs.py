@@ -12,7 +12,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine, Row
 from sqlalchemy.engine.row import RowMapping
 from starlette.responses import StreamingResponse
@@ -29,11 +29,52 @@ from enrich.cloner import (
     free_disk_mb,
 )
 from lib.deadlines import clone_timeout_seconds
-from serve.executor import _CSV_HEADER, _csv_cell
-from store.models import DetectionEvidence, Repo, RunItem, Runs
+from serve.executor import _CSV_HEADER, EVIDENCE_CSV_HEADER, _csv_cell, evidence_csv_row
+from store.models import Repo, RunItem, Runs
 
 _MEDIA_TYPES = {"json": "application/json", "csv": "text/csv", "detections": "text/csv"}
 _BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv", "detections": "detections.csv"}
+
+DETECT_REPO_CSV_HEADER = [
+    "repo_id",
+    "full_name",
+    "stargazers",
+    "pushed_at",
+    "archived",
+    "language",
+    "license_spdx",
+    "country_iso",
+    "geo_confidence",
+    "has_signal",
+    "unavailable",
+    "failure_class",
+    "adoption_level",
+    "commit_ratio",
+    "first_signal_at",
+    "agents",
+    "evidence_rows",
+    "signal_rows",
+    "bot_rows",
+    "file_rows",
+    "author_rows",
+    "branch_rows",
+    "label_rows",
+    "commit_trailer_rows",
+    "pr_metadata_rows",
+    "issue_rows",
+]
+
+EVIDENCE_BATCH_ROWS = 1000
+DETECT_REPO_BATCH_ROWS = 1000
+
+_UNFINISHED_STATUSES = ("queued", "running")
+
+
+class RunNotReadyError(Exception):
+    def __init__(self, run_id: int, status: str) -> None:
+        super().__init__(f"run {run_id} is {status}; exports unlock when it finishes")
+        self.run_id = run_id
+        self.status = status
 
 
 def run_bundle_dir(runs_root: str, filter_hash: str, run_id: int) -> Path:
@@ -93,6 +134,7 @@ def _item_rows(engine: Engine, run_id: int) -> list[RowMapping]:
                     RunItem.country_iso,
                     RunItem.geo_confidence,
                     RunItem.virtuals,
+                    RunItem.detection,
                 )
                 .where(RunItem.run_id == run_id)
                 .order_by(RunItem.stargazers.desc().nullslast(), RunItem.repo_id)
@@ -100,8 +142,8 @@ def _item_rows(engine: Engine, run_id: int) -> list[RowMapping]:
         )
 
 
-def _snapshot(row: RowMapping) -> dict:
-    return {
+def _snapshot(row: RowMapping, *, include_detection: bool = False) -> dict:
+    snapshot = {
         "repo_id": row["repo_id"],
         "full_name": row["full_name"],
         "stargazers": row["stargazers"],
@@ -113,6 +155,9 @@ def _snapshot(row: RowMapping) -> dict:
         "geo_confidence": row["geo_confidence"],
         "virtuals": dict(row["virtuals"] or {}),
     }
+    if include_detection:
+        snapshot["detection"] = row["detection"]
+    return snapshot
 
 
 def _file_chunks(path: Path, chunk_size: int = 65536) -> Iterator[bytes]:
@@ -124,7 +169,9 @@ def _file_chunks(path: Path, chunk_size: int = 65536) -> Iterator[bytes]:
             yield block
 
 
-def _json_chunks(engine: Engine, run_row: RowMapping, run_id: int) -> Iterator[bytes]:
+def _json_chunks(
+    engine: Engine, run_row: RowMapping, run_id: int, *, include_detection: bool = False
+) -> Iterator[bytes]:
     header = {
         "filter": run_row["filter_spec"],
         "filter_hash": run_row["filter_hash"],
@@ -144,8 +191,8 @@ def _json_chunks(engine: Engine, run_row: RowMapping, run_id: int) -> Iterator[b
     yield b'"items": ['
     first = True
     for row in _item_rows(engine, run_id):
-        chunk = json.dumps(_snapshot(row), ensure_ascii=False).encode()
-        yield chunk if first else b"," + chunk
+        chunk = json.dumps(_snapshot(row, include_detection=include_detection), ensure_ascii=False)
+        yield chunk.encode() if first else b"," + chunk.encode()
         first = False
     yield b'], "field_stats": {}}'
 
@@ -172,39 +219,116 @@ def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
         yield buffer.getvalue().encode("utf-8")
 
 
-def _detections_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
-    header_buffer = io.StringIO()
-    csv.writer(header_buffer).writerow(
-        ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
-    )
-    yield header_buffer.getvalue().encode("utf-8")
+_EVIDENCE_STREAM_SQL = text(
+    "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version,"
+    " e.run_id, e.detected_at"
+    " FROM detection_evidence e"
+    " LEFT JOIN run_items i ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
+    " WHERE e.run_id = :run"
+    " ORDER BY e.repo_id, e.agent, e.channel, e.id"
+)
+
+_DETECT_REPO_STREAM_SQL = text(
+    "SELECT i.repo_id, i.full_name, i.stargazers, i.pushed_at, i.archived, i.language,"
+    " i.license_spdx, i.country_iso, i.geo_confidence, i.detection,"
+    " COALESCE(c.total_rows, 0), COALESCE(c.signal_rows, 0), COALESCE(c.bot_rows, 0),"
+    " COALESCE(c.file_rows, 0), COALESCE(c.author_rows, 0), COALESCE(c.branch_rows, 0),"
+    " COALESCE(c.label_rows, 0), COALESCE(c.commit_trailer_rows, 0),"
+    " COALESCE(c.pr_metadata_rows, 0), COALESCE(c.issue_rows, 0)"
+    " FROM run_items i"
+    " LEFT JOIN ("
+    "   SELECT repo_id,"
+    "     count(*) AS total_rows,"
+    "     count(*) FILTER (WHERE channel <> 'bot') AS signal_rows,"
+    "     count(*) FILTER (WHERE channel = 'bot') AS bot_rows,"
+    "     count(*) FILTER (WHERE channel = 'file') AS file_rows,"
+    "     count(*) FILTER (WHERE channel = 'author') AS author_rows,"
+    "     count(*) FILTER (WHERE channel = 'branch') AS branch_rows,"
+    "     count(*) FILTER (WHERE channel = 'label') AS label_rows,"
+    "     count(*) FILTER (WHERE channel = 'commit_trailer') AS commit_trailer_rows,"
+    "     count(*) FILTER (WHERE channel = 'pr_metadata') AS pr_metadata_rows,"
+    "     count(*) FILTER (WHERE channel = 'issue') AS issue_rows"
+    "   FROM detection_evidence WHERE run_id = :run GROUP BY repo_id"
+    " ) c ON c.repo_id = i.repo_id"
+    " WHERE i.run_id = :run"
+    " ORDER BY i.stargazers DESC NULLS LAST, i.repo_id"
+)
+
+
+def _detections_chunks(
+    engine: Engine, run_id: int, *, batch_rows: int = EVIDENCE_BATCH_ROWS
+) -> Iterator[bytes]:
+    buffer = io.StringIO()
+    csv.writer(buffer).writerow(EVIDENCE_CSV_HEADER)
+    yield buffer.getvalue().encode("utf-8")
     with engine.connect() as connection:
-        rows = connection.execute(
-            select(
-                RunItem.full_name,
-                DetectionEvidence.repo_id,
-                DetectionEvidence.agent,
-                DetectionEvidence.channel,
-                DetectionEvidence.evidence,
-                DetectionEvidence.pack_version,
-            )
-            .join(RunItem, RunItem.repo_id == DetectionEvidence.repo_id)
-            .where(DetectionEvidence.run_id == run_id, RunItem.run_id == run_id)
-            .order_by(DetectionEvidence.repo_id, DetectionEvidence.agent, DetectionEvidence.channel)
-        ).all()
-    for row in rows:
-        buffer = io.StringIO()
-        csv.writer(buffer).writerow(
-            [
-                _csv_cell(row.full_name),
-                _csv_cell(row.repo_id),
-                _csv_cell(row.agent),
-                _csv_cell(row.channel),
-                _csv_cell(json.dumps(row.evidence, sort_keys=True)),
-                _csv_cell(row.pack_version),
-            ]
+        result = connection.execution_options(stream_results=True).execute(
+            _EVIDENCE_STREAM_SQL, {"run": run_id}
         )
-        yield buffer.getvalue().encode("utf-8")
+        for partition in result.partitions(max(1, batch_rows)):
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer = csv.writer(buffer)
+            for row in partition:
+                writer.writerow(
+                    evidence_csv_row(
+                        {
+                            "full_name": row[0],
+                            "repo_id": row[1],
+                            "agent": row[2],
+                            "channel": row[3],
+                            "evidence": row[4],
+                            "pack_version": row[5],
+                            "run_id": row[6],
+                            "detected_at": row[7],
+                        }
+                    )
+                )
+            yield buffer.getvalue().encode("utf-8")
+
+
+def _detect_repo_cells(row) -> list[str]:
+    document = row[9] if isinstance(row[9], dict) else {}
+    agents = document.get("agents") or []
+    cells = [
+        _csv_cell(row[0]),
+        _csv_cell(row[1]),
+        _csv_cell(row[2]),
+        _csv_cell(_iso(row[3])),
+        _csv_cell(row[4]),
+        _csv_cell(row[5]),
+        _csv_cell(row[6]),
+        _csv_cell(row[7]),
+        _csv_cell(row[8]),
+        _csv_cell(bool(agents)),
+        _csv_cell(bool(document.get("unavailable", False))),
+        _csv_cell(document.get("failure_class")),
+        _csv_cell(document.get("adoption_level")),
+        _csv_cell(document.get("commit_ratio")),
+        _csv_cell(document.get("first_signal_at")),
+        _csv_cell("|".join(str(agent) for agent in agents)),
+    ]
+    cells.extend(_csv_cell(value) for value in row[10:20])
+    return cells
+
+
+def _detect_repo_chunks(
+    engine: Engine, run_id: int, *, batch_rows: int = DETECT_REPO_BATCH_ROWS
+) -> Iterator[bytes]:
+    buffer = io.StringIO()
+    csv.writer(buffer).writerow(DETECT_REPO_CSV_HEADER)
+    yield buffer.getvalue().encode("utf-8")
+    with engine.connect() as connection:
+        result = connection.execution_options(stream_results=True).execute(
+            _DETECT_REPO_STREAM_SQL, {"run": run_id}
+        )
+        for partition in result.partitions(max(1, batch_rows)):
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer = csv.writer(buffer)
+            for row in partition:
+                writer.writerow(_detect_repo_cells(row))
+            yield buffer.getvalue().encode("utf-8")
 
 
 def export_bundle(
@@ -213,13 +337,22 @@ def export_bundle(
     if format not in _MEDIA_TYPES:
         raise ValueError("format", "format must be one of: json, csv")
     run_row = _row_for_run(engine, run_id)
+    if run_row["kind"] == "detect":
+        if run_row["status"] in _UNFINISHED_STATUSES:
+            raise RunNotReadyError(int(run_id), str(run_row["status"]))
+        if format == "detections":
+            return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
+        if format == "json":
+            return (
+                _json_chunks(engine, run_row, run_id, include_detection=True),
+                _MEDIA_TYPES[format],
+            )
+        return _detect_repo_chunks(engine, run_id), _MEDIA_TYPES[format]
     path = bundle_file(runs_root, run_row["filter_hash"], run_id, format)
-    if format == "detections":
-        if path.is_file():
-            return _file_chunks(path), _MEDIA_TYPES[format]
-        return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
     if path.is_file():
         return _file_chunks(path), _MEDIA_TYPES[format]
+    if format == "detections":
+        return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
     if format == "json":
         return _json_chunks(engine, run_row, run_id), _MEDIA_TYPES[format]
     return _csv_chunks(engine, run_id), _MEDIA_TYPES[format]
@@ -231,9 +364,19 @@ def export_run(
     if format not in _MEDIA_TYPES:
         raise ValueError("format", "format must be one of: json, csv")
     run_row = _row_for_run(engine, run_id)
-    regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
+    detect = run_row["kind"] == "detect"
+    regenerated = (
+        detect or not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
+    )
     chunks, media_type = export_bundle(engine, run_id, format=format, runs_root=runs_root)
-    filename = f"gitcorpus-{run_row['filter_hash']}-{run_id}.{format}"
+    if detect:
+        filename = {
+            "detections": f"gitcorpus-detect-{run_id}-evidence.csv",
+            "csv": f"gitcorpus-detect-{run_id}-repos.csv",
+            "json": f"gitcorpus-detect-{run_id}.json",
+        }[format]
+    else:
+        filename = f"gitcorpus-{run_row['filter_hash']}-{run_id}.{format}"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if regenerated:
         headers["X-Gitcorpus-Regenerated"] = "true"

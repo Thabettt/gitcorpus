@@ -25,6 +25,7 @@ TABLES = {
     "corpora",
     "trace_packs",
     "detection_evidence",
+    "detection_repo_filters",
 }
 
 EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
@@ -174,6 +175,12 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "evidence": False,
         "pack_version": False,
         "detected_at": False,
+    },
+    "detection_repo_filters": {
+        "run_id": False,
+        "repo_id": False,
+        "agent": False,
+        "channel": False,
     },
 }
 

@@ -67,7 +67,7 @@ from serve.pages import (
 )
 from serve.payload_cache import CACHE_TTL_SECONDS, RunPayloadCache
 from serve.runner import apply_sort, build_deps
-from serve.runs import export_run, latest_run_for_hash
+from serve.runs import RunNotReadyError, export_run, latest_run_for_hash
 from serve.settings import register_settings
 from serve.system import register_system
 from serve.virtual_params import VIRTUAL_FILTERS
@@ -979,6 +979,11 @@ def create_app(
             )
         try:
             return export_run(engine_for(), run_id, format=format, runs_root=runs_root)
+        except RunNotReadyError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "run_not_ready", "run_id": exc.run_id, "status": exc.status},
+            )
         except KeyError:
             return JSONResponse(
                 status_code=404,

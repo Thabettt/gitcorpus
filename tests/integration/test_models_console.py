@@ -26,6 +26,7 @@ ALL_TABLES = {
     "corpora",
     "trace_packs",
     "detection_evidence",
+    "detection_repo_filters",
 }
 
 RUN_COLUMNS: dict[str, bool] = {
@@ -114,7 +115,7 @@ def _indexdefs(engine: Engine) -> dict[str, str]:
 
 
 def test_single_alembic_head(alembic_config):
-    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0017"]
+    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0018"]
 
 
 def test_metadata_declares_exactly_the_expected_tables():
