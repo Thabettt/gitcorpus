@@ -560,3 +560,74 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
     with evidence_csv[0].open(newline="", encoding="utf-8") as handle:
         header = next(csv.reader(handle))
     assert header == ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+
+
+def test_summary_contributions_reproduce_batch_summary():
+    from detect.attribution import Hit
+    from detect.orchestrator import (
+        _fold_summary,
+        _RepoScan,
+        _scan_contribution,
+        _summary,
+    )
+
+    pack = Pack(
+        version="acc-pack",
+        agents={},
+        authors=(Pattern(r"noreply@anthropic\.com", "Claude Code"),),
+        files=(Pattern(r"CLAUDE\.md", "Claude Code"),),
+        branches=(),
+        labels=(),
+        bots=(),
+        generic_weights={},
+        exclusions=frozenset(),
+    )
+    spec = DetectOptions(
+        source_run_id=1,
+        pack_version="acc-pack",
+        agents=None,
+        channels=frozenset({"file", "bot"}),
+        source="git",
+    )
+    scans = [
+        _RepoScan(
+            repo_id=1,
+            full_name="octo/one",
+            stargazers=10,
+            hits=[
+                Hit("Claude Code", "file", {"path": "CLAUDE.md"}),
+                Hit("Generic", "file", {"path": "AGENTS.md"}),
+                Hit("dependabot", "bot", {"login": "dependabot"}),
+            ],
+            results={"file": ChannelResult(status="ok")},
+            pr_result=None,
+            history_stats={"ai_oids": ("a1", "a2"), "human_oids": ("h1", "h2", "a2")},
+            document={
+                "agents": ["Claude Code", "Generic"],
+                "channels": {"file": "ok"},
+                "unavailable": False,
+                "first_signal_at": "2026-01-02T00:00:00Z",
+                "notes": [],
+            },
+        ),
+        _RepoScan(
+            repo_id=2,
+            full_name="octo/two",
+            stargazers=5,
+            hits=[Hit("Claude Code", "commit_trailer", {"commit": "b1"})],
+            results={"file": ChannelResult(status="partial", note="pull refs fetch failed")},
+            pr_result=None,
+            history_stats={},
+            document={
+                "agents": ["Claude Code"],
+                "channels": {"file": "partial"},
+                "unavailable": True,
+                "failure_class": "transient",
+                "first_signal_at": None,
+                "notes": ["boom"],
+            },
+        ),
+    ]
+
+    contributions = [_scan_contribution(scan) for scan in scans]
+    assert _fold_summary(contributions, spec, pack, len(scans)) == _summary(scans, spec, pack)

@@ -7,7 +7,7 @@ import json
 import queue
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,6 +48,7 @@ class RunPayload:
     field_stats: dict = field(default_factory=dict)
     result_summary: dict | None = None
     detections: list[dict] = field(default_factory=list)
+    detections_source: Callable[[], Iterable[dict]] | None = None
     updated: int | None = None
     unchanged: int | None = None
     skipped: int | None = None
@@ -209,7 +210,7 @@ def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
 _DETECTIONS_HEADER = ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
 
 
-def _write_detections(path: Path, rows: list[dict]) -> None:
+def _write_detections(path: Path, rows: Iterable[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(_DETECTIONS_HEADER)
@@ -238,6 +239,8 @@ def _write_bundle(run: dict, payload: RunPayload, runs_root: str) -> str:
     _write_corpus(directory / "corpus.csv", payload.items)
     if payload.detections:
         _write_detections(directory / "detections.csv", payload.detections)
+    elif payload.detections_source is not None:
+        _write_detections(directory / "detections.csv", payload.detections_source())
     return f"{directory.as_posix()}/"
 
 

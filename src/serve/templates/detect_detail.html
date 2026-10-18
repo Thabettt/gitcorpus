@@ -150,14 +150,11 @@
           </ul>
         </div>
         {% endif %}
-      {% endfor %}
-      {% if repo.evidence_truncated %}
-      <p class="muted">Showing first {{ repo.evidence_shown }} of {{ repo.evidence_total }} evidence rows; the CSV export has every row.</p>
-      {% endif %}
+      {% endfor %}{% if repo.evidence_truncated %}
+      <p class="muted">Showing first {{ repo.evidence_shown }} of {{ repo.evidence_total }} evidence rows; the CSV export has every row.</p>{% endif %}
     </div>
   </details>
-  {% endfor %}
-  {% if detection.pages > 1 %}
+  {% endfor %}{% if detection.pages > 1 %}
   <nav id="detection-pagination" class="pagination" aria-label="Repo pages">
     {% if detection.page > 1 %}
     <a id="detection-page-prev" class="button" href="?page={{ detection.page - 1 }}">Previous</a>

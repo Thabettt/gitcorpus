@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 
@@ -103,3 +104,35 @@ def test_bundle_item_prefers_raw_and_falls_back_to_snapshot():
         "virtuals": {"team_topic": True},
         "detection": None,
     }
+
+
+def test_write_bundle_streams_detections_from_source(tmp_path):
+    rows = [
+        {
+            "full_name": "octo/one",
+            "repo_id": 1,
+            "agent": "Claude Code",
+            "channel": "file",
+            "evidence": '{"path": "CLAUDE.md"}',
+            "pack_version": "v1",
+        }
+    ]
+    payload = RunPayload(total_count=1, items=[], detections_source=lambda: iter(rows))
+    run = {"filter_hash": "hash-a", "id": 9, "filter_spec": {}, "api_version": "2022-11-28"}
+    bundle_dir = executor._write_bundle(run, payload, str(tmp_path))
+    assert bundle_dir.endswith("/hash-a/9/")
+    detections_csv = tmp_path / "hash-a" / "9" / "detections.csv"
+    assert detections_csv.exists()
+    with detections_csv.open(newline="", encoding="utf-8") as handle:
+        reader = csv.reader(handle)
+        header = next(reader)
+        first = next(reader)
+    assert header == ["full_name", "repo_id", "agent", "channel", "evidence", "pack_version"]
+    assert first == ["octo/one", "1", "Claude Code", "file", '{"path": "CLAUDE.md"}', "v1"]
+
+
+def test_write_bundle_omits_detections_without_source(tmp_path):
+    payload = RunPayload(total_count=0, items=[])
+    run = {"filter_hash": "hash-b", "id": 10, "filter_spec": {}, "api_version": "2022-11-28"}
+    executor._write_bundle(run, payload, str(tmp_path))
+    assert not (tmp_path / "hash-b" / "10" / "detections.csv").exists()

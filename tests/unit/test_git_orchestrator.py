@@ -882,3 +882,45 @@ def test_per_repo_deletion_does_not_block_the_parent(clean_db, tmp_path, monkeyp
         repo_factory=lambda dest: FakeRepo(happy_handler),
     )
     assert len(removed) >= 3  # two per-repo dirs plus the final run-dir sweep
+
+
+def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    config = GitScanConfig(depth=100, keep=False, scan_root=str(tmp_path / "clones"), workers=1)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file", "commit_trailer", "branch"})),
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest: FakeRepo(happy_handler),
+    )
+
+    assert payload.detections == []
+    assert payload.detections_source is not None
+    streamed = list(payload.detections_source())
+    with engine.connect() as connection:
+        expected = connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+            {"run": detect_run},
+        ).scalar_one()
+    assert len(streamed) == expected > 0
+    assert {row["full_name"] for row in streamed} == {"octo/one", "octo/two"}
+    sample = streamed[0]
+    assert set(sample) == {"full_name", "repo_id", "agent", "channel", "evidence", "pack_version"}
+    assert isinstance(sample["evidence"], str)
+    assert payload.items[0].detection["agents"] == ["Claude Code"]

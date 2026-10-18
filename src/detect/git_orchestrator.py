@@ -14,7 +14,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import insert
+from sqlalchemy import insert, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
@@ -33,9 +33,11 @@ from detect.orchestrator import (
     DetectOptions,
     _candidates,
     _failed_scan,
+    _fold_summary,
     _repo_document,
     _RepoScan,  # same-package helper reuse, intentional
-    _summary,
+    _scan_contribution,
+    _SummaryContribution,
 )
 from detect.packs import Pack
 from enrich.cloner import LOW_DISK_THRESHOLD_MB, MARKER_NAME, free_disk_mb
@@ -203,6 +205,48 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
         )
 
 
+@dataclass(frozen=True)
+class _RetainedScan:
+    repo_id: int
+    full_name: str
+    stargazers: int | None
+    document: dict
+    contribution: _SummaryContribution
+    partial: bool
+
+
+def _retain(scan: _RepoScan) -> _RetainedScan:
+    partial = any(result.status in ("partial", "unavailable") for result in scan.results.values())
+    return _RetainedScan(
+        repo_id=scan.repo_id,
+        full_name=scan.full_name,
+        stargazers=scan.stargazers,
+        document=scan.document,
+        contribution=_scan_contribution(scan),
+        partial=partial,
+    )
+
+
+def _stream_detections(engine: Engine, run_id: int):
+    statement = text(
+        "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version"
+        " FROM detection_evidence e JOIN run_items i"
+        " ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
+        " WHERE e.run_id = :run ORDER BY e.repo_id, e.agent, e.channel"
+    )
+    with engine.connect() as connection:
+        rows = connection.execution_options(stream_results=True).execute(statement, {"run": run_id})
+        for row in rows:
+            yield {
+                "full_name": row[0],
+                "repo_id": row[1],
+                "agent": row[2],
+                "channel": row[3],
+                "evidence": json.dumps(row[4], sort_keys=True),
+                "pack_version": row[5],
+            }
+
+
 def _scan_worker_main(
     slice_candidates: Sequence[Mapping],
     out_queue: multiprocessing.Queue,
@@ -297,27 +341,26 @@ def _scan_worker_main(
 
 def _drain_message(
     message,
-    scans: list[_RepoScan],
     failures: list[str],
     warnings: list[str],
     *,
     scan_root: Path,
     total: int,
-) -> bool:
-    """Handle one worker message; returns True when it was a low-disk notice."""
+    delivered: int,
+) -> tuple[bool, _RepoScan | None]:
+    """Handle one worker message; returns (stopped_for_disk, scan)."""
     if isinstance(message, tuple) and message and message[0] == _LOW_DISK_MARKER:
         free = float(message[1])
         warnings.append(
             f"low disk: only {free:.0f} MB free under {str(scan_root)!r}"
             f" (reserve {LOW_DISK_THRESHOLD_MB:.0f} MB); stopped scheduling"
-            f" after {len(scans)} of {total} repos"
+            f" after {delivered} of {total} repos"
         )
-        return True
+        return True, None
     _tag, scan, failure = message
-    scans.append(scan)
     if failure is not None:
         failures.append(failure)
-    return False
+    return False, scan
 
 
 def _run_git_detection_processes(
@@ -331,7 +374,7 @@ def _run_git_detection_processes(
     candidates: list[dict],
     total: int,
     warnings: list[str],
-) -> tuple[list[_RepoScan], list[str], bool, bool]:
+) -> tuple[list[_RetainedScan], list[str], bool, bool]:
     processes = max(2, cfg.processes)
     threads = max(1, cfg.workers // processes)
     mp_context = multiprocessing.get_context("spawn")
@@ -371,7 +414,8 @@ def _run_git_detection_processes(
                 process.terminate()
         out_queue.close()
         raise
-    scans: list[_RepoScan] = []
+    retained: dict[int, _RetainedScan] = {}
+    delivered = 0
     failures: list[str] = []
     stopped_for_disk = False
     cancelled = False
@@ -382,29 +426,41 @@ def _run_git_detection_processes(
             try:
                 message = out_queue.get(timeout=_CANCEL_POLL_SECONDS)
             except queue.Empty:
-                if len(scans) >= total:
+                if delivered >= total:
                     break
                 if all(process.exitcode is not None for process in workers):
                     break
                 continue
-            if _drain_message(message, scans, failures, warnings, scan_root=scan_root, total=total):
+            stopped, scan = _drain_message(
+                message, failures, warnings, scan_root=scan_root, total=total, delivered=delivered
+            )
+            if stopped:
                 stopped_for_disk = True
                 continue
-            scan = scans[-1]
+            assert scan is not None
+            retained[scan.repo_id] = _retain(scan)
+            delivered += 1
             deferred_transient = (
                 message[2] is None and scan.document.get("failure_class") == "transient"
             )
             if not cfg.keep and not deferred_transient:
                 deletion_pool.submit(_remove_tree, run_dir / scan.full_name.replace("/", "__"))
             _persist_scan(engine, run_id, scan, pack)
-            progress.report("detecting", len(scans), total)
+            progress.report("detecting", delivered, total)
         while True:
             try:
                 message = out_queue.get_nowait()
             except queue.Empty:
                 break
-            if _drain_message(message, scans, failures, warnings, scan_root=scan_root, total=total):
+            stopped, scan = _drain_message(
+                message, failures, warnings, scan_root=scan_root, total=total, delivered=delivered
+            )
+            if stopped:
                 stopped_for_disk = True
+                continue
+            if scan is not None:
+                retained[scan.repo_id] = _retain(scan)
+                delivered += 1
     except RunCancelled:
         cancelled = True
         cancel_event.set()
@@ -427,10 +483,11 @@ def _run_git_detection_processes(
         else:
             deletion_pool.shutdown(wait=False, cancel_futures=True)
         out_queue.close()
-    lost = (not cancelled) and len(scans) < total and not stopped_for_disk
+    lost = (not cancelled) and delivered < total and not stopped_for_disk
     if lost:
-        warnings.append(f"scan workers stopped early: {len(scans)} of {total} repos scanned")
-    return scans, failures, stopped_for_disk, lost
+        warnings.append(f"scan workers stopped early: {delivered} of {total} repos scanned")
+    records = [retained[key] for key in sorted(retained)]
+    return records, failures, stopped_for_disk, lost
 
 
 def run_git_detection(
@@ -464,13 +521,13 @@ def run_git_detection(
         cfg.processes > 1 and clone_fn is None and repo_factory is None and os.name == "nt"
     )
     if use_processes:
-        scans, failures, stopped_for_disk, worker_lost = _run_git_detection_processes(
+        records, failures, stopped_for_disk, worker_lost = _run_git_detection_processes(
             engine, run_id, spec, pack, cfg, scan_root, run_dir, candidates, total, warnings
         )
         cancelled = False
     else:
         breaker = CircuitBreaker(*local_values())
-        scans = []
+        records_by_repo: dict[int, _RetainedScan] = {}
         cancelled = False
         deletion_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="detect-rm")
 
@@ -552,7 +609,7 @@ def run_git_detection(
                             failures.append(f"{scan.full_name}: {scan.document['notes'][0]}")
                     else:
                         breaker.record_success()
-                    scans.append(scan)
+                    records_by_repo[scan.repo_id] = _retain(scan)
                     _persist_scan(engine, run_id, scan, pack)
                     if not cfg.keep and not deferred:
                         deletion_pool.submit(
@@ -571,53 +628,34 @@ def run_git_detection(
             # leftovers are reclaimed by the console's flush action or the resume.
             if not cfg.keep and not cancelled:
                 _remove_tree(run_dir)
+        records = [records_by_repo[key] for key in sorted(records_by_repo)]
 
-    by_repo: dict[int, _RepoScan] = {}
-    for scan in scans:
-        by_repo[scan.repo_id] = scan
-    scans = [by_repo[key] for key in sorted(by_repo)]
     partial = (
         stopped_for_disk
         or worker_lost
         or bool(failures)
-        or any(
-            result.status in ("partial", "unavailable")
-            for scan in scans
-            for result in scan.results.values()
-        )
+        or any(record.partial for record in records)
     )
     items = [
         RunPayloadItem(
-            repo_id=scan.repo_id,
-            full_name=scan.full_name,
-            stargazers=scan.stargazers,
-            detection=scan.document,
+            repo_id=record.repo_id,
+            full_name=record.full_name,
+            stargazers=record.stargazers,
+            detection=record.document,
         )
-        for scan in scans
+        for record in records
     ]
-    detections = [
-        {
-            "full_name": scan.full_name,
-            "repo_id": scan.repo_id,
-            "agent": hit.agent,
-            "channel": hit.channel,
-            "evidence": json.dumps(hit.evidence, sort_keys=True),
-            "pack_version": pack.version,
-        }
-        for scan in scans
-        for hit in scan.hits
-    ]
-    summary = _summary(scans, spec, pack)
+    summary = _fold_summary([record.contribution for record in records], spec, pack, len(records))
     summary["source"] = "git"
     summary["skipped_channels"] = skipped
     unavailable = sorted(
         (
             {
-                "full_name": scan.full_name,
-                "reason": scan.document.get("failure_class") or "channel_unavailable",
+                "full_name": record.full_name,
+                "reason": record.document.get("failure_class") or "channel_unavailable",
             }
-            for scan in scans
-            if scan.document.get("unavailable")
+            for record in records
+            if record.document.get("unavailable")
         ),
         key=lambda row: row["full_name"],
     )
@@ -636,12 +674,12 @@ def run_git_detection(
         fetched=total,
         warnings=warnings,
         result_summary=summary,
-        detections=detections,
+        detections_source=lambda: _stream_detections(engine, run_id),
         field_stats={
             "clone": {
                 "depth": cfg.depth,
                 "keep": cfg.keep,
-                "scanned": len(scans),
+                "scanned": len(records),
                 "failures": len(failures),
             },
             "walk": repo_walk.verification_summary(),

@@ -236,7 +236,47 @@ def _repo_document(scan: _RepoScan) -> dict:
     }
 
 
-def _summary(scans: list[_RepoScan], spec: DetectOptions, pack: Pack) -> dict:
+@dataclass(frozen=True)
+class _SummaryContribution:
+    unavailable: bool
+    has_signal: bool
+    agent_counts: Mapping[str, int]
+    channel_counts: Mapping[str, int]
+    partials: Mapping[str, str]
+    ai_count: int
+    human_count: int
+    first_signal_at: str | None
+
+
+def _scan_contribution(scan: _RepoScan) -> _SummaryContribution:
+    agent_counts: dict[str, int] = {}
+    channel_counts: dict[str, int] = {}
+    for hit in scan.hits:
+        if hit.channel == _BOT_CHANNEL:
+            continue
+        agent_counts[hit.agent] = agent_counts.get(hit.agent, 0) + 1
+        channel_counts[hit.channel] = channel_counts.get(hit.channel, 0) + 1
+    partials: dict[str, str] = {}
+    for key, result in scan.results.items():
+        if result.status == "partial" and result.note:
+            partials.setdefault(key, result.note)
+    ai, human = _ratio_sets(scan)
+    document = scan.document
+    return _SummaryContribution(
+        unavailable=bool(document["unavailable"]),
+        has_signal=bool(document["agents"]),
+        agent_counts=agent_counts,
+        channel_counts=channel_counts,
+        partials=partials,
+        ai_count=len(ai),
+        human_count=len(human),
+        first_signal_at=document["first_signal_at"],
+    )
+
+
+def _fold_summary(
+    contributions: list[_SummaryContribution], spec: DetectOptions, pack: Pack, scanned: int
+) -> dict:
     agent_counts: dict[str, int] = {}
     channel_counts: dict[str, int] = {}
     partials: dict[str, str] = {}
@@ -245,28 +285,24 @@ def _summary(scans: list[_RepoScan], spec: DetectOptions, pack: Pack) -> dict:
     unavailable = 0
     ai_total = 0
     human_total = 0
-    for scan in scans:
-        document = scan.document
-        if document["unavailable"]:
+    for contribution in contributions:
+        if contribution.unavailable:
             unavailable += 1
-        if document["agents"]:
+        if contribution.has_signal:
             repos_with_signal += 1
-        for hit in scan.hits:
-            if hit.channel == _BOT_CHANNEL:
-                continue
-            agent_counts[hit.agent] = agent_counts.get(hit.agent, 0) + 1
-            channel_counts[hit.channel] = channel_counts.get(hit.channel, 0) + 1
-        for key, result in scan.results.items():
-            if result.status == "partial" and result.note:
-                partials.setdefault(key, result.note)
-        ai, human = _ratio_sets(scan)
-        ai_total += len(ai)
-        human_total += len(human)
-        if document["first_signal_at"]:
-            firsts.append(document["first_signal_at"])
+        for agent, count in contribution.agent_counts.items():
+            agent_counts[agent] = agent_counts.get(agent, 0) + count
+        for channel, count in contribution.channel_counts.items():
+            channel_counts[channel] = channel_counts.get(channel, 0) + count
+        for key, note in contribution.partials.items():
+            partials.setdefault(key, note)
+        ai_total += contribution.ai_count
+        human_total += contribution.human_count
+        if contribution.first_signal_at:
+            firsts.append(contribution.first_signal_at)
     ratio = ai_total / (ai_total + human_total) if (ai_total + human_total) else None
     return {
-        "repos_scanned": len(scans),
+        "repos_scanned": scanned,
         "repos_with_signal": repos_with_signal,
         "repos_unavailable": unavailable,
         "agents": dict(sorted(agent_counts.items())),
@@ -279,6 +315,11 @@ def _summary(scans: list[_RepoScan], spec: DetectOptions, pack: Pack) -> dict:
         "first_signal_at": min(firsts) if firsts else None,
         "partial_channels": partials,
     }
+
+
+def _summary(scans: list[_RepoScan], spec: DetectOptions, pack: Pack) -> dict:
+    contributions = [_scan_contribution(scan) for scan in scans]
+    return _fold_summary(contributions, spec, pack, len(scans))
 
 
 def run_detection(
