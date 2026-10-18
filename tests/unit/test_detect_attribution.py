@@ -189,6 +189,20 @@ def test_identity_fields_retain_genuine_probe_cases():
     assert [(h.agent, h.evidence["field"]) for h in copilot] == [("Copilot", "login")]
 
 
+def test_distinctive_patterns_match_derived_email_logins():
+    cases = [
+        ("openhands-agent@corp.com", "OpenHands"),
+        ("1234+openhands-agent@users.noreply.github.com", "OpenHands"),
+        ("windsurf-bot@acme.dev", "Windsurf"),
+    ]
+    for email, agent in cases:
+        hits = match_author_identities(
+            PACK_2026_10_19,
+            [{"login": "", "name": "Jane Doe", "email": email, "commit": "c1"}],
+        )
+        assert [(h.agent, h.evidence["field"]) for h in hits] == [(agent, "email")], email
+
+
 def test_login_rule_applies_to_pr_authors_and_issue_participants():
     prs = [
         {"number": 3, "author": "copilot-swe-agent"},

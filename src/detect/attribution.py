@@ -78,8 +78,8 @@ def _email_login(value: str) -> str:
     address = (value or "").strip()
     match = _NOREPLY.match(address)
     if match is not None:
-        return _normalize_login(match.group("login"))
-    return _normalize_login(address.split("@", 1)[0])
+        return match.group("login")
+    return address.split("@", 1)[0]
 
 
 def _is_multi_token(pattern: str) -> bool:
@@ -363,8 +363,10 @@ def _match_identity_entries(
                     matched.setdefault(pattern.agent, "email")
             email_login = _email_login(email)
             for word, _regex, agent in identity.ambiguous:
-                if email_login == word:
+                if _normalize_login(email_login) == word:
                     matched.setdefault(agent, "email")
+            for agent in _login_agents(identity, email_login):
+                matched.setdefault(agent, "email")
 
         if login:
             normalized = _normalize_login(login)
