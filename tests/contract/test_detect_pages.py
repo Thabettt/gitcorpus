@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 
 import pytest
 from alembic import command
@@ -656,7 +657,7 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
             "repo": 2,
             "agent": "Claude Code",
             "channel": "commit_trailer",
-            "evidence": {"commit": "b2", "snippet": "Co-authored-by: Claude"},
+            "evidence": {"commit": "b2", "snippet": "Co-authored-by: Claude 漢字"},
         },
     ]
     detect_id = seed_detect_run_with_evidence(clean, source, rows)
@@ -696,6 +697,9 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
     assert first["pack_version"] == "test-pack"
     assert first["detected_at"].endswith("Z")
     assert first["evidence"] == {"path": "CLAUDE.md", "size": 12}
+    trailer = next(item for item in payload if item["channel"] == "commit_trailer")
+    assert trailer["evidence"]["snippet"] == "Co-authored-by: Claude 漢字"
+    assert "漢字" in response.text
 
 
 def test_detections_export_streams_bounded_batches(clean):
@@ -750,6 +754,20 @@ def test_detections_json_export_streams_bounded_batches(clean):
     assert [item["evidence"]["path"] for item in payload] == [
         f"file-{index}.md" for index in range(5)
     ]
+
+
+def test_empty_detect_run_exports_parse_as_empty(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run_scaled(clean, source, repo_count=1, hits_per_repo=0)
+    client = make_client(clean)
+    json_response = client.get(f"/runs/{detect_id}/export?format=detections-json")
+    assert json_response.status_code == 200
+    assert json.loads(json_response.text) == []
+    csv_response = client.get(f"/runs/{detect_id}/export?format=detections")
+    assert csv_response.status_code == 200
+    body = csv_response.content.decode("utf-8-sig")
+    assert list(csv.reader(io.StringIO(body))) == [EVIDENCE_CSV_HEADER]
 
 
 def test_detection_export_buttons_hide_until_the_run_finishes(clean):
@@ -1099,6 +1117,7 @@ def test_detections_list_shows_time_elapsed(clean):
     seed_pack(clean)
     finished_id = seed_detect_run(clean, source)
     queued_id = seed_detect_run(clean, source)
+    running_id = seed_detect_run(clean, source)
     with clean.begin() as connection:
         connection.execute(
             text(
@@ -1114,11 +1133,22 @@ def test_detections_list_shows_time_elapsed(clean):
             ),
             {"id": queued_id},
         )
+        connection.execute(
+            text(
+                "UPDATE runs SET status = 'running', started_at = now() - interval '2 hours',"
+                " finished_at = NULL WHERE id = :id"
+            ),
+            {"id": running_id},
+        )
     client = make_client(clean)
     listing = client.get("/detections").text
     assert '<th scope="col">Time elapsed</th>' in listing
     assert f'<td id="detection-{finished_id}-elapsed">2h 0m</td>' in listing
     assert f'<td id="detection-{queued_id}-elapsed">—</td>' in listing
+    live = re.search(rf'<td id="detection-{running_id}-elapsed">([^<]+)</td>', listing)
+    assert live is not None
+    assert live.group(1) != "—"
+    assert re.fullmatch(r"\d+h \d+m", live.group(1))
 
 
 def test_detection_detail_paginates_repos(clean):

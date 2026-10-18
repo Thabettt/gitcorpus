@@ -6,7 +6,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 import httpx
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
@@ -321,6 +321,29 @@ def _summary(scans: list[_RepoScan], spec: DetectOptions, pack: Pack) -> dict:
     return _fold_summary(contributions, spec, pack, len(scans))
 
 
+def stream_detections(engine: Engine, run_id: int):
+    statement = text(
+        "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.pack_version,"
+        " e.run_id, e.detected_at"
+        " FROM detection_evidence e JOIN run_items i"
+        " ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
+        " WHERE e.run_id = :run ORDER BY e.repo_id, e.agent, e.channel, e.id"
+    )
+    with engine.connect() as connection:
+        rows = connection.execution_options(stream_results=True).execute(statement, {"run": run_id})
+        for row in rows:
+            yield {
+                "full_name": row[0],
+                "repo_id": row[1],
+                "agent": row[2],
+                "channel": row[3],
+                "evidence": row[4],
+                "pack_version": row[5],
+                "run_id": row[6],
+                "detected_at": row[7],
+            }
+
+
 def run_detection(
     deps: Deps,
     run_id: int,
@@ -460,18 +483,6 @@ def run_detection(
         )
         for scan in scans
     ]
-    detections = [
-        {
-            "full_name": scan.full_name,
-            "repo_id": scan.repo_id,
-            "agent": hit.agent,
-            "channel": hit.channel,
-            "evidence": hit.evidence,
-            "pack_version": pack.version,
-        }
-        for scan in scans
-        for hit in scan.hits
-    ]
     return RunPayload(
         total_count=total,
         items=items,
@@ -479,6 +490,6 @@ def run_detection(
         fetched=total,
         warnings=failures,
         result_summary=_summary(scans, spec, pack),
-        detections=detections,
+        detections_source=lambda: stream_detections(deps.engine, run_id),
         field_stats={"points": ledger.as_dict()},
     )

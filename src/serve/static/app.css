@@ -2034,6 +2034,7 @@ kbd {
 /* Export groups in the detection evidence panel head */
 .export-group {
   position: relative;
+  padding-right: 1.75rem;
 }
 .export-group .info-pop {
   top: 0.35rem;

@@ -267,6 +267,7 @@ def test_evidence_row_formats_detected_at_as_utc_iso():
 
 def test_csv_cell_flattens_newlines_to_literal_escapes():
     assert executor._csv_cell("a\r\nb\nc") == "a\\nb\\nc"
+    assert executor._csv_cell("a\rb") == "a\\nb"
     assert executor._csv_cell("plain text") == "plain text"
 
 

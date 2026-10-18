@@ -247,7 +247,8 @@ def test_run_detection_writes_evidence_and_never_searches(clean_db):
     assert item_one.detection["agents"] == ["Claude Code", "Codex"]
     assert item_one.detection["adoption_level"] == "pervasive"  # 1 AI of 1 windowed commit -> 100%
     assert item_one.detection["first_signal_at"] == "2026-01-02T00:00:00Z"
-    assert len(payload.detections) == len(rows)
+    assert payload.detections == []
+    assert len(list(payload.detections_source())) == len(rows)
     assert all("/search" not in path for path in seen)
     assert all("search(" not in query for query in queries)
 
@@ -442,7 +443,7 @@ def test_run_detection_never_persists_emails(clean_db):
         )
     assert not EMAIL.search(evidence_text), evidence_text
     assert not EMAIL.search(audit_text), audit_text
-    assert not EMAIL.search(json.dumps(payload.detections))
+    assert not EMAIL.search(json.dumps(list(payload.detections_source()), default=str))
     assert "<email>" in evidence_text
 
 
@@ -481,6 +482,7 @@ def test_run_detection_isolates_one_repo_failure(clean_db, monkeypatch):
         "octo/two: RuntimeError: boom in file channel",
     ]
     assert payload.detections == []
+    assert list(payload.detections_source()) == []
 
 
 def test_run_detection_cancelled_before_start_writes_nothing(clean_db):
@@ -647,6 +649,8 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
     assert header == EVIDENCE_CSV_HEADER
     path_cell = rows[0][EVIDENCE_CSV_HEADER.index("path")]
     assert path_cell == "CLAUDE.md"
+    assert rows[0][EVIDENCE_CSV_HEADER.index("run_id")] == str(run_id)
+    assert rows[0][EVIDENCE_CSV_HEADER.index("detected_at")]
 
 
 def test_summary_contributions_reproduce_batch_summary():
