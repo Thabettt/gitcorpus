@@ -14,6 +14,7 @@
     <span class="run-hash-wrap"><span class="mono" data-hash="{{ run.filter_hash }}">{{ run.hash_short }}</span></span>
   </div>
   {% include "partials/detect_status.html" %}
+  <p class="muted" id="run-elapsed">Time elapsed: {{ run.elapsed if run.elapsed else "—" }}</p>
   {% if detection.summary.skipped_channels %}
   <p class="flag warn">Local-clone scan skipped API-only channels: {{ detection.summary.skipped_channels | join(", ") }}.</p>
   {% endif %}

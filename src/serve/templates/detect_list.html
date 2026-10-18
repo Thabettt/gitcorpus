@@ -17,7 +17,7 @@
   <div class="table-wrap">
     <table id="detections-table" class="data-table">
       <thead>
-        <tr><th scope="col">Detection</th><th scope="col">From search</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Signals</th></tr>
+        <tr><th scope="col">Detection</th><th scope="col">From search</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col">Time elapsed</th><th scope="col">Signals</th></tr>
       </thead>
       <tbody>
       {% for item in detections %}
@@ -26,6 +26,7 @@
           <td><a href="/runs/{{ item.source_run_id }}">#{{ item.source_run_id }}</a></td>
           <td><span class="pill {{ item.status }}">{{ status_label(item.status) }}</span></td>
           <td>{{ item.started }}</td>
+          <td id="detection-{{ item.id }}-elapsed">{{ item.duration }}</td>
           <td>{% if item.summary.agents %}{{ item.summary.agents | length }} agents · {{ item.summary.repos_with_signal }} repos{% else %}—{% endif %}</td>
         </tr>
       {% endfor %}

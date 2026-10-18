@@ -30,6 +30,8 @@ from serve import errors
 from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
 from serve.pages import (
+    _elapsed_seconds,
+    _format_span,
     _item_count,
     _run_detail_summary,
     _stamp,
@@ -591,6 +593,7 @@ def register_detect(
                         "status": row["status"],
                         "source_run_id": row["source_run_id"],
                         "started": _stamp(row["created_at"]),
+                        "duration": _format_span(_elapsed_seconds(row)) or "—",
                         "summary": row["result_summary"] or {},
                     }
                     for row in rows

@@ -1075,6 +1075,52 @@ def test_detections_use_their_own_numbering(clean):
     assert f'data-field="run">run {second}</span>' in detail
 
 
+def test_detection_detail_shows_time_elapsed(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE runs SET started_at = now() - interval '2 hours', finished_at = now()"
+                " WHERE id = :id"
+            ),
+            {"id": detect_id},
+        )
+    client = make_client(clean)
+    response = client.get(f"/detections/{detect_id}")
+    assert response.status_code == 200
+    assert 'id="run-elapsed"' in response.text
+    assert "Time elapsed: 2h 0m" in response.text
+
+
+def test_detections_list_shows_time_elapsed(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    finished_id = seed_detect_run(clean, source)
+    queued_id = seed_detect_run(clean, source)
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE runs SET started_at = now() - interval '2 hours', finished_at = now()"
+                " WHERE id = :id"
+            ),
+            {"id": finished_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE runs SET status = 'queued', started_at = NULL, finished_at = NULL"
+                " WHERE id = :id"
+            ),
+            {"id": queued_id},
+        )
+    client = make_client(clean)
+    listing = client.get("/detections").text
+    assert '<th scope="col">Time elapsed</th>' in listing
+    assert f'<td id="detection-{finished_id}-elapsed">2h 0m</td>' in listing
+    assert f'<td id="detection-{queued_id}-elapsed">—</td>' in listing
+
+
 def test_detection_detail_paginates_repos(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
