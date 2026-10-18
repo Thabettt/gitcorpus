@@ -5,6 +5,7 @@ import hashlib
 import itertools
 import json
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -183,18 +184,35 @@ def _single_line(value: str) -> str:
     return value.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
 
 
+# Leading characters Excel evaluates as formulas (CSV injection); pre-quoted
+# with an apostrophe so spreadsheet apps show the literal text. Plain numbers
+# (+1.5, -75) are left untouched: Excel parses them as numbers, not formulas.
+_NUMERIC_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _excel_safe(text: str) -> str:
+    if not text:
+        return text
+    lead = text[0]
+    if lead == "=" or lead == "\t":
+        return "'" + text
+    if lead in ("+", "-") and not _NUMERIC_TEXT.fullmatch(text):
+        return "'" + text
+    return text
+
+
 def _csv_cell(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
-        return _single_line(value)
+        return _excel_safe(_single_line(value))
     return str(value)
 
 
 def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(_CSV_HEADER)
         for item in items:

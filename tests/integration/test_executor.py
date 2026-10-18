@@ -292,7 +292,7 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
     ]
     assert datetime.fromisoformat(bundle["ran_at"]).tzinfo is not None
 
-    with (directory / "corpus.csv").open(newline="", encoding="utf-8") as handle:
+    with (directory / "corpus.csv").open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
     assert rows == [
         CSV_HEADER,
@@ -440,7 +440,7 @@ def test_execute_run_empty_items_writes_header_only_csv(db: Engine, tmp_path):
     assert status["fetched"] == 0
     assert status["inserted"] == 0
     directory = tmp_path / FILTER_HASH / str(run_id)
-    with (directory / "corpus.csv").open(newline="", encoding="utf-8") as handle:
+    with (directory / "corpus.csv").open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
     assert rows == [CSV_HEADER]
     bundle = json.loads((directory / "bundle.json").read_text(encoding="utf-8"))

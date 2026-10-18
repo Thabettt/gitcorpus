@@ -299,7 +299,7 @@ def test_export_regenerates_json_and_csv_when_bundle_files_are_absent(clean: Eng
     assert document["ran_at"].endswith("Z")
     assert document["field_stats"] == {}
     assert document["items"] == [expected_snapshot()]
-    rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8"))))
+    rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
     assert rows == [
         [
             "id",
@@ -354,7 +354,7 @@ def test_export_regeneration_orders_rows_by_stargazers_desc_then_repo_id(clean: 
     assert csv_response.status_code == 200
     document = json.loads(json_response.content.decode("utf-8"))
     assert [item["repo_id"] for item in document["items"]] == [1296269, 2, 3]
-    rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8"))))
+    rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
     assert [row[0] for row in rows[1:]] == ["1296269", "2", "3"]
 
 
@@ -427,7 +427,7 @@ def test_export_bundle_streams_regenerated_content(clean: Engine, tmp_path):
     assert document["ran_at"].endswith("Z")
     assert document["field_stats"] == {}
     assert document["items"] == [expected_snapshot()]
-    rows = list(csv.reader(io.StringIO(b"".join(csv_chunks).decode("utf-8"))))
+    rows = list(csv.reader(io.StringIO(b"".join(csv_chunks).decode("utf-8-sig"))))
     assert rows == [
         [
             "id",

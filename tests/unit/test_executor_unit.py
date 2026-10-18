@@ -271,6 +271,35 @@ def test_csv_cell_flattens_newlines_to_literal_escapes():
     assert executor._csv_cell("plain text") == "plain text"
 
 
+def test_csv_cell_guards_excel_formula_leads():
+    assert executor._csv_cell("=SUM(A1)") == "'=SUM(A1)"
+    assert executor._csv_cell("+Added login") == "'+Added login"
+    assert executor._csv_cell("- qux") == "'- qux"
+    assert executor._csv_cell("-Authored-By: Claude") == "'-Authored-By: Claude"
+    assert executor._csv_cell("\tindented") == "'\tindented"
+    assert executor._csv_cell("\r\nnext") == "\\nnext"
+
+
+def test_csv_cell_leaves_numbers_and_safe_text_untouched():
+    assert executor._csv_cell(-75) == "-75"
+    assert executor._csv_cell(-1.5) == "-1.5"
+    assert executor._csv_cell("-75") == "-75"
+    assert executor._csv_cell("+1.5e3") == "+1.5e3"
+    assert executor._csv_cell(".5") == ".5"
+    assert executor._csv_cell("@scope/pkg") == "@scope/pkg"
+    assert executor._csv_cell("plain") == "plain"
+    assert executor._csv_cell("") == ""
+    assert executor._csv_cell(None) == ""
+
+
+def test_evidence_row_guards_formula_like_snippets_but_not_the_raw_json():
+    cells = _cells(
+        _evidence_row(channel="commit_trailer", evidence={"commit": "a1", "snippet": "- Fix it"})
+    )
+    assert cells["snippet"] == "'- Fix it"
+    assert json.loads(cells["evidence_json"])["snippet"] == "- Fix it"
+
+
 def test_evidence_row_flattens_snippet_and_keeps_evidence_json_newline_free():
     evidence = {"commit": "a1", "snippet": "first\n\nsecond", "propagated": True}
     cells = _cells(_evidence_row(channel="commit_trailer", evidence=evidence))

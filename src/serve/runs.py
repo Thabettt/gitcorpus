@@ -204,6 +204,7 @@ def _json_chunks(
 
 def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
     header_buffer = io.StringIO()
+    header_buffer.write("\ufeff")
     csv.writer(header_buffer).writerow(_CSV_HEADER)
     yield header_buffer.getvalue().encode("utf-8")
     for row in _item_rows(engine, run_id):

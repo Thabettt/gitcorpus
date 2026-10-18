@@ -451,6 +451,34 @@ def test_detections_export_renders_flat_evidence_csv(clean):
     assert trailer["commit_sha"] == "b2"
 
 
+def test_detections_export_guards_formula_like_cells_for_spreadsheets(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    rows = [
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "commit_trailer",
+            "evidence": {"commit": "b1", "snippet": "- Fix the cursor"},
+        },
+        {
+            "repo": 1,
+            "agent": "Codex",
+            "channel": "commit_trailer",
+            "evidence": {"commit": "b2", "snippet": '=HYPERLINK("http://x")'},
+        },
+    ]
+    detect_id = seed_detect_run_with_evidence(clean, source, rows)
+    client = make_client(clean)
+    body = client.get(f"/runs/{detect_id}/export?format=detections").content.decode("utf-8-sig")
+    exported = list(csv.DictReader(io.StringIO(body)))
+    by_commit = {row["commit_sha"]: row for row in exported}
+    assert by_commit["b1"]["snippet"] == "'- Fix the cursor"
+    assert by_commit["b2"]["snippet"] == '\'=HYPERLINK("http://x")'
+    assert json.loads(by_commit["b1"]["evidence_json"])["snippet"] == "- Fix the cursor"
+    assert json.loads(by_commit["b2"]["evidence_json"])["snippet"] == '=HYPERLINK("http://x")'
+
+
 def test_detections_export_is_single_line_and_reads_back(clean):
     from serve.runs import DETECT_REPO_CSV_HEADER
 
