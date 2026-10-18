@@ -218,6 +218,23 @@ def test_flush_status_shows_live_progress_while_running(clean, tmp_path, monkeyp
     assert not (clone_root / "detect-8").exists()
 
 
+def test_flush_follows_the_environment_clones_root(clean, tmp_path, monkeypatch):
+    env_root = tmp_path / "env-clones"
+    (env_root / "detect-51").mkdir(parents=True)
+    monkeypatch.setenv("GITCORPUS_CLONES_ROOT", str(env_root))
+    client = make_client(clean, clone_root=None)
+    client.get("/detections")
+    response = client.post(
+        "/detections/flush",
+        data={"csrf": csrf_token(client)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    status_text = _wait_for_flush(client)
+    assert "deleted 1 leftover" in status_text
+    assert not (env_root / "detect-51").exists()
+
+
 def _wait_for_flush(client: TestClient, timeout: float = 15.0) -> str:
     deadline = time.monotonic() + timeout
     text = ""

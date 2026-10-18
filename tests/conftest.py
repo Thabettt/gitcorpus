@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def reset_process_globals(monkeypatch: pytest.MonkeyPatch) -> None:
     secondary.reset()
     monkeypatch.delenv("GITCORPUS_ADAPTIVE", raising=False)
+    monkeypatch.delenv("GITCORPUS_CLONES_ROOT", raising=False)
 
 
 class UnsafeTestDatabase(RuntimeError):

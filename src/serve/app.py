@@ -348,7 +348,7 @@ def create_app(
     runner_factory: Callable[[Engine], Runner] | None = None,
     detect_runner_factory: Callable[[Engine], Runner] | None = None,
     runs_root: str = "runs",
-    clone_root: str = "clones",
+    clone_root: str | None = None,
     clock: Callable[[], float] = time.time,
     redis_ping: Callable[[], object] | None = None,
     token_present: Callable[[], bool] | None = None,
@@ -356,6 +356,10 @@ def create_app(
     find_count_factory: Callable[[], Callable[[str], int]] | None = None,
     clone_disk_free: Callable[[str], float] | None = None,
 ) -> FastAPI:
+    if clone_root is None:
+        from serve.detect import detect_clone_root
+
+        clone_root = detect_clone_root()
     loaders = _LazyLoaders()
     payload_cache = RunPayloadCache(ttl_seconds=CACHE_TTL_SECONDS, clock=clock)
     application = FastAPI(title="gitcorpus", version="0.0.1")
