@@ -320,7 +320,7 @@ def _fold_summary(
         "windows": dict(spec.windows),
         "commit_ratio": round(ratio, 4) if ratio is not None else None,
         "adoption_level": adoption_level(ratio),
-        "first_signal_at": min(firsts) if firsts else None,
+        "first_signal_at": min(firsts, key=_instant) if firsts else None,
         "partial_channels": partials,
     }
 

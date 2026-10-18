@@ -193,6 +193,75 @@ def test_history_channels_share_one_call_and_compute_window_stats():
     assert stats["committed_at"]["c1"] == "2026-01-02T00:00:00Z"
 
 
+def test_history_excludes_bot_ai_overlap_from_ratio():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/graphql"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "object": {
+                            "history": {
+                                "nodes": [
+                                    {
+                                        "oid": "c1",
+                                        "committedDate": "2026-01-02T00:00:00Z",
+                                        "message": "feat: human work",
+                                        "author": {
+                                            "name": "Jane",
+                                            "email": "jane@example.com",
+                                            "user": {"login": "jane"},
+                                        },
+                                        "committer": {
+                                            "name": "Jane",
+                                            "email": "jane@example.com",
+                                            "user": {"login": "jane"},
+                                        },
+                                    },
+                                    {
+                                        "oid": "c2",
+                                        "committedDate": "2026-01-03T00:00:00Z",
+                                        "message": (
+                                            "feat: bot work\n\n"
+                                            "Co-authored-by: Claude <noreply@anthropic.com>"
+                                        ),
+                                        "author": {
+                                            "name": "dependabot[bot]",
+                                            "email": (
+                                                "49699333+dependabot[bot]"
+                                                "@users.noreply.github.com"
+                                            ),
+                                            "user": {"login": "dependabot[bot]"},
+                                        },
+                                        "committer": {
+                                            "name": "dependabot[bot]",
+                                            "email": (
+                                                "49699333+dependabot[bot]"
+                                                "@users.noreply.github.com"
+                                            ),
+                                            "user": {"login": "dependabot[bot]"},
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    result = detect_history(make_deps(handler), "octo/repo", PACK, limit=100)
+    trailer, bot = result["commit_trailer"], result["bot"]
+    assert {h.evidence["commit"] for h in trailer.hits} == {"c2"}
+    assert {h.evidence["commit"] for h in bot.hits} == {"c2"}
+    stats = result["author"].stats
+    assert stats["commits"] == 1
+    assert stats["ai_oids"] == ()
+    assert stats["human_oids"] == ("c1",)
+    assert len(stats["ai_oids"]) + len(stats["human_oids"]) == stats["commits"]
+
+
 def test_history_matches_committer_only_identity():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/graphql"

@@ -277,6 +277,29 @@ def test_first_signal_at_uses_the_earliest_parsed_instant_for_mixed_offsets():
     assert orchestrator_module._first_signal_at(scan) == "2025-01-01T00:30:00+03:00"
 
 
+def test_fold_summary_uses_the_earliest_parsed_instant_for_mixed_offsets():
+    from detect.orchestrator import _fold_summary, _SummaryContribution
+
+    def contribution(first_signal_at: str | None) -> _SummaryContribution:
+        return _SummaryContribution(
+            unavailable=False,
+            has_signal=True,
+            agent_counts={},
+            channel_counts={},
+            partials={},
+            ai_count=0,
+            human_count=0,
+            first_signal_at=first_signal_at,
+        )
+
+    contributions = [
+        contribution("2026-01-01T00:30:00+03:00"),
+        contribution("2025-12-31T23:00:00Z"),
+    ]
+    summary = _fold_summary(contributions, make_options(1), PACK, len(contributions))
+    assert summary["first_signal_at"] == "2026-01-01T00:30:00+03:00"
+
+
 def test_run_detection_checkpoints_run_items_per_repo(clean_db):
     engine = clean_db()
     source_id = seed_source_run(engine)
