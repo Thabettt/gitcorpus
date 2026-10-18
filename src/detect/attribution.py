@@ -76,7 +76,7 @@ def _trailer_lines(message: str) -> list[str]:
     for index, line in enumerate(lines):
         if _TRAILER_LINE.match(line) or _FOOTER_LINE.match(line):
             extracts.append(line)
-        elif index > last_blank:
+        elif last_blank >= 0 and index > last_blank:
             token = _GENERIC_TOKEN_LINE.match(line)
             if token is not None and token.group(1).lower() not in _PROSE_TOKENS:
                 extracts.append(line)

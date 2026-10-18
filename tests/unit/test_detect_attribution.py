@@ -297,6 +297,12 @@ def test_generic_token_in_prose_does_not_match():
     assert hits == []
 
 
+def test_generic_token_lines_require_a_blank_line_separated_trailer_block():
+    assert match_commit_messages(PACK_2026_10_19, [("c1", "Jira: cursor position")]) == []
+    hits = match_commit_messages(PACK_2026_10_19, [("c2", "feat: work\n\nTracker: Cursor")])
+    assert [(h.agent, h.channel) for h in hits] == [("Cursor", "commit_trailer")]
+
+
 def test_commit_message_prefers_the_tier1_snippet():
     message = "Generated with Cursor\n\ncontact cursoragent@cursor.com for help"
     hits = match_commit_messages(PACK_2026_10_19, [("c1", message)])
