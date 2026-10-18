@@ -341,6 +341,7 @@ def detect_history(
     ai_oids = {hit.evidence.get("commit") for hit in (*author_hits, *trailer_hits)}
     bot_oids = {hit.evidence.get("commit") for hit in bot_hits}
     commit_oids = {oid for oid, _ in messages} - bot_oids
+    ai_oids &= commit_oids
     human_oids = commit_oids - ai_oids
     stats: dict[str, object] = {
         "commits": len(commit_oids),

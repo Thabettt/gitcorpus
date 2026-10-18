@@ -175,6 +175,29 @@ def test_detect_history_local_author_trailer_bot_and_stats():
     assert stats["committed_at"]["a2"] == "2026-01-03T00:00:00+00:00"
 
 
+_BOT_AI_OVERLAP_LOG = (
+    "b1\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+    "\x1f2026-02-01T00:00:00+00:00\x1ffeat: human work\x1e"
+    "\nb2\x1fdependabot[bot]\x1f49699333+dependabot[bot]@users.noreply.github.com"
+    "\x1fdependabot[bot]\x1f49699333+dependabot[bot]@users.noreply.github.com"
+    "\x1f2026-02-02T00:00:00+00:00\x1ffeat: bot work\n\n"
+    "Co-authored-by: Claude <noreply@anthropic.com>\x1e"
+)
+
+
+def test_detect_history_local_excludes_bot_ai_overlap_from_ratio():
+    repo = FakeRepo(lambda args: _BOT_AI_OVERLAP_LOG if args[0] == "log" else None)
+    results = detect_history_local(repo, PACK, limit=100)
+    author, trailer, bot = results["author"], results["commit_trailer"], results["bot"]
+    assert {h.evidence["commit"] for h in bot.hits} == {"b2"}
+    assert {h.evidence["commit"] for h in trailer.hits} == {"b2"}
+    stats = author.stats
+    assert stats["commits"] == 1
+    assert stats["ai_oids"] == ()
+    assert stats["human_oids"] == ("b1",)
+    assert len(stats["ai_oids"]) + len(stats["human_oids"]) == stats["commits"]
+
+
 def test_detect_history_local_empty_repository():
     repo = FakeRepo(lambda args: None if args[0] == "log" else "")
     results = detect_history_local(repo, PACK)

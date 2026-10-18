@@ -4,6 +4,7 @@ import contextvars
 from collections.abc import Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import insert, select, text
@@ -200,6 +201,14 @@ def _ratio_sets(scan: _RepoScan) -> tuple[set[str], set[str]]:
     return ai, human
 
 
+def _instant(value: str) -> datetime:
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = f"{text[:-1]}+00:00"
+    parsed = datetime.fromisoformat(text)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def _first_signal_at(scan: _RepoScan) -> str | None:
     dates: list[str] = []
     committed = scan.history_stats.get("committed_at") or {}
@@ -213,7 +222,7 @@ def _first_signal_at(scan: _RepoScan) -> str | None:
             number = hit.evidence.get("pr")
             if number is not None and number in created:
                 dates.append(str(created[number]))
-    return min(dates) if dates else None
+    return min(dates, key=_instant) if dates else None
 
 
 def _repo_document(scan: _RepoScan) -> dict:

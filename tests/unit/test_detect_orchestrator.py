@@ -253,6 +253,30 @@ def test_run_detection_writes_evidence_and_never_searches(clean_db):
     assert all("search(" not in query for query in queries)
 
 
+def test_first_signal_at_uses_the_earliest_parsed_instant_for_mixed_offsets():
+    from detect.attribution import Hit
+    from detect.orchestrator import _RepoScan
+
+    scan = _RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[
+            Hit("Claude Code", "commit_trailer", {"commit": "a1"}),
+            Hit("Claude Code", "commit_trailer", {"commit": "a2"}),
+        ],
+        results={},
+        pr_result=None,
+        history_stats={
+            "committed_at": {
+                "a1": "2025-01-01T00:30:00+03:00",
+                "a2": "2024-12-31T23:00:00Z",
+            }
+        },
+    )
+    assert orchestrator_module._first_signal_at(scan) == "2025-01-01T00:30:00+03:00"
+
+
 def test_run_detection_checkpoints_run_items_per_repo(clean_db):
     engine = clean_db()
     source_id = seed_source_run(engine)
