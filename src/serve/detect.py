@@ -353,7 +353,11 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
         facet_clauses.append("channel = :channel")
         facet_params["channel"] = channel_filter
     if filters["signal"]:
-        facet_clauses.append("channel <> 'bot'")
+        facet_clauses.append(
+            "EXISTS (SELECT 1 FROM detection_repo_filters s"
+            " WHERE s.run_id = detection_repo_filters.run_id"
+            " AND s.repo_id = detection_repo_filters.repo_id AND s.channel <> 'bot')"
+        )
     facet_where = "".join(f" AND {clause}" for clause in facet_clauses)
 
     unfiltered_total = _item_count(engine, run_id)
