@@ -66,6 +66,27 @@ def boundary_wrap(pattern: str) -> str:
     return _BOUNDARY.format(pattern)
 
 
+_BOT_SUFFIX = re.compile(r"(?:\[bot\]|-bot)$", re.IGNORECASE)
+_NOREPLY = re.compile(r"^(?:\d+\+)?(?P<login>[^@+]+)@users\.noreply\.github\.com$", re.IGNORECASE)
+
+
+def _normalize_login(value: str) -> str:
+    return _BOT_SUFFIX.sub("", (value or "").strip()).lower()
+
+
+def _email_login(value: str) -> str:
+    address = (value or "").strip()
+    match = _NOREPLY.match(address)
+    if match is not None:
+        return _normalize_login(match.group("login"))
+    return _normalize_login(address.split("@", 1)[0])
+
+
+def _is_multi_token(pattern: str) -> bool:
+    plain = re.sub(r"\\(.)", r"\1", pattern)
+    return " " in plain or "\t" in plain or "-" in plain
+
+
 def _trailer_lines(message: str) -> list[str]:
     lines = message.split("\n")
     last_blank = -1
@@ -91,9 +112,60 @@ class Hit:
 
 
 @dataclass(frozen=True)
+class IdentityPattern:
+    regex: re.Pattern[str]
+    agent: str
+    multi: bool = False
+
+
+@dataclass(frozen=True)
+class IdentityChannel:
+    email: tuple[IdentityPattern, ...]
+    login_substring: tuple[IdentityPattern, ...]
+    login_exact: tuple[IdentityPattern, ...]
+    name: tuple[IdentityPattern, ...]
+    ambiguous: tuple[tuple[str, re.Pattern[str], str], ...]
+
+
+@dataclass(frozen=True)
 class ChannelRegex:
     regex: re.Pattern[str] | None
     names: Mapping[str, str]
+    identity: IdentityChannel | None = None
+
+
+def _build_identity(patterns: Sequence[Pattern]) -> IdentityChannel:
+    email: list[IdentityPattern] = []
+    login_substring: list[IdentityPattern] = []
+    login_exact: list[IdentityPattern] = []
+    name: list[IdentityPattern] = []
+    ambiguous: list[tuple[str, re.Pattern[str], str]] = []
+    for pattern in patterns:
+        raw = pattern.pattern
+        if is_ambiguous(raw):
+            ambiguous.append(
+                (raw.lower(), re.compile(boundary_wrap(raw), re.IGNORECASE), pattern.agent)
+            )
+            continue
+        multi = _is_multi_token(raw)
+        if "@" in raw:
+            email.append(IdentityPattern(re.compile(raw, re.IGNORECASE), pattern.agent))
+        name.append(
+            IdentityPattern(re.compile(boundary_wrap(raw), re.IGNORECASE), pattern.agent, multi)
+        )
+        if multi:
+            login_substring.append(
+                IdentityPattern(re.compile(boundary_wrap(raw), re.IGNORECASE), pattern.agent, True)
+            )
+        else:
+            login_exact.append(IdentityPattern(re.compile(raw, re.IGNORECASE), pattern.agent))
+    return IdentityChannel(
+        email=tuple(email),
+        login_substring=tuple(login_substring),
+        login_exact=tuple(login_exact),
+        name=tuple(name),
+        ambiguous=tuple(ambiguous),
+    )
 
 
 def redact_emails(text: str) -> str:
@@ -137,6 +209,7 @@ def build_channel_regex(
     is_files: bool = False,
     is_authors: bool = False,
 ) -> ChannelRegex:
+    identity = _build_identity(patterns) if is_authors else None
     groups: dict[str, list[str]] = {}
     names: dict[str, str] = {}
     for pattern in patterns:
@@ -152,10 +225,10 @@ def build_channel_regex(
             raw = boundary_wrap(raw)
         groups.setdefault(name, []).append(raw)
     if not groups:
-        return ChannelRegex(regex=None, names={})
+        return ChannelRegex(regex=None, names={}, identity=identity)
     parts = [f"(?P<{name}>{'|'.join(pats)})" for name, pats in groups.items()]
     flags = re.IGNORECASE if is_authors else 0
-    return ChannelRegex(regex=re.compile("|".join(parts), flags), names=names)
+    return ChannelRegex(regex=re.compile("|".join(parts), flags), names=names, identity=identity)
 
 
 _MATCHER_CACHE: dict[str, dict[str, ChannelRegex]] = {}
@@ -223,6 +296,21 @@ def match_files(
     return dedupe_hits(hits)
 
 
+def _login_agents(identity: IdentityChannel, login: str) -> list[str]:
+    normalized = _normalize_login(login)
+    agents: list[str] = []
+    for pattern in identity.login_substring:
+        if pattern.regex.search(login) and pattern.agent not in agents:
+            agents.append(pattern.agent)
+    for pattern in identity.login_exact:
+        if pattern.regex.fullmatch(normalized) and pattern.agent not in agents:
+            agents.append(pattern.agent)
+    for word, _regex, agent in identity.ambiguous:
+        if normalized == word and agent not in agents:
+            agents.append(agent)
+    return agents
+
+
 def _match_values(
     channel: ChannelRegex,
     values: Iterable[str],
@@ -230,11 +318,17 @@ def _match_values(
     name: str,
     key: str,
 ) -> list[Hit]:
-    if channel.regex is None:
+    if channel.regex is None and channel.identity is None:
         return []
     hits: list[Hit] = []
     for value in values:
         if not value:
+            continue
+        if channel.identity is not None:
+            for agent in _login_agents(channel.identity, value):
+                hits.append(Hit(agent, name, {key: value[:300], "match": value[:100]}))
+            continue
+        if channel.regex is None:
             continue
         for match in channel.regex.finditer(value):
             if match.lastgroup is None:
@@ -249,12 +343,70 @@ def _match_values(
     return hits
 
 
+def _match_identity_entries(
+    identity: IdentityChannel,
+    entries: Iterable[Mapping[str, object]],
+    *,
+    name: str,
+) -> list[Hit]:
+    hits: list[Hit] = []
+    for entry in entries:
+        commit = str(entry.get("commit") or "")
+        login = str(entry.get("login") or "")
+        email = str(entry.get("email") or "")
+        person = str(entry.get("name") or "")
+        matched: dict[str, str] = {}
+
+        if email:
+            for pattern in identity.email:
+                if pattern.regex.search(email):
+                    matched.setdefault(pattern.agent, "email")
+            email_login = _email_login(email)
+            for word, _regex, agent in identity.ambiguous:
+                if email_login == word:
+                    matched.setdefault(agent, "email")
+
+        if login:
+            normalized = _normalize_login(login)
+            for pattern in identity.login_substring:
+                if pattern.regex.search(login):
+                    matched.setdefault(pattern.agent, "login")
+            for pattern in identity.login_exact:
+                if pattern.regex.fullmatch(normalized):
+                    matched.setdefault(pattern.agent, "login")
+            for word, _regex, agent in identity.ambiguous:
+                if normalized == word:
+                    matched.setdefault(agent, "login")
+
+        if person:
+            name_agents: list[str] = []
+            multi_agents: set[str] = set()
+            for pattern in identity.name:
+                if pattern.regex.search(person):
+                    if pattern.agent not in name_agents:
+                        name_agents.append(pattern.agent)
+                    if pattern.multi:
+                        multi_agents.add(pattern.agent)
+            corroborated = set(matched) | multi_agents
+            for _word, regex, agent in identity.ambiguous:
+                if agent in corroborated and regex.search(person):
+                    matched.setdefault(agent, "name")
+            for agent in name_agents:
+                matched.setdefault(agent, "name")
+
+        for agent, field in matched.items():
+            hits.append(Hit(agent, name, {"login": login, "commit": commit, "field": field}))
+    return hits
+
+
 def _match_identity_fields(
     channel: ChannelRegex,
     entries: Iterable[Mapping[str, object]],
     *,
     name: str,
 ) -> list[Hit]:
+    if channel.identity is not None:
+        return _match_identity_entries(channel.identity, entries, name=name)
     if channel.regex is None:
         return []
     hits: list[Hit] = []

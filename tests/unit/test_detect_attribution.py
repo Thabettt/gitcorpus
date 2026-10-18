@@ -13,6 +13,7 @@ from detect.attribution import (
     is_ambiguous,
     is_noise_commit,
     match_author_identities,
+    match_bots,
     match_branches,
     match_commit_messages,
     match_files,
@@ -121,6 +122,109 @@ def test_author_evidence_never_contains_the_identity_value():
     )
     assert [(h.agent, h.channel) for h in hits] == [("Claude Code", "author")]
     assert hits[0].evidence == {"login": "jane", "commit": "c1", "field": "email"}
+
+
+def test_identity_fields_reject_probe_false_positives():
+    cases = [
+        {"login": "", "name": "Jean-Claude Dupont", "email": "jc@corp.fr", "commit": "c1"},
+        {
+            "login": "",
+            "name": "Claude Bernard",
+            "email": "claude.bernard@corp.fr",
+            "commit": "c2",
+        },
+        {"login": "", "name": "", "email": "raider@corp.com", "commit": "c3"},
+        {"login": "raider123", "name": "", "email": "", "commit": "c4"},
+        {"login": "decline-cli", "name": "", "email": "", "commit": "c5"},
+        {"login": "cursor-service", "name": "", "email": "", "commit": "c6"},
+    ]
+    assert match_author_identities(PACK_2026_10_19, cases) == []
+
+
+def test_identity_fields_retain_genuine_probe_cases():
+    claude = match_author_identities(
+        PACK_2026_10_19,
+        [{"login": "", "name": "Claude", "email": "noreply@anthropic.com", "commit": "c1"}],
+    )
+    assert [(h.agent, h.channel, h.evidence["field"]) for h in claude] == [
+        ("Claude Code", "author", "email")
+    ]
+
+    claude_code = match_author_identities(
+        PACK_2026_10_19,
+        [
+            {
+                "login": "",
+                "name": "Claude Code",
+                "email": "noreply@anthropic.com",
+                "commit": "c2",
+            }
+        ],
+    )
+    assert {(h.agent, h.evidence["field"]) for h in claude_code} == {("Claude Code", "email")}
+
+    noreply_bot = match_author_identities(
+        PACK_2026_10_19,
+        [
+            {
+                "login": "",
+                "name": "",
+                "email": "1234+claude[bot]@users.noreply.github.com",
+                "commit": "c3",
+            }
+        ],
+    )
+    assert [(h.agent, h.evidence["field"]) for h in noreply_bot] == [("Claude Code", "email")]
+
+    aider = match_author_identities(
+        PACK_2026_10_19,
+        [{"login": "", "name": "", "email": "aider@users.noreply.github.com", "commit": "c4"}],
+    )
+    assert [(h.agent, h.evidence["field"]) for h in aider] == [("Aider", "email")]
+
+    copilot = match_author_identities(
+        PACK_2026_10_19,
+        [{"login": "copilot-swe-agent", "name": "", "email": "", "commit": "c5"}],
+    )
+    assert [(h.agent, h.evidence["field"]) for h in copilot] == [("Copilot", "login")]
+
+
+def test_login_rule_applies_to_pr_authors_and_issue_participants():
+    prs = [
+        {"number": 3, "author": "copilot-swe-agent"},
+        {"number": 4, "author": "cursor-service"},
+        {"number": 5, "author": "decline-cli"},
+        {"number": 6, "author": "raider123"},
+    ]
+    assert [(h.agent, h.evidence["pr"]) for h in match_pr_authors(PACK_2026_10_19, prs)] == [
+        ("Copilot", 3)
+    ]
+
+    entries = [
+        {"login": "copilot-swe-agent", "number": 9, "role": "assignee"},
+        {"login": "cursor-service", "number": 9, "role": "commenter"},
+        {"login": "decline-cli", "number": 9, "role": "commenter"},
+    ]
+    assert [
+        (h.agent, h.evidence["login"], h.evidence["role"])
+        for h in match_issue_participants(PACK_2026_10_19, entries)
+    ] == [("Copilot", "copilot-swe-agent", "assignee")]
+
+
+def test_match_bots_keeps_literal_login_patterns():
+    hits = match_bots(
+        PACK_2026_10_19,
+        [
+            {
+                "login": "dependabot[bot]",
+                "name": "dependabot[bot]",
+                "email": "49699333+dependabot[bot]@users.noreply.github.com",
+                "commit": "c1",
+            }
+        ],
+    )
+    assert {h.agent for h in hits} == {"dependabot"}
+    assert {h.evidence["field"] for h in hits} == {"login", "name", "email"}
 
 
 def test_commit_messages_redact_emails_and_skip_noise():
