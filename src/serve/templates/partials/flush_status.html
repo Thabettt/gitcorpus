@@ -1,0 +1,7 @@
+{% if flush.phase in ("scanning", "deleting") %}<div id="flush-status" hx-get="/partials/detections/flush/status" hx-trigger="every 1s [document.visibilityState === 'visible']" hx-swap="outerHTML">
+  <p class="badge" id="flush-result">Flushing repos: {{ flush.done }}/{{ flush.total }} scanned · deleted {{ flush.deleted }}{% if flush.kept %} · kept {{ flush.kept }}{% endif %}{% if flush.failed %} · {{ flush.failed }} stuck{% endif %}{% if flush.current %} · {{ flush.current }}{% endif %}</p>
+</div>{% elif flush.phase == "done" %}<div id="flush-status">
+  <p class="badge" id="flush-result">Flush repos: deleted {{ flush.deleted }} leftover(s){% if flush.kept %} · kept {{ flush.kept }} (active scans){% endif %}{% if flush.failed %} · {{ flush.failed }} stuck (locked — stop the run or retry){% endif %}</p>
+</div>{% elif flush.phase == "error" %}<div id="flush-status">
+  <p class="badge" id="flush-result">Flush repos failed: {{ flush.error }}</p>
+</div>{% endif -%}

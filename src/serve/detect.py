@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,56 @@ DETECTION_REPO_EVIDENCE_CAP = 300
 
 def detect_clone_root() -> str:
     return os.environ.get("GITCORPUS_CLONES_ROOT", "clones")
+
+
+_FLUSH_LOCK = threading.Lock()
+_FLUSH_STATE: dict[str, object] = {"phase": "idle"}
+
+
+def _flush_view() -> dict[str, object]:
+    """Read the flush state for a page render; a finished run shows once, then clears."""
+    with _FLUSH_LOCK:
+        view = dict(_FLUSH_STATE)
+        if view.get("phase") in ("done", "error"):
+            _FLUSH_STATE.clear()
+            _FLUSH_STATE["phase"] = "idle"
+    return view
+
+
+def _flush_snapshot() -> dict[str, object]:
+    with _FLUSH_LOCK:
+        return dict(_FLUSH_STATE)
+
+
+def _flush_leftovers(clone_root: str, active: set[int], state: dict[str, object]) -> None:
+    candidates = [
+        path
+        for path in sorted(Path(clone_root).glob("detect-*"))
+        if path.name[len("detect-") :].isdigit()
+    ]
+    state.update(
+        {
+            "phase": "deleting",
+            "total": len(candidates),
+            "done": 0,
+            "deleted": 0,
+            "kept": 0,
+            "failed": 0,
+            "current": "",
+        }
+    )
+    for path in candidates:
+        if int(path.name[len("detect-") :]) in active:
+            state["kept"] = int(state["kept"]) + 1
+        else:
+            state["current"] = path.name
+            _remove_tree(path)
+            if path.exists():
+                state["failed"] = int(state["failed"]) + 1
+            else:
+                state["deleted"] = int(state["deleted"]) + 1
+        state["done"] = int(state["done"]) + 1
+    state["current"] = ""
 
 
 def build_detect_runner(engine: Engine) -> Runner:
@@ -420,9 +471,7 @@ def register_detect(
                 "page": page_number,
                 "pages": pages,
                 "total": total,
-                "flushed": request.query_params.get("flushed"),
-                "kept": request.query_params.get("kept"),
-                "failed": request.query_params.get("failed"),
+                "flush": _flush_view(),
                 "csrf_token": request.state.csrf_token,
             },
         )
@@ -432,40 +481,55 @@ def register_detect(
         if not await validate_csrf(request):
             return errors.csrf_error_page(request)
         engine = engine_factory()
-
-        def flush() -> dict[str, list[str] | int]:
-            with engine.connect() as connection:
-                active = {
-                    int(run_id)
-                    for run_id in connection.execute(
-                        select(Runs.id).where(
-                            Runs.kind == "detect", Runs.status.in_(("queued", "running"))
-                        )
-                    ).scalars()
+        with _FLUSH_LOCK:
+            if _FLUSH_STATE.get("phase") in ("scanning", "deleting"):
+                return RedirectResponse("/detections", status_code=303)
+            _FLUSH_STATE.clear()
+            _FLUSH_STATE.update(
+                {
+                    "phase": "scanning",
+                    "total": 0,
+                    "done": 0,
+                    "deleted": 0,
+                    "kept": 0,
+                    "failed": 0,
+                    "current": "",
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "finished_at": None,
+                    "error": None,
                 }
-            deleted = 0
-            kept: list[str] = []
-            failed: list[str] = []
-            for path in sorted(Path(clone_root).glob("detect-*")):
-                suffix = path.name[len("detect-") :]
-                if not suffix.isdigit():
-                    continue
-                if int(suffix) in active:
-                    kept.append(path.name)
-                    continue
-                _remove_tree(path)
-                if path.exists():
-                    failed.append(path.name)
-                else:
-                    deleted += 1
-            return {"deleted": deleted, "kept": kept, "failed": failed}
+            )
 
-        result = await run_in_threadpool(flush)
-        deleted = int(result["deleted"])
-        kept = len(result["kept"])
-        failed = len(result["failed"])
-        return RedirectResponse(
-            f"/detections?flushed={deleted}&kept={kept}&failed={failed}", status_code=303
+        def run_flush() -> None:
+            try:
+                with engine.connect() as connection:
+                    active = {
+                        int(run_id)
+                        for run_id in connection.execute(
+                            select(Runs.id).where(
+                                Runs.kind == "detect",
+                                Runs.status.in_(("queued", "running")),
+                            )
+                        ).scalars()
+                    }
+                _flush_leftovers(clone_root, active, _FLUSH_STATE)
+            except Exception as exc:
+                _FLUSH_STATE["phase"] = "error"
+                _FLUSH_STATE["error"] = f"{type(exc).__name__}: {exc}"
+            else:
+                _FLUSH_STATE["phase"] = "done"
+            finally:
+                _FLUSH_STATE["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+        threading.Thread(target=run_flush, name="detect-flush", daemon=True).start()
+        return RedirectResponse("/detections", status_code=303)
+
+    @application.get("/partials/detections/flush/status", response_class=HTMLResponse)
+    def detections_flush_status(request: Request):
+        return templates.TemplateResponse(
+            request,
+            "partials/flush_status.html",
+            {"flush": _flush_snapshot(), "csrf_token": request.state.csrf_token},
         )
 
     @application.get("/detections/new", response_class=HTMLResponse)

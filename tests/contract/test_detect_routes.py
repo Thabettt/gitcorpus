@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from alembic import command
@@ -14,6 +15,17 @@ from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect
 @pytest.fixture(scope="module", autouse=True)
 def schema(alembic_config):
     command.upgrade(alembic_config, "head")
+
+
+@pytest.fixture(autouse=True)
+def _reset_flush_state():
+    from serve import detect as detect_module
+
+    detect_module._FLUSH_STATE.clear()
+    detect_module._FLUSH_STATE["phase"] = "idle"
+    yield
+    detect_module._FLUSH_STATE.clear()
+    detect_module._FLUSH_STATE["phase"] = "idle"
 
 
 @pytest.fixture()
@@ -167,13 +179,54 @@ def test_flush_repos_removes_leftover_detect_clones_but_keeps_active_ones(clean,
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/detections?flushed=1&kept=1&failed=0"
+    assert response.headers["location"] == "/detections"
+    status_text = _wait_for_flush(client)
+    assert "deleted 1 leftover" in status_text
+    assert "kept 1 (active scans)" in status_text
     assert not (clone_root / "detect-41").exists()
     assert (clone_root / f"detect-{active}").exists()
     assert (clone_root / "find-hash").exists()
-    banner = client.get(response.headers["location"]).text
-    assert "deleted 1 leftover" in banner
-    assert "kept 1 (active scans)" in banner
+
+
+def test_flush_status_shows_live_progress_while_running(clean, tmp_path, monkeypatch):
+    from serve import detect as detect_module
+
+    clone_root = tmp_path / "clones"
+    (clone_root / "detect-7").mkdir(parents=True)
+    (clone_root / "detect-8").mkdir(parents=True)
+    real_remove = detect_module._remove_tree
+
+    def slow_remove(path):
+        time.sleep(0.4)
+        real_remove(path)
+
+    monkeypatch.setattr(detect_module, "_remove_tree", slow_remove)
+    client = make_client(clean, clone_root=str(clone_root))
+    client.get("/detections")
+    response = client.post(
+        "/detections/flush",
+        data={"csrf": csrf_token(client)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    live = client.get("/partials/detections/flush/status").text
+    assert "Flushing repos:" in live
+    assert 'hx-get="/partials/detections/flush/status"' in live
+    finished = _wait_for_flush(client)
+    assert "deleted 2 leftover" in finished
+    assert not (clone_root / "detect-7").exists()
+    assert not (clone_root / "detect-8").exists()
+
+
+def _wait_for_flush(client: TestClient, timeout: float = 15.0) -> str:
+    deadline = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < deadline:
+        text = client.get("/partials/detections/flush/status").text
+        if "Flush repos: deleted" in text or "Flush repos failed" in text:
+            return text
+        time.sleep(0.1)
+    pytest.fail(f"flush never finished; last status: {text!r}")
 
 
 def test_detections_list_is_ordered_newest_id_first_even_with_older_timestamps(clean):
