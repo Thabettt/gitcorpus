@@ -102,9 +102,34 @@
       {% if run.polling %}
       <p class="muted">Exports unlock when the run finishes.</p>
       {% else %}
-      <a id="detection-export" class="button" href="/runs/{{ run.id }}/export?format=detections">Export evidence CSV</a>
-      <a class="button" href="/runs/{{ run.id }}/export?format=json">Export JSON</a>
-      <a class="button" href="/runs/{{ run.id }}/export?format=csv">Export CSV</a>
+      <form method="get" action="/runs/{{ run.id }}/export" class="export-group">
+        <select class="field-input" name="format" id="detection-export-evidence-format" aria-label="Evidence export format">
+          <option value="detections">CSV — one row per evidence item</option>
+          <option value="detections-json">JSON — one object per evidence item</option>
+        </select>
+        <button class="button" type="submit" id="detection-export-evidence">Export evidence</button>
+        <details class="info-pop">
+          <summary aria-label="What the evidence export contains">i</summary>
+          <div class="info-pop-body">
+            <p>This file carries every stored evidence row for the run — agent, channel, and the commit, path, or PR details — with the raw evidence JSON, regenerated live from the database so nothing is capped by Excel's row limit.</p>
+            <p>CSV is a flat table for spreadsheets; JSON preserves the nested evidence objects (and carries the exact detected-at moment).</p>
+          </div>
+        </details>
+      </form>
+      <form method="get" action="/runs/{{ run.id }}/export" class="export-group">
+        <select class="field-input" name="format" id="detection-export-run-format" aria-label="Repos export format">
+          <option value="csv">CSV — one row per scanned repo</option>
+          <option value="json">JSON — repos with detection rollup</option>
+        </select>
+        <button class="button" type="submit" id="detection-export-run">Export repos</button>
+        <details class="info-pop">
+          <summary aria-label="What the repos export contains">i</summary>
+          <div class="info-pop-body">
+            <p>One row per scanned repo in CSV, one object per repo in JSON — the corpus fields plus a detection rollup: agents, adoption level, commit ratio, and per-channel evidence counts.</p>
+            <p>Use it to join detection results back onto the search corpus. CSV and JSON hold the same columns; the filenames and the tools that open them differ.</p>
+          </div>
+        </details>
+      </form>
       {% endif %}
     </div>
   </div>

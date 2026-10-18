@@ -339,7 +339,7 @@ def test_detection_detail_lives_under_detections(clean):
     assert response.status_code == 200
     assert "Detection" in response.text
     assert "CLAUDE.md" in response.text
-    assert "Export evidence CSV" in response.text
+    assert 'id="detection-export-evidence"' in response.text
     assert "Windowed commit ratio" in response.text
 
 
@@ -601,10 +601,101 @@ def test_detect_export_refuses_while_run_is_unfinished(clean):
             {"id": detect_id},
         )
     client = make_client(clean)
-    for fmt in ("detections", "csv", "json"):
+    for fmt in ("detections", "detections-json", "csv", "json"):
         response = client.get(f"/runs/{detect_id}/export?format={fmt}")
         assert response.status_code == 409
         assert response.json()["error"] == "run_not_ready"
+
+
+def test_detect_export_forms_offer_csv_and_json(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+    response = client.get(f"/detections/{detect_id}")
+    assert response.status_code == 200
+    text = response.text
+    assert f'<form method="get" action="/runs/{detect_id}/export" class="export-group">' in text
+    assert text.count('class="export-group"') == 2
+    assert 'id="detection-export-evidence-format"' in text
+    assert '<option value="detections">CSV — one row per evidence item</option>' in text
+    assert '<option value="detections-json">JSON — one object per evidence item</option>' in text
+    assert 'id="detection-export-evidence"' in text
+    assert ">Export evidence</button>" in text
+    assert 'id="detection-export-run-format"' in text
+    assert '<option value="csv">CSV — one row per scanned repo</option>' in text
+    assert '<option value="json">JSON — repos with detection rollup</option>' in text
+    assert 'id="detection-export-run"' in text
+    assert ">Export repos</button>" in text
+    assert "every stored evidence row" in text
+    assert "Excel's row limit" in text
+    assert "JSON preserves the nested evidence objects" in text
+    assert "one row per scanned repo" in text
+    assert "detection rollup" in text
+    assert "Use it to join detection results back onto the search corpus" in text
+    assert '<a id="detection-export"' not in text
+
+
+def test_detect_export_evidence_json_streams_all_rows(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    rows = [
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "file",
+            "evidence": {"path": "CLAUDE.md", "size": 12},
+        },
+        {
+            "repo": 1,
+            "agent": "Codex",
+            "channel": "pr_metadata",
+            "evidence": {"pr": 7, "commit": "a1", "propagated": True},
+        },
+        {
+            "repo": 2,
+            "agent": "Claude Code",
+            "channel": "commit_trailer",
+            "evidence": {"commit": "b2", "snippet": "Co-authored-by: Claude"},
+        },
+    ]
+    detect_id = seed_detect_run_with_evidence(clean, source, rows)
+    client = make_client(clean)
+    response = client.get(f"/runs/{detect_id}/export?format=detections-json")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers.get("x-gitcorpus-regenerated") == "true"
+    assert (
+        f'filename="gitcorpus-detect-{detect_id}-evidence.json"'
+        in response.headers["content-disposition"]
+    )
+    payload = json.loads(response.text)
+    with clean.connect() as connection:
+        stored = connection.execute(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+            {"run": detect_id},
+        ).scalar_one()
+    assert isinstance(payload, list)
+    assert len(payload) == stored == len(rows)
+    first = payload[0]
+    assert set(first) == {
+        "run_id",
+        "repo_id",
+        "full_name",
+        "agent",
+        "channel",
+        "pack_version",
+        "detected_at",
+        "evidence",
+    }
+    assert first["run_id"] == detect_id
+    assert first["repo_id"] == 1
+    assert first["full_name"] == "octo/one"
+    assert first["agent"] == "Claude Code"
+    assert first["channel"] == "file"
+    assert first["pack_version"] == "test-pack"
+    assert first["detected_at"].endswith("Z")
+    assert first["evidence"] == {"path": "CLAUDE.md", "size": 12}
 
 
 def test_detections_export_streams_bounded_batches(clean):
@@ -633,6 +724,34 @@ def test_detections_export_streams_bounded_batches(clean):
     assert sum(sizes) == 5
 
 
+def test_detections_json_export_streams_bounded_batches(clean):
+    from serve.runs import _detections_json_chunks
+
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    rows = [
+        {
+            "repo": 1,
+            "agent": "Claude Code",
+            "channel": "file",
+            "evidence": {"path": f"file-{index}.md"},
+        }
+        for index in range(5)
+    ]
+    detect_id = seed_detect_run_with_evidence(clean, source, rows)
+    chunks = list(_detections_json_chunks(clean, detect_id, batch_rows=2))
+    assert chunks[0] == b"["
+    assert chunks[-1] == b"]"
+    partitions = chunks[1:-1]
+    assert [part.count(b'"run_id"') for part in partitions] == [2, 2, 1]
+    assert partitions[0].startswith(b"{")
+    assert all(part.startswith(b",") for part in partitions[1:])
+    payload = json.loads(b"".join(chunks).decode("utf-8"))
+    assert [item["evidence"]["path"] for item in payload] == [
+        f"file-{index}.md" for index in range(5)
+    ]
+
+
 def test_detection_export_buttons_hide_until_the_run_finishes(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
@@ -644,8 +763,8 @@ def test_detection_export_buttons_hide_until_the_run_finishes(clean):
             {"id": detect_id},
         )
     running = client.get(f"/detections/{detect_id}")
-    assert "Export evidence CSV" not in running.text
-    assert "Export CSV" not in running.text
+    assert ">Export evidence</button>" not in running.text
+    assert ">Export repos</button>" not in running.text
     assert "Exports unlock when the run finishes." in running.text
     with clean.begin() as connection:
         connection.execute(
@@ -653,7 +772,8 @@ def test_detection_export_buttons_hide_until_the_run_finishes(clean):
             {"id": detect_id},
         )
     done = client.get(f"/detections/{detect_id}")
-    assert "Export evidence CSV" in done.text
+    assert ">Export evidence</button>" in done.text
+    assert ">Export repos</button>" in done.text
 
 
 def test_options_page_has_search_and_select_all_controls(clean):

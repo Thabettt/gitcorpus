@@ -2031,6 +2031,13 @@ kbd {
   text-transform: none;
   top: 0.45rem;
 }
+/* Export groups in the detection evidence panel head */
+.export-group {
+  position: relative;
+}
+.export-group .info-pop {
+  top: 0.35rem;
+}
 .info-pop > summary {
   align-items: center;
   border: 1px solid var(--gc-border-strong);

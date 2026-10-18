@@ -32,7 +32,12 @@ from lib.deadlines import clone_timeout_seconds
 from serve.executor import _CSV_HEADER, EVIDENCE_CSV_HEADER, _csv_cell, evidence_csv_row
 from store.models import Repo, RunItem, Runs
 
-_MEDIA_TYPES = {"json": "application/json", "csv": "text/csv", "detections": "text/csv"}
+_MEDIA_TYPES = {
+    "json": "application/json",
+    "csv": "text/csv",
+    "detections": "text/csv",
+    "detections-json": "application/json",
+}
 _BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv", "detections": "detections.csv"}
 
 DETECT_REPO_CSV_HEADER = [
@@ -288,6 +293,40 @@ def _detections_chunks(
             yield buffer.getvalue().encode("utf-8")
 
 
+def _detection_json_object(row) -> dict:
+    return {
+        "run_id": row[6],
+        "repo_id": row[1],
+        "full_name": row[0],
+        "agent": row[2],
+        "channel": row[3],
+        "pack_version": row[5],
+        "detected_at": _iso(row[7]),
+        "evidence": row[4],
+    }
+
+
+def _detections_json_chunks(
+    engine: Engine, run_id: int, *, batch_rows: int = EVIDENCE_BATCH_ROWS
+) -> Iterator[bytes]:
+    yield b"["
+    with engine.connect() as connection:
+        result = connection.execution_options(stream_results=True).execute(
+            _EVIDENCE_STREAM_SQL, {"run": run_id}
+        )
+        first = True
+        for partition in result.partitions(max(1, batch_rows)):
+            objects = [
+                json.dumps(_detection_json_object(row), ensure_ascii=False) for row in partition
+            ]
+            if not objects:
+                continue
+            joined = (b"" if first else b",") + b",".join(part.encode("utf-8") for part in objects)
+            first = False
+            yield joined
+    yield b"]"
+
+
 def _detect_repo_cells(row) -> list[str]:
     document = row[9] if isinstance(row[9], dict) else {}
     agents = document.get("agents") or []
@@ -337,24 +376,29 @@ def export_bundle(
     engine: Engine, run_id: int, *, format: str, runs_root: str = "runs"
 ) -> tuple[Iterator[bytes], str]:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv")
+        raise ValueError("format", "format must be one of: json, csv, detections, detections-json")
     run_row = _row_for_run(engine, run_id)
     if run_row["kind"] == "detect":
         if run_row["status"] in _UNFINISHED_STATUSES:
             raise RunNotReadyError(int(run_id), str(run_row["status"]))
         if format == "detections":
             return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
+        if format == "detections-json":
+            return _detections_json_chunks(engine, run_id), _MEDIA_TYPES[format]
         if format == "json":
             return (
                 _json_chunks(engine, run_row, run_id, include_detection=True),
                 _MEDIA_TYPES[format],
             )
         return _detect_repo_chunks(engine, run_id), _MEDIA_TYPES[format]
-    path = bundle_file(runs_root, run_row["filter_hash"], run_id, format)
-    if path.is_file():
-        return _file_chunks(path), _MEDIA_TYPES[format]
+    if format in _BUNDLE_FILES:
+        path = bundle_file(runs_root, run_row["filter_hash"], run_id, format)
+        if path.is_file():
+            return _file_chunks(path), _MEDIA_TYPES[format]
     if format == "detections":
         return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
+    if format == "detections-json":
+        return _detections_json_chunks(engine, run_id), _MEDIA_TYPES[format]
     if format == "json":
         return _json_chunks(engine, run_row, run_id), _MEDIA_TYPES[format]
     return _csv_chunks(engine, run_id), _MEDIA_TYPES[format]
@@ -364,16 +408,17 @@ def export_run(
     engine: Engine, run_id: int, *, format: str = "json", runs_root: str = "runs"
 ) -> StreamingResponse:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv")
+        raise ValueError("format", "format must be one of: json, csv, detections, detections-json")
     run_row = _row_for_run(engine, run_id)
     detect = run_row["kind"] == "detect"
-    regenerated = (
-        detect or not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
-    )
+    regenerated = detect or format not in _BUNDLE_FILES
+    if not regenerated:
+        regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
     chunks, media_type = export_bundle(engine, run_id, format=format, runs_root=runs_root)
     if detect:
         filename = {
             "detections": f"gitcorpus-detect-{run_id}-evidence.csv",
+            "detections-json": f"gitcorpus-detect-{run_id}-evidence.json",
             "csv": f"gitcorpus-detect-{run_id}-repos.csv",
             "json": f"gitcorpus-detect-{run_id}.json",
         }[format]
