@@ -131,7 +131,7 @@ def test_run_git_detection_records_evidence_and_summary(clean_db, tmp_path, monk
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
 
     assert payload.result_summary["repos_scanned"] == 2
@@ -151,6 +151,38 @@ def test_run_git_detection_records_evidence_and_summary(clean_db, tmp_path, monk
     assert ("file", "Claude Code") in rows
     assert ("commit_trailer", "Claude Code") in rows
     assert not (tmp_path / "clones" / f"detect-{detect_run}").exists()
+
+
+def test_run_git_detection_passes_full_name_into_the_repo_factory(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    made: list[tuple[str, str | None]] = []
+
+    def clone(full_name: str, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+
+    def factory(dest: Path, full_name: str | None = None):
+        made.append((dest.name, full_name))
+        return FakeRepo(happy_handler)
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(depth=100, keep=False, scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=clone,
+        repo_factory=factory,
+    )
+    assert sorted(made) == [("octo__one", "octo/one"), ("octo__two", "octo/two")]
 
 
 def test_run_git_detection_keep_retains_scan_dir(clean_db, tmp_path, monkeypatch):
@@ -176,7 +208,7 @@ def test_run_git_detection_keep_retains_scan_dir(clean_db, tmp_path, monkeypatch
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert (tmp_path / "clones" / f"detect-{detect_run}").exists()
 
@@ -207,7 +239,7 @@ def test_run_git_detection_keep_reuses_marked_clones_on_rerun(clean_db, tmp_path
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     run_dir = tmp_path / "clones" / f"detect-{detect_run}"
     assert sorted(clones) == ["octo/one", "octo/two"]
@@ -222,7 +254,7 @@ def test_run_git_detection_keep_reuses_marked_clones_on_rerun(clean_db, tmp_path
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert clones == []
 
@@ -252,7 +284,7 @@ def test_run_git_detection_resolves_the_default_relative_scan_root(clean_db, tmp
         PACK,
         config=GitScanConfig(workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert dests
     assert all(dest.is_absolute() for dest in dests)
@@ -287,7 +319,7 @@ def test_run_git_detection_retries_a_failed_clone(clean_db, tmp_path, monkeypatc
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1, retry_delay=0.0),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert attempts.count("octo/two") == 2
     assert payload.result_summary["repos_unavailable"] == 0
@@ -319,7 +351,7 @@ def test_run_git_detection_stops_before_scanning_when_the_disk_reserve_is_hit(
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert clones == []
     assert payload.items == []
@@ -357,7 +389,7 @@ def test_run_git_detection_stops_scheduling_when_disk_drops_mid_run(
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert payload.result_summary["repos_scanned"] == 1
     assert payload.incomplete is True
@@ -387,7 +419,7 @@ def test_run_git_detection_checkpoints_run_items_per_repo(clean_db, tmp_path, mo
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     with engine.connect() as connection:
         rows = (
@@ -419,7 +451,7 @@ def test_cancelled_git_detection_leaves_checkpointed_items(clean_db, tmp_path, m
     def clone(full_name: str, dest: Path) -> None:
         dest.mkdir(parents=True, exist_ok=True)
 
-    def repo_factory(dest: Path):
+    def repo_factory(dest: Path, full_name: str | None = None):
         if dest.name == "octo__two":
             raise RunCancelled()
         return FakeRepo(happy_handler)
@@ -535,7 +567,7 @@ def test_run_git_detection_reads_the_commit_window_once_per_repo(clean_db, tmp_p
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(handler),
     )
     assert len(log_calls) == 2  # one per repo, shared by history and branch
 
@@ -578,7 +610,7 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
             retry_delay=0.5,
         ),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert captured == {"depth": 100, "attempts": 2, "retry_delay": 0.5, "gate": None}
 
@@ -611,7 +643,7 @@ def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert gates == [None, None]
 
@@ -732,7 +764,7 @@ def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monke
                 PACK,
                 config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
                 clone_fn=clone,
-                repo_factory=lambda dest: CancellableRepo(happy_handler),
+                repo_factory=lambda dest, full_name=None: CancellableRepo(happy_handler),
             )
     finally:
         timer.cancel()
@@ -779,7 +811,7 @@ def test_run_git_detection_cancel_returns_promptly_with_wedged_scans(
                 PACK,
                 config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
                 clone_fn=clone,
-                repo_factory=lambda dest: WedgedRepo(happy_handler),
+                repo_factory=lambda dest, full_name=None: WedgedRepo(happy_handler),
             )
             outcome.append(None)
         except BaseException as exc:
@@ -827,7 +859,7 @@ def test_dead_repo_fails_fast_without_retries(clean_db, tmp_path, monkeypatch):
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1, retry_delay=0.0),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert attempts.count("octo/two") == 1  # dead class: no inline retries
     failed = [item for item in payload.items if item.full_name == "octo/two"]
@@ -863,7 +895,7 @@ def test_transient_failure_gets_one_post_sweep_retry(clean_db, tmp_path, monkeyp
             scan_root=str(tmp_path / "clones"), workers=1, attempts=1, retry_delay=0.0
         ),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert attempts.count("octo/two") == 2  # first try + retry wave
     assert payload.result_summary["repos_unavailable"] == 0
@@ -891,7 +923,7 @@ def test_unavailable_repos_listed_with_reasons(clean_db, tmp_path, monkeypatch):
             scan_root=str(tmp_path / "clones"), workers=1, attempts=1, retry_delay=0.0
         ),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert payload.result_summary["unavailable_repos"] == [
         {"full_name": "octo/two", "reason": "fatal"}
@@ -924,7 +956,7 @@ def test_per_repo_deletion_does_not_block_the_parent(clean_db, tmp_path, monkeyp
         PACK,
         config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     assert len(removed) >= 3  # two per-repo dirs plus the final run-dir sweep
 
@@ -948,7 +980,7 @@ def test_run_git_detection_records_compact_repo_filter_facets(clean_db, tmp_path
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
     with engine.connect() as connection:
         facets = set(
@@ -996,7 +1028,7 @@ def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_pa
         PACK,
         config=config,
         clone_fn=clone,
-        repo_factory=lambda dest: FakeRepo(happy_handler),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
     )
 
     assert payload.detections == []

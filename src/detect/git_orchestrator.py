@@ -134,7 +134,7 @@ def _scan_one(
     candidate: Mapping,
     *,
     clone_one: Callable[[str, Path], None],
-    make_repo: Callable[[Path], GitRepo],
+    make_repo: Callable[[Path, str], GitRepo],
     pr_gate: object | None = None,
 ) -> _RepoScan:
     full_name = str(candidate["full_name"])
@@ -152,7 +152,7 @@ def _scan_one(
             base_delay=cfg.retry_delay,
             retryable=lambda exc: classify_git_failure(exc) != "dead",
         )
-    repo = make_repo(dest)
+    repo = make_repo(dest, full_name)
     results: dict[str, ChannelResult] = {}
     history_stats: Mapping[str, object] = {}
     if "file" in active:
@@ -283,7 +283,9 @@ def _scan_worker_main(
     clone_one = lambda full_name, dest: clone_lean(  # noqa: E731
         full_name, dest, depth=cfg.depth, timeout=cfg.timeout
     )
-    make_repo = lambda dest: GitRepo(dest, timeout=cfg.timeout)  # noqa: E731
+    make_repo = lambda dest, full_name: GitRepo(  # noqa: E731
+        dest, timeout=cfg.timeout, full_name=full_name
+    )
     breaker = CircuitBreaker(*breaker_values)
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     try:
@@ -517,14 +519,16 @@ def run_git_detection(
     *,
     config: GitScanConfig | None = None,
     clone_fn: Callable[[str, Path], None] | None = None,
-    repo_factory: Callable[[Path], GitRepo] | None = None,
+    repo_factory: Callable[[Path, str], GitRepo] | None = None,
 ) -> RunPayload:
     cfg = config or GitScanConfig()
     scan_root = Path(os.path.abspath(cfg.scan_root))
     clone_one = clone_fn or (
         lambda full_name, dest: clone_lean(full_name, dest, depth=cfg.depth, timeout=cfg.timeout)
     )
-    make_repo = repo_factory or (lambda dest: GitRepo(dest, timeout=cfg.timeout))
+    make_repo = repo_factory or (
+        lambda dest, full_name: GitRepo(dest, timeout=cfg.timeout, full_name=full_name)
+    )
     active = frozenset(channel for channel in spec.channels if channel in LOCAL_CHANNELS)
     skipped = sorted(channel for channel in spec.channels if channel not in LOCAL_CHANNELS)
     candidates = [dict(row) for row in _candidates(engine, spec.source_run_id, spec.limit)]

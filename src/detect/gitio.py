@@ -8,14 +8,19 @@ import random
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
+from urllib.parse import urlparse
 
 from lib import cancellation
 from lib.batching import chunked
+
+if TYPE_CHECKING:
+    import httpx
 
 _CANCEL_POLL = 0.1
 _STDERR_LIMIT = 200
@@ -32,6 +37,8 @@ _PR_REFS_SNAPSHOT = ".gitcorpus-pr-refs.json"
 _PR_SNAPSHOT_VERSION = 1
 _MONSTER_PR_THRESHOLD = 500
 _GATE_POLL_SECONDS = 0.5
+_REMOTE_REFS_TIMEOUT = 30.0
+_LS_REFS_USER_AGENT = "git/2.47.1"
 
 
 def _configured_tokens() -> list[str]:
@@ -65,6 +72,16 @@ class GitError(RuntimeError):
         self.argv = tuple(str(part) for part in argv)
         self.returncode = returncode
         self.stderr = stderr
+
+
+class RemoteRefsUnavailable(RuntimeError):
+    """ls-refs could not be completed for a transient reason (no clone to fall back on)."""
+
+
+@dataclass
+class RemoteRefs:
+    pr_refs: dict[int, str]
+    head_refs: dict[str, str]
 
 
 def git_env() -> dict[str, str]:
@@ -296,7 +313,10 @@ def run_git_bytes(
 class GitRepo:
     dest: Path
     timeout: float | None = None
+    full_name: str | None = None
     _log_cache: dict[int, tuple[CommitRecord, ...]] = field(default_factory=dict, repr=False)
+    _remote_refs_cache: RemoteRefs | None = field(default=None, repr=False)
+    _origin_url: str | None = field(default=None, repr=False)
 
     def git(
         self,
@@ -446,19 +466,174 @@ def read_log(repo: GitRepo, *, limit: int) -> tuple[CommitRecord, ...]:
     return cached
 
 
-def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
-    output = repo.git(
-        "ls-remote", "--refs", "origin", "refs/pull/*/head", timeout=_LS_REMOTE_TIMEOUT
-    )
-    refs: dict[int, str] = {}
-    for line in output.splitlines():
-        sha, _, name = line.partition("\t")
-        if not sha or not name.startswith("refs/pull/") or not name.endswith("/head"):
-            continue
+_client_local = threading.local()
+
+_LS_REFS_HEADERS = {
+    "Content-Type": "application/x-git-upload-pack-request",
+    "Accept": "application/x-git-upload-pack-result",
+    "Git-Protocol": "version=2",
+    "User-Agent": _LS_REFS_USER_AGENT,
+}
+
+
+def _pkt(payload: bytes) -> bytes:
+    return f"{len(payload) + 4:04x}".encode("ascii") + payload
+
+
+# Protocol v2 ls-refs: the command, a delimiter, then one request for the PR
+# tips and one for the head refs; the probe verified this against GitHub.
+_LS_REFS_BODY = (
+    _pkt(b"command=ls-refs\n")
+    + b"0001"
+    + _pkt(b"peel\n")
+    + _pkt(b"ref-prefix refs/pull/\n")
+    + _pkt(b"ref-prefix refs/heads/\n")
+    + b"0000"
+)
+
+
+def _build_http_client() -> httpx.Client:
+    import httpx
+
+    headers: dict[str, str] = {}
+    tokens = _configured_tokens()
+    if tokens:
+        headers["Authorization"] = f"Basic {_auth_payload(tokens[0])}"
+    return httpx.Client(headers=headers, timeout=_REMOTE_REFS_TIMEOUT, follow_redirects=True)
+
+
+def _http_client() -> httpx.Client:
+    """One keep-alive client per worker thread, built on first use."""
+    client = getattr(_client_local, "client", None)
+    if client is None:
+        client = _build_http_client()
+        _client_local.client = client
+    return client
+
+
+def _is_sha(text: str) -> bool:
+    return len(text) == 40 and all(char in "0123456789abcdefABCDEF" for char in text)
+
+
+def _register_ref(pr_refs: dict[int, str], head_refs: dict[str, str], sha: str, name: str) -> None:
+    if name.startswith("refs/pull/") and name.endswith("/head"):
         number = name[len("refs/pull/") : -len("/head")]
         if number.isdigit():
-            refs[int(number)] = sha
+            pr_refs[int(number)] = sha
+    elif name.startswith("refs/heads/"):
+        head_refs[name] = sha
+
+
+def _parse_ls_refs(data: bytes) -> RemoteRefs:
+    """Parse an ls-refs pkt-line stream; capabilities and ERR payloads are ignored."""
+    pr_refs: dict[int, str] = {}
+    head_refs: dict[str, str] = {}
+    pos = 0
+    while pos + 4 <= len(data):
+        try:
+            length = int(data[pos : pos + 4], 16)
+        except ValueError:
+            raise ValueError("malformed ls-refs pkt-line length") from None
+        pos += 4
+        if length <= 2:  # flush 0000, delimiter 0001, response-end 0002
+            continue
+        if length < 4 or pos + length - 4 > len(data):
+            raise ValueError("truncated ls-refs pkt-line")
+        payload = data[pos : pos + length - 4]
+        pos += length - 4
+        parts = payload.decode("utf-8", errors="replace").strip().split()
+        if len(parts) >= 2 and _is_sha(parts[0]):
+            _register_ref(pr_refs, head_refs, parts[0], parts[1])
+    return RemoteRefs(pr_refs=pr_refs, head_refs=head_refs)
+
+
+def _ls_refs_http(url: str) -> RemoteRefs:
+    response = _http_client().post(url, content=_LS_REFS_BODY, headers=_LS_REFS_HEADERS)
+    if response.status_code in (401, 404):
+        raise GitError(["ls-refs", url], 128, "remote: Repository not found.")
+    response.raise_for_status()
+    return _parse_ls_refs(response.content)
+
+
+def _is_github_https(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.netloc.lower() == "github.com"
+
+
+def _upload_pack_url(repo: GitRepo) -> str | None:
+    if repo.full_name:
+        url = f"https://github.com/{repo.full_name}.git"
+    else:
+        if repo._origin_url is None:
+            repo._origin_url = repo.git("remote", "get-url", "origin").strip()
+        url = repo._origin_url
+    if not url or not _is_github_https(url):
+        return None
+    return f"{url.rstrip('/')}/git-upload-pack"
+
+
+def _ls_remote_refs(repo: GitRepo) -> RemoteRefs:
+    output = repo.git(
+        "ls-remote",
+        "--refs",
+        "origin",
+        "refs/pull/*/head",
+        "refs/heads/*",
+        timeout=_LS_REMOTE_TIMEOUT,
+    )
+    pr_refs: dict[int, str] = {}
+    head_refs: dict[str, str] = {}
+    for line in output.splitlines():
+        sha, _, name = line.partition("\t")
+        if sha and name:
+            _register_ref(pr_refs, head_refs, sha, name)
+    return RemoteRefs(pr_refs=pr_refs, head_refs=head_refs)
+
+
+def remote_refs(repo: GitRepo) -> RemoteRefs:
+    """List pull and head refs, preferring one keep-alive HTTP ls-refs request.
+
+    A 401/404 means the repository is gone and must stay visible to
+    ``classify_git_failure`` as dead; every other failure falls back to
+    ``git ls-remote`` so callers keep today's behaviour on odd servers.
+    """
+    if repo._remote_refs_cache is not None:
+        return repo._remote_refs_cache
+    try:
+        url = _upload_pack_url(repo)
+    except (GitError, subprocess.TimeoutExpired):
+        url = None
+    if url is None:
+        refs = _ls_remote_refs(repo)
+    else:
+        try:
+            refs = _ls_refs_http(url)
+        except GitError:
+            raise
+        except Exception:
+            refs = _ls_remote_refs(repo)
+    repo._remote_refs_cache = refs
     return refs
+
+
+def remote_refs_for(full_name: str) -> RemoteRefs:
+    """ls-refs without a clone; used by the scheduler pre-probe.
+
+    Dead repositories raise the same dead ``GitError`` as ``remote_refs``;
+    transient failures (transport, server, parse) raise
+    ``RemoteRefsUnavailable`` so the caller can submit the repo normally.
+    """
+    url = f"https://github.com/{full_name}.git/git-upload-pack"
+    try:
+        return _ls_refs_http(url)
+    except GitError:
+        raise
+    except Exception as exc:
+        raise RemoteRefsUnavailable(f"ls-refs failed for {full_name}: {exc}") from exc
+
+
+def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
+    return remote_refs(repo).pr_refs
 
 
 def write_pr_refs_snapshot(repo: GitRepo, refs: Mapping[int, str]) -> None:
@@ -518,6 +693,7 @@ def fetch_pr_refs(
     depth: int,
     chunk_refs: int | None = None,
     gate: object | None = None,
+    refs: Mapping[int, str] | None = None,
 ) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
     # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
@@ -526,10 +702,12 @@ def fetch_pr_refs(
     # a stalled promisor round trip cannot wedge a chunk. Monster ref sets
     # take the fleet gate one chunk at a time — never across the whole repo —
     # so a wave of giants cannot saturate the link at once and a cancelled
-    # wait is noticed between polls; ordinary repos never touch it.
+    # wait is noticed between polls; ordinary repos never touch it. Callers
+    # that already listed the refs pass them via ``refs`` to skip the round
+    # trip entirely.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
-    remote = remote_pr_refs(repo)
+    remote = dict(refs) if refs is not None else remote_refs(repo).pr_refs
     if not remote:
         # A kept clone must never resume from refs the remote no longer has.
         with contextlib.suppress(OSError):

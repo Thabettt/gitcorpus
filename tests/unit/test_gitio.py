@@ -10,12 +10,15 @@ import time
 from pathlib import Path
 from typing import BinaryIO
 
+import httpx
 import pytest
 
 from detect import gitio
 from detect.gitio import (
     GitError,
     GitRepo,
+    RemoteRefs,
+    RemoteRefsUnavailable,
     clone_lean,
     fetch_blobs,
     fetch_pr_refs,
@@ -29,6 +32,7 @@ from detect.gitio import (
     read_log,
     read_pr_refs_snapshot,
     remote_pr_refs,
+    remote_refs_for,
     retry_call,
     run_git,
     run_git_bytes,
@@ -551,8 +555,15 @@ def _repo_dir(tmp_path: Path) -> Path:
 def test_remote_pr_refs_lists_pr_tips():
     fake = FakeRepo(lambda args: _LS_REMOTE_OUTPUT if args[0] == "ls-remote" else None)
     assert remote_pr_refs(fake) == {7: "sha1", 9: "sha2"}
-    assert fake.calls[0] == ("ls-remote", "--refs", "origin", "refs/pull/*/head")
-    assert fake.timeouts[0] == gitio._LS_REMOTE_TIMEOUT
+    assert fake.calls[0] == ("remote", "get-url", "origin")
+    assert fake.calls[1] == (
+        "ls-remote",
+        "--refs",
+        "origin",
+        "refs/pull/*/head",
+        "refs/heads/*",
+    )
+    assert fake.timeouts[1] == gitio._LS_REMOTE_TIMEOUT
 
 
 def test_fetch_pr_refs_sends_destinationless_refspecs_over_stdin(tmp_path):
@@ -598,7 +609,7 @@ def test_fetch_pr_refs_returns_the_remote_map_and_persists_a_sorted_snapshot(tmp
 def test_fetch_pr_refs_skips_fetch_and_snapshot_when_no_pr_refs(tmp_path):
     fake = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None, dest=_repo_dir(tmp_path))
     assert fetch_pr_refs(fake, depth=100) == {}
-    assert [call[0] for call in fake.calls] == ["ls-remote"]
+    assert [call[0] for call in fake.calls] == ["remote", "ls-remote"]
     assert not (tmp_path / ".git" / ".gitcorpus-pr-refs.json").exists()
 
 
@@ -630,7 +641,7 @@ def test_fetch_pr_refs_survives_a_snapshot_write_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(gitio, "write_pr_refs_snapshot", failing_write)
     fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
     assert fetch_pr_refs(fake, depth=100) == {7: "sha1", 9: "sha2"}
-    assert [call[0] for call in fake.calls] == ["ls-remote", "fetch"]
+    assert [call[0] for call in fake.calls] == ["remote", "ls-remote", "fetch"]
 
 
 def test_fetch_pr_refs_chunks_large_ref_sets_over_stdin(monkeypatch, tmp_path):
@@ -732,7 +743,7 @@ def test_fetch_pr_refs_cancellation_while_waiting_for_the_gate_raises(monkeypatc
             fetch_pr_refs(fake, depth=100, gate=gate)
     finally:
         cancellation.reset(token)
-    assert [call[0] for call in fake.calls] == ["ls-remote"]
+    assert [call[0] for call in fake.calls] == ["remote", "ls-remote"]
     assert gate.acquires == 1
     assert gate.releases == 0
 
@@ -972,3 +983,230 @@ def test_retry_call_skips_retries_when_the_failure_is_not_retryable():
         )
     assert len(calls) == 1
     assert sleeps == []
+
+
+_SHA_A = "a" * 40
+_SHA_B = "b" * 40
+_SHA_C = "c" * 40
+_LS_REFS_URL = "https://github.com/octo/repo.git/git-upload-pack"
+_FALLBACK_LS_REMOTE = (
+    f"{_SHA_A}\trefs/pull/7/head\n"
+    f"{_SHA_B}\trefs/heads/claude/fix-tests\n"
+    "sha3\trefs/tags/v1\n"
+)
+
+
+def _pkt_line(payload: bytes) -> bytes:
+    return f"{len(payload) + 4:04x}".encode("ascii") + payload
+
+
+def _ls_refs_stream() -> bytes:
+    return (
+        _pkt_line(b"version 2\n")
+        + b"0001"
+        + _pkt_line(f"{_SHA_A} refs/pull/7/head\n".encode())
+        + _pkt_line(f"{_SHA_B} refs/heads/claude/fix-tests\n".encode())
+        + _pkt_line(f"{_SHA_C} refs/heads/claude/other peeled:{_SHA_A}\n".encode())
+        + b"0000"
+    )
+
+
+def _mount_http(monkeypatch, handler) -> httpx.Client:
+    client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    monkeypatch.setattr(gitio, "_http_client", lambda: client)
+    return client
+
+
+def _ok_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, content=_ls_refs_stream(), request=request)
+
+
+def test_parse_ls_refs_handles_capabilities_delimiters_and_peel_attrs():
+    refs = gitio._parse_ls_refs(_ls_refs_stream())
+    assert refs == RemoteRefs(
+        pr_refs={7: _SHA_A},
+        head_refs={"refs/heads/claude/fix-tests": _SHA_B, "refs/heads/claude/other": _SHA_C},
+    )
+
+
+def test_parse_ls_refs_trims_payloads_and_ignores_err_and_empty_streams():
+    trimmed = _pkt_line(f"  {_SHA_A} refs/pull/9/head  ".encode())
+    assert gitio._parse_ls_refs(trimmed).pr_refs == {9: _SHA_A}
+    assert gitio._parse_ls_refs(_pkt_line(b"ERR repository not found\n") + b"0000") == RemoteRefs(
+        pr_refs={}, head_refs={}
+    )
+    assert gitio._parse_ls_refs(b"") == RemoteRefs(pr_refs={}, head_refs={})
+    assert gitio._parse_ls_refs(b"0000") == RemoteRefs(pr_refs={}, head_refs={})
+    with pytest.raises(ValueError):
+        gitio._parse_ls_refs(b"00ff")
+
+
+def test_remote_refs_posts_both_prefixes_with_the_v2_headers(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = request.content
+        captured["headers"] = request.headers
+        return _ok_handler(request)
+
+    _mount_http(monkeypatch, handler)
+    refs = gitio.remote_refs(GitRepo(Path(), full_name="octo/repo"))
+    assert refs.pr_refs == {7: _SHA_A}
+    assert refs.head_refs["refs/heads/claude/fix-tests"] == _SHA_B
+    assert captured["url"] == _LS_REFS_URL
+    assert captured["body"] == (
+        b"0014command=ls-refs\n"
+        b"0001"
+        b"0009peel\n"
+        b"001aref-prefix refs/pull/\n"
+        b"001bref-prefix refs/heads/\n"
+        b"0000"
+    )
+    headers = captured["headers"]
+    assert headers["Git-Protocol"] == "version=2"
+    assert headers["Content-Type"] == "application/x-git-upload-pack-request"
+    assert headers["Accept"] == "application/x-git-upload-pack-result"
+    assert headers["User-Agent"] == "git/2.47.1"
+
+
+def test_remote_refs_for_returns_refs_without_a_repo(monkeypatch):
+    _mount_http(monkeypatch, _ok_handler)
+    refs = remote_refs_for("octo/repo")
+    assert refs.head_refs == {
+        "refs/heads/claude/fix-tests": _SHA_B,
+        "refs/heads/claude/other": _SHA_C,
+    }
+
+
+def test_remote_refs_for_404_raises_a_dead_git_error(monkeypatch):
+    _mount_http(monkeypatch, lambda request: httpx.Response(404, request=request))
+    with pytest.raises(GitError) as excinfo:
+        remote_refs_for("octo/gone")
+    assert "Repository not found" in excinfo.value.stderr
+    assert gitio.classify_git_failure(excinfo.value) == "dead"
+
+
+def test_remote_refs_401_raises_a_dead_git_error_instead_of_falling_back(monkeypatch):
+    _mount_http(monkeypatch, lambda request: httpx.Response(401, request=request))
+    repo = FakeRepo(lambda args: _FALLBACK_LS_REMOTE if args[0] == "ls-remote" else None)
+    repo.full_name = "octo/private"
+    with pytest.raises(GitError) as excinfo:
+        gitio.remote_refs(repo)
+    assert gitio.classify_git_failure(excinfo.value) == "dead"
+    assert repo.calls == []
+
+
+def test_remote_refs_for_wraps_transient_failures(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed", request=request)
+
+    _mount_http(monkeypatch, handler)
+    with pytest.raises(RemoteRefsUnavailable):
+        remote_refs_for("octo/repo")
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        lambda request: (_ for _ in ()).throw(httpx.ConnectError("down", request=request)),
+        lambda request: httpx.Response(502, request=request),
+    ],
+)
+def test_remote_refs_falls_back_to_git_on_transport_and_server_errors(monkeypatch, handler):
+    _mount_http(monkeypatch, handler)
+    repo = FakeRepo(lambda args: _FALLBACK_LS_REMOTE if args[0] == "ls-remote" else None)
+    repo.full_name = "octo/repo"
+    refs = gitio.remote_refs(repo)
+    assert refs.pr_refs == {7: _SHA_A}
+    assert refs.head_refs == {"refs/heads/claude/fix-tests": _SHA_B}
+    assert repo.calls == [("ls-remote", "--refs", "origin", "refs/pull/*/head", "refs/heads/*")]
+
+
+def test_remote_refs_falls_back_to_git_on_malformed_responses(monkeypatch):
+    _mount_http(monkeypatch, lambda request: httpx.Response(200, content=b"zzzz", request=request))
+    repo = FakeRepo(lambda args: _FALLBACK_LS_REMOTE if args[0] == "ls-remote" else None)
+    repo.full_name = "octo/repo"
+    assert gitio.remote_refs(repo).pr_refs == {7: _SHA_A}
+
+
+def test_remote_refs_caches_the_result_and_lists_once(monkeypatch):
+    requests: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(1)
+        return _ok_handler(request)
+
+    _mount_http(monkeypatch, handler)
+    repo = GitRepo(Path(), full_name="octo/repo")
+    first = gitio.remote_refs(repo)
+    assert gitio.remote_refs(repo) is first
+    assert len(requests) == 1
+
+
+def test_remote_refs_resolves_and_caches_the_origin_url(monkeypatch):
+    calls: list[tuple[str, ...]] = []
+    _mount_http(monkeypatch, _ok_handler)
+
+    def git_handler(args):
+        calls.append(args)
+        return "https://github.com/octo/repo.git" if args[0] == "remote" else None
+
+    repo = FakeRepo(git_handler)
+    assert gitio.remote_refs(repo).pr_refs == {7: _SHA_A}
+    repo._remote_refs_cache = None
+    assert gitio.remote_refs(repo).pr_refs == {7: _SHA_A}
+    assert [call[0] for call in calls] == ["remote"]
+
+
+def test_remote_refs_skips_http_for_non_github_origins(monkeypatch):
+    requests: list[int] = []
+    _mount_http(monkeypatch, lambda request: requests.append(1) or _ok_handler(request))
+
+    def git_handler(args):
+        if args[0] == "remote":
+            return "/tmp/local-origin"
+        if args[0] == "ls-remote":
+            return _FALLBACK_LS_REMOTE
+        return None
+
+    assert gitio.remote_refs(FakeRepo(git_handler)).pr_refs == {7: _SHA_A}
+    assert requests == []
+
+
+def test_http_client_is_one_keep_alive_client_per_thread(monkeypatch):
+    built: list[int] = []
+
+    def builder() -> httpx.Client:
+        built.append(1)
+        return httpx.Client(transport=httpx.MockTransport(_ok_handler), trust_env=False)
+
+    monkeypatch.setattr(gitio, "_build_http_client", builder)
+    monkeypatch.setattr(gitio, "_client_local", threading.local())
+    first = gitio._http_client()
+    assert gitio._http_client() is first
+    seen: list[object] = []
+    worker = threading.Thread(target=lambda: seen.append(gitio._http_client()))
+    worker.start()
+    worker.join()
+    assert len(built) == 2
+    assert seen[0] is not first
+
+
+def test_build_http_client_adds_token_auth(monkeypatch):
+    token = "ghp_remote_refs_000"
+    monkeypatch.setenv("GITHUB_TOKENS", token)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    client = gitio._build_http_client()
+    try:
+        payload = base64.b64encode(f"x-access-token:{token}".encode("ascii")).decode("ascii")
+        assert client.headers["Authorization"] == f"Basic {payload}"
+    finally:
+        client.close()
+
+
+def test_fetch_pr_refs_with_refs_skips_the_remote_listing(tmp_path):
+    fake = FakeRepo(lambda args: "" if args[0] == "fetch" else None, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100, refs={7: _SHA_A}) == {7: _SHA_A}
+    assert [call[0] for call in fake.calls] == ["fetch"]
+    assert fake.stdins == [b"refs/pull/7/head\n"]

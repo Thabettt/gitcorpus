@@ -78,7 +78,9 @@ def main() -> int:
                 clone_one=lambda name, path: clone_lean(
                     name, path, depth=cfg.depth, timeout=cfg.timeout
                 ),
-                make_repo=lambda path: GitRepo(path, timeout=cfg.timeout),
+                make_repo=lambda path, full_name=None: GitRepo(
+                    path, timeout=cfg.timeout, full_name=full_name
+                ),
             )
             fresh = scan.document
             if fresh != stored:
