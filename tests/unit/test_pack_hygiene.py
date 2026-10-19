@@ -28,9 +28,9 @@ def test_author_patterns_compile_and_escape_metacharacters():
         re.compile(pattern)
         for index, char in enumerate(pattern):
             if char in "([.":
-                assert index > 0 and pattern[index - 1] == "\\", (
-                    f"unescaped {char!r} in {pattern!r}"
-                )
+                assert (
+                    index > 0 and pattern[index - 1] == "\\"
+                ), f"unescaped {char!r} in {pattern!r}"
 
 
 def test_new_pack_matches_factory_droid_bot_literally():
