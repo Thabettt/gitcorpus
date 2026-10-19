@@ -309,7 +309,6 @@ def _fallback(repo: GitRepo, sha: str, depth: int) -> tuple[str, ...]:
         "rev-list",
         "-n",
         str(depth),
-        "--exclude-promisor-objects",
         sha,
         env_extra={"GIT_NO_LAZY_FETCH": "1"},
     )

@@ -241,7 +241,7 @@ def test_fallback_walks_each_unique_tip_once(tmp_path):
     assert result == {1: ("s1", "s2"), 2: ("s1", "s2"), 3: ("s3",)}
 
 
-def test_fallback_rev_list_excludes_promisor_objects_without_lazy_fetch(tmp_path):
+def test_fallback_rev_list_disables_lazy_fetch_without_excluding_promisor_objects(tmp_path):
     captured: list[tuple[tuple[str, ...], dict[str, str] | None]] = []
 
     class FakeRepo(GitRepo):
@@ -255,7 +255,7 @@ def test_fallback_rev_list_excludes_promisor_objects_without_lazy_fetch(tmp_path
     result = walk_windows(FakeRepo(), {1: "aaa"}, depth=100)
     assert result == {1: ("s1", "s2")}
     args, env_extra = captured[0]
-    assert "--exclude-promisor-objects" in args
+    assert "--exclude-promisor-objects" not in args
     assert args[-1] == "aaa"
     assert env_extra == {"GIT_NO_LAZY_FETCH": "1"}
 
