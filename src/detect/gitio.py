@@ -31,6 +31,7 @@ _PR_CHUNK_TIMEOUT = 600.0
 _PR_REFS_SNAPSHOT = ".gitcorpus-pr-refs.json"
 _PR_SNAPSHOT_VERSION = 1
 _MONSTER_PR_THRESHOLD = 500
+_GATE_POLL_SECONDS = 0.5
 
 
 def _configured_tokens() -> list[str]:
@@ -494,6 +495,23 @@ def read_pr_refs_snapshot(repo: GitRepo) -> dict[int, str] | None:
     return snapshot
 
 
+def _acquire_gate(gate: object, *, blocking: bool = True) -> bool:
+    """Acquire a fleet gate permit without ignoring a cancelled run.
+
+    ``gate.acquire()`` blocks untended, so a cancelled scan would wait for a
+    monster fetch to drain before noticing. Poll in short slices instead and
+    check cancellation between them; ``blocking=False`` makes one immediate
+    attempt for a caller-owned reservation lane.
+    """
+    timeout = _GATE_POLL_SECONDS if blocking else 0.0
+    while True:
+        if gate.acquire(timeout=timeout):
+            return True
+        if not blocking:
+            return False
+        cancellation.check()
+
+
 def fetch_pr_refs(
     repo: GitRepo,
     *,
@@ -506,8 +524,9 @@ def fetch_pr_refs(
     # tree:0 keeps the pack to commit metadata, no-write-fetch-head leaves no
     # ref files behind, and lazy fetching is disabled for the command only so
     # a stalled promisor round trip cannot wedge a chunk. Monster ref sets
-    # hold the fleet gate for every chunk of the fetch, so a wave of giants
-    # cannot saturate the link at once; ordinary repos never touch it.
+    # take the fleet gate one chunk at a time — never across the whole repo —
+    # so a wave of giants cannot saturate the link at once and a cancelled
+    # wait is noticed between polls; ordinary repos never touch it.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
     remote = remote_pr_refs(repo)
@@ -517,10 +536,10 @@ def fetch_pr_refs(
             (Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT).unlink()
         return {}
     gated = gate is not None and len(remote) > _MONSTER_PR_THRESHOLD
-    if gated:
-        gate.acquire()
-    try:
-        for numbers in chunked(sorted(remote), chunk_refs):
+    for numbers in chunked(sorted(remote), chunk_refs):
+        if gated:
+            _acquire_gate(gate)
+        try:
             request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
             handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
             try:
@@ -545,9 +564,9 @@ def fetch_pr_refs(
             finally:
                 with contextlib.suppress(OSError):
                     os.unlink(handle.name)
-    finally:
-        if gated:
-            gate.release()
+        finally:
+            if gated:
+                gate.release()
     try:
         write_pr_refs_snapshot(repo, remote)
     except OSError:

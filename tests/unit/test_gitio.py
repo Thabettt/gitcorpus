@@ -69,16 +69,19 @@ class FakeRepo(GitRepo):
 
 
 class FakeGate:
-    """Records acquire/release and the hold depth seen mid-fetch."""
+    """Records acquire/release, timeout polling, and the hold depth seen mid-fetch."""
 
-    def __init__(self) -> None:
+    def __init__(self, grants: bool = True) -> None:
         self.acquires = 0
         self.releases = 0
         self.held = 0
+        self.grants = grants
         self.held_at_fetch: list[int] = []
 
-    def acquire(self) -> bool:
+    def acquire(self, *, timeout: float | None = None) -> bool:
         self.acquires += 1
+        if not self.grants:
+            return False
         self.held += 1
         return True
 
@@ -689,7 +692,8 @@ def test_fetch_pr_refs_gates_monster_ref_sets_across_every_chunk(monkeypatch, tm
     fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
     assert len(fetch_pr_refs(fake, depth=100, gate=gate)) == 501
     assert gate.held_at_fetch == [1, 1, 1]
-    assert (gate.acquires, gate.releases) == (1, 1)
+    assert (gate.acquires, gate.releases) == (3, 3)
+    assert gate.held == 0
 
 
 def test_fetch_pr_refs_releases_the_gate_when_a_chunk_fails(monkeypatch, tmp_path):
@@ -711,7 +715,43 @@ def test_fetch_pr_refs_releases_the_gate_when_a_chunk_fails(monkeypatch, tmp_pat
     with pytest.raises(GitError):
         fetch_pr_refs(fake, depth=100, gate=gate)
     assert len(fetches) == 3
-    assert (gate.acquires, gate.releases) == (1, 1)
+    assert (gate.acquires, gate.releases) == (3, 3)
+    assert gate.held == 0
+
+
+def test_fetch_pr_refs_cancellation_while_waiting_for_the_gate_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 200)
+    gate = FakeGate(grants=False)
+    fake = FakeRepo(
+        lambda args: _ls_remote_lines(501) if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    token = cancellation.bind(lambda: True)
+    try:
+        with pytest.raises(RunCancelled):
+            fetch_pr_refs(fake, depth=100, gate=gate)
+    finally:
+        cancellation.reset(token)
+    assert [call[0] for call in fake.calls] == ["ls-remote"]
+    assert gate.acquires == 1
+    assert gate.releases == 0
+
+
+def test_acquire_gate_polls_the_gate_and_checks_cancellation_between_polls():
+    gate = FakeGate(grants=False)
+    token = cancellation.bind(lambda: True)
+    try:
+        with pytest.raises(RunCancelled):
+            gitio._acquire_gate(gate)
+    finally:
+        cancellation.reset(token)
+    assert gate.acquires == 1
+
+
+def test_acquire_gate_non_blocking_makes_one_immediate_attempt():
+    gate = FakeGate(grants=False)
+    assert gitio._acquire_gate(gate, blocking=False) is False
+    assert gate.acquires == 1
 
 
 def test_fetch_pr_refs_ignores_the_gate_without_pr_refs(tmp_path):

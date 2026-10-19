@@ -105,6 +105,26 @@ def _remove_tree(path: Path) -> None:
             return
 
 
+def _kill_tree(process: multiprocessing.Process) -> None:
+    # terminate() signals only the scan worker; its git children (notably
+    # `cat-file --batch`) keep running until the app-exit job object closes,
+    # leaking handles and a slot of bandwidth per dead worker. taskkill /T
+    # walks the spawned tree; failures are suppressed because the target is
+    # often already gone and a kill is best-effort.
+    if os.name == "nt":
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+        return
+    process.terminate()
+
+
 def _scan_one(
     run_dir: Path,
     cfg: GitScanConfig,
@@ -410,7 +430,7 @@ def _run_git_detection_processes(
     except BaseException:
         for process in workers:
             if process.is_alive():
-                process.terminate()
+                _kill_tree(process)
         out_queue.close()
         raise
     retained: dict[int, _RetainedScan] = {}
@@ -468,7 +488,7 @@ def _run_git_detection_processes(
             process.join(timeout=max(0.1, deadline - time.monotonic()))
         for process in workers:
             if process.is_alive():
-                process.terminate()
+                _kill_tree(process)
         raise
     finally:
         if not cancelled:
@@ -476,7 +496,7 @@ def _run_git_detection_processes(
             for process in workers:
                 process.join(timeout=5)
                 if process.is_alive():
-                    process.terminate()
+                    _kill_tree(process)
             if not cfg.keep:
                 _remove_tree(run_dir)
         else:

@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import text
 
 from detect.channels import ChannelResult
-from detect.git_orchestrator import GitScanConfig, _remove_tree, run_git_detection
+from detect.git_orchestrator import GitScanConfig, _kill_tree, _remove_tree, run_git_detection
 from detect.gitio import GitError, GitRepo
 from detect.orchestrator import DetectOptions
 from detect.packs import Pack, Pattern, freeze_pack
@@ -643,6 +643,51 @@ def test_remove_tree_deletes_a_real_directory(tmp_path):
     (target / "a" / "b" / "file").write_text("x", encoding="utf-8")
     _remove_tree(target)
     assert not target.exists()
+
+
+class FakeWorker:
+    """Worker double exposing the pid/terminate surface _kill_tree touches."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def test_kill_tree_uses_taskkill_on_windows(monkeypatch):
+    calls: list[tuple[tuple[str, ...], dict]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((tuple(argv), kwargs))
+
+    monkeypatch.setattr("detect.git_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("detect.git_orchestrator.os.name", "nt")
+    worker = FakeWorker(4321)
+    _kill_tree(worker)
+    assert [argv for argv, _kwargs in calls] == [("taskkill", "/F", "/T", "/PID", "4321")]
+    assert not worker.terminated
+
+
+def test_kill_tree_swallows_taskkill_errors(monkeypatch):
+    def failing_run(argv, **kwargs):
+        raise OSError("taskkill vanished")
+
+    monkeypatch.setattr("detect.git_orchestrator.subprocess.run", failing_run)
+    monkeypatch.setattr("detect.git_orchestrator.os.name", "nt")
+    _kill_tree(FakeWorker(4321))
+
+
+def test_kill_tree_terminates_the_process_off_windows(monkeypatch):
+    def forbidden_run(argv, **kwargs):
+        raise AssertionError("taskkill must not run off Windows")
+
+    monkeypatch.setattr("detect.git_orchestrator.subprocess.run", forbidden_run)
+    monkeypatch.setattr("detect.git_orchestrator.os.name", "posix")
+    worker = FakeWorker(4321)
+    _kill_tree(worker)
+    assert worker.terminated
 
 
 def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monkeypatch):
