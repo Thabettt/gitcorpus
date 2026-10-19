@@ -513,6 +513,34 @@ def test_repo_walk_session_close_is_idempotent_and_the_context_manager_closes(tm
     assert not session._cat._watchdog.is_alive()
 
 
+@pytest.mark.parametrize(
+    "error",
+    [OSError("unreadable shallow file"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte")],
+)
+def test_repo_walk_session_open_fails_before_spawning_when_shallow_is_unreadable(
+    tmp_path, monkeypatch, error
+):
+    constructed: list[int] = []
+
+    class RecordingBatch:
+        def __init__(self, dest):
+            constructed.append(1)
+
+        def close(self):
+            constructed.append(-1)
+
+    def broken(git_dir):
+        raise error
+
+    monkeypatch.setattr(repo_walk, "_load_shallow", broken)
+    monkeypatch.setattr(repo_walk, "CatFileBatch", RecordingBatch)
+
+    with pytest.raises(type(error)):
+        RepoWalkSession.open(GitRepo(tmp_path))
+
+    assert constructed == []
+
+
 def _init_repo(tmp_path: Path) -> Path:
     dest = tmp_path / "r"
     dest.mkdir(parents=True)

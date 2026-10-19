@@ -30,6 +30,7 @@ _UNIT = "\x1f"
 _RECORD = "\x1e"
 _MERGE_PR = re.compile(r"Merge pull request #(?P<pr>\d+) from (?P<owner>[^/\s]+)/(?P<head>\S+)")
 _MERGE_LOCAL = re.compile(r"Merge branch '(?P<head>[^']+)'")
+_HEAD_REF = re.compile(r"refs/[A-Za-z0-9._/-]+")
 _SHOW_BATCH = 600
 _PR_FETCH_CHUNK_REFS = 2000
 _LS_REMOTE_TIMEOUT = 120.0
@@ -507,7 +508,7 @@ def _head_from_git_dir(git_dir: Path) -> str:
         raise ValueError(f"unrecognized HEAD contents: {content!r}")
     ref = content[len("ref: ") :].strip()
     parts = ref.split("/")
-    if not ref.startswith("refs/") or any(part in ("", ".", "..") for part in parts):
+    if _HEAD_REF.fullmatch(ref) is None or any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"unrecognized HEAD ref: {ref!r}")
     with contextlib.suppress(OSError):
         loose = git_dir.joinpath(*parts).read_text(encoding="utf-8").strip()

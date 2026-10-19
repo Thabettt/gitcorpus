@@ -415,7 +415,8 @@ class RepoWalkSession:
     @classmethod
     def open(cls, repo: GitRepo) -> RepoWalkSession:
         dest = Path(repo.dest)
-        return cls(CatFileBatch(dest), _load_shallow(dest / ".git"))
+        shallow = _load_shallow(dest / ".git")
+        return cls(CatFileBatch(dest), shallow)
 
     def window(self, tip: str, depth: int) -> tuple[tuple[str, ...], dict[str, CommitRecord]]:
         """First ``depth`` commits of ``tip`` plus the records parsed for them."""

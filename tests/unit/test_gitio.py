@@ -998,6 +998,16 @@ def test_resolve_head_falls_back_when_the_symbolic_ref_is_unresolvable(tmp_path)
     assert resolve_head(fake) == _SHA_B
 
 
+def test_resolve_head_refuses_a_backslash_ref_that_escapes_the_git_dir(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text("ref: refs/x\\..\\..\\..\\secret\n", encoding="utf-8")
+    decoy = tmp_path / "secret"
+    decoy.write_text(f"{_SHA_C}\n", encoding="utf-8")
+    fake = FakeRepo(lambda args: f"{_SHA_A}\n" if args[0] == "rev-parse" else None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_A
+    assert fake.calls == [("rev-parse", "HEAD")]
+
+
 @needs_git
 def test_resolve_head_matches_rev_parse_for_loose_and_packed_refs(tmp_path):
     repo_dir = tmp_path / "r"
