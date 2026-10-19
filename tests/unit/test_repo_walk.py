@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import detect.repo_walk as repo_walk
-from detect.gitio import GitRepo, read_commits
+from detect.gitio import CommitRecord, GitRepo, read_commits
 from detect.repo_walk import (
     CatFileBatch,
     RepoWalkSession,
@@ -511,6 +511,51 @@ def test_repo_walk_session_close_is_idempotent_and_the_context_manager_closes(tm
     assert process.poll() is not None
     session.close()
     assert not session._cat._watchdog.is_alive()
+
+
+def test_walk_windows_with_records_reuses_a_supplied_session_without_closing_it(tmp_path):
+    reset_verification()
+    record_a = CommitRecord(
+        sha="s1",
+        author_name="Jane",
+        author_email="jane@example.com",
+        committer_name="Jane",
+        committer_email="jane@example.com",
+        committed_at="2026-01-01T00:00:00Z",
+        message="feat: a",
+    )
+    record_b = CommitRecord(
+        sha="s2",
+        author_name="Jane",
+        author_email="jane@example.com",
+        committer_name="Jane",
+        committer_email="jane@example.com",
+        committed_at="2026-01-02T00:00:00Z",
+        message="feat: b",
+    )
+    records = {"s1": record_a, "s2": record_b}
+    calls: list[tuple] = []
+
+    class FakeSession:
+        def window(self, tip, depth):
+            calls.append(("window", tip, depth))
+            return ("s1", "s2"), dict(records)
+
+        def records_for(self, shas):
+            calls.append(("records_for", tuple(shas)))
+            return {sha: records[sha] for sha in shas if sha in records}
+
+        def close(self):
+            calls.append(("close",))
+
+    windows, walked = walk_windows_with_records(
+        GitRepo(tmp_path), {7: "tip", 9: "tip"}, depth=2, session=FakeSession()
+    )
+    assert windows == {7: ("s1", "s2"), 9: ("s1", "s2")}
+    assert walked == records
+    assert calls.count(("window", "tip", 2)) == 1  # duplicate tips share one walk
+    assert ("records_for", ("s1", "s2")) in calls
+    assert ("close",) not in calls
 
 
 @pytest.mark.parametrize(

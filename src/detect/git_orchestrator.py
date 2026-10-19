@@ -129,6 +129,20 @@ def _scan_one(
     prefetched: RemoteRefs | None = None,
     gate_reserved: bool = False,
 ) -> _RepoScan:
+    session: repo_walk.RepoWalkSession | None = None
+    session_failed = False
+
+    def walk_session(repo: GitRepo) -> repo_walk.RepoWalkSession | None:
+        nonlocal session, session_failed
+        if session is None and not session_failed:
+            try:
+                session = repo_walk.RepoWalkSession.open(repo)
+            except RunCancelled:
+                raise
+            except Exception:
+                session_failed = True
+        return session
+
     try:
         full_name = str(candidate["full_name"])
         dest = run_dir / full_name.replace("/", "__")
@@ -149,9 +163,13 @@ def _scan_one(
         results: dict[str, ChannelResult] = {}
         history_stats: Mapping[str, object] = {}
         if "file" in active:
-            results["file"] = detect_files_local(repo, pack, spec.agents)
+            results["file"] = detect_files_local(
+                repo, pack, spec.agents, session=walk_session(repo)
+            )
         if set(_HISTORY_KEYS) & active:
-            history = detect_history_local(repo, pack, spec.agents, limit=cfg.depth)
+            history = detect_history_local(
+                repo, pack, spec.agents, limit=cfg.depth, session=walk_session(repo)
+            )
             for key in _HISTORY_KEYS:
                 if key in active:
                     results[key] = history[key]
@@ -168,6 +186,7 @@ def _scan_one(
                 gate=pr_gate,
                 refs=prefetched.pr_refs if prefetched is not None else None,
                 gate_reserved=gate_reserved,
+                session=walk_session(repo),
             )
             results["pr_metadata"] = pr_result
         if "branch" in active:
@@ -185,6 +204,9 @@ def _scan_one(
         scan.document = _repo_document(scan)
         return scan
     finally:
+        if session is not None:
+            with contextlib.suppress(Exception):
+                session.close()
         # A scheduler-reserved fleet permit is released exactly here, whatever
         # the outcome; the acquire happened in the scheduler's thread, and a
         # BoundedSemaphore has no thread ownership, so this is legal.

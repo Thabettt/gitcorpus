@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from collections import deque
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+import detect.repo_walk as repo_walk
 from detect.breaker import local_values
 from detect.channels import ChannelResult
 from detect.git_orchestrator import (
@@ -33,12 +35,19 @@ from lib import cancellation
 from lib.cancellation import RunCancelled
 from serve.executor import create_run
 
+FAKE_DEST = Path(tempfile.gettempdir(), f"gitcorpus-fake-repo-{os.getpid()}")
+
 
 class FakeRepo(GitRepo):
-    """GitRepo whose git() answers from a canned handler."""
+    """GitRepo whose git() answers from a canned handler.
+
+    The dest is an absolute placeholder with no git directory: HEAD resolution
+    and walk sessions must degrade to the canned handler instead of the test's
+    cwd, with no dependence on the cwd the suite runs from.
+    """
 
     def __init__(self, handler):
-        super().__init__(Path())
+        super().__init__(FAKE_DEST)
         self._handler = handler
         self.calls: list[tuple[str, ...]] = []
 
@@ -597,7 +606,9 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     )
     captured: dict[str, object] = {}
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+    def fake_pr(
+        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+    ):
         captured.update(
             depth=depth,
             attempts=attempts,
@@ -640,7 +651,9 @@ def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp
     )
     gates: list[object] = []
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+    def fake_pr(
+        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+    ):
         gates.append(gate)
         return ChannelResult(status="ok")
 
@@ -1182,7 +1195,9 @@ def test_admit_requeued_monster_is_not_re_probed(tmp_path, monkeypatch):
     # carried refs must reach the submitted scan.
     seen: list[dict] = []
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+    def fake_pr(
+        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+    ):
         seen.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
 
@@ -1268,7 +1283,9 @@ def test_scan_one_releases_a_reserved_permit_in_finally(tmp_path, monkeypatch):
     gate = AdmissionGate()
     calls: list[dict] = []
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+    def fake_pr(
+        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+    ):
         calls.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
 
@@ -1338,6 +1355,193 @@ def test_scan_one_leaves_the_gate_alone_without_a_reservation(tmp_path):
     )
 
     assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def _recording_session(monkeypatch):
+    opened: list = []
+    closed: list = []
+
+    class RecordingSession:
+        @classmethod
+        def open(cls, repo):
+            instance = cls()
+            opened.append(instance)
+            return instance
+
+        def close(self):
+            closed.append(self)
+
+    monkeypatch.setattr(repo_walk, "RepoWalkSession", RecordingSession)
+    return opened, closed
+
+
+def test_scan_one_shares_one_walk_session_across_file_history_and_pr(tmp_path, monkeypatch):
+    opened, closed = _recording_session(monkeypatch)
+    seen: list[tuple[str, object]] = []
+
+    def fake_files(repo, pack, agents=None, *, session=None):
+        seen.append(("file", session))
+        return ChannelResult(status="ok")
+
+    def fake_history(repo, pack, agents=None, *, limit=100, session=None):
+        seen.append(("history", session))
+        return {key: ChannelResult(status="ok") for key in ("author", "commit_trailer", "bot")}
+
+    def fake_pr(
+        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+    ):
+        seen.append(("pr", session))
+        return ChannelResult(status="ok")
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_files_local", fake_files)
+    monkeypatch.setattr("detect.git_orchestrator.detect_history_local", fake_history)
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    active = frozenset({"file", "author", "pr_metadata"})
+
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, active),
+        PACK,
+        active,
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+    )
+
+    assert scan.repo_id == 1
+    assert len(opened) == 1
+    assert [name for name, _session in seen] == ["file", "history", "pr"]
+    assert all(session is opened[0] for _name, session in seen)
+    assert closed == opened
+
+
+def test_scan_one_closes_the_walk_session_when_a_channel_fails(tmp_path, monkeypatch):
+    opened, closed = _recording_session(monkeypatch)
+
+    def exploding_files(repo, pack, agents=None, *, session=None):
+        raise RuntimeError("file channel exploded")
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_files_local", exploding_files)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="file channel exploded"):
+        _scan_one(
+            run_dir,
+            GitScanConfig(),
+            make_spec(1, frozenset({"file"})),
+            PACK,
+            frozenset({"file"}),
+            _candidate("octo/one"),
+            clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+            make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+        )
+
+    assert len(opened) == 1
+    assert closed == opened
+
+
+def test_scan_one_suppresses_walk_session_close_failures(tmp_path, monkeypatch):
+    class ExplodingCloseSession:
+        @classmethod
+        def open(cls, repo):
+            return cls()
+
+        def close(self):
+            raise RuntimeError("close exploded")
+
+    monkeypatch.setattr(repo_walk, "RepoWalkSession", ExplodingCloseSession)
+
+    def fake_files(repo, pack, agents=None, *, session=None):
+        assert session is not None
+        return ChannelResult(status="ok")
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_files_local", fake_files)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        frozenset({"file"}),
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+    )
+
+    assert scan.repo_id == 1
+
+
+def test_scan_one_degrades_when_the_walk_session_cannot_open(tmp_path, monkeypatch):
+    attempts: list[int] = []
+    sessions: list[object] = []
+
+    class BrokenSession:
+        @classmethod
+        def open(cls, repo):
+            attempts.append(1)
+            raise repo_walk.WalkAnomaly("cat-file failed to start")
+
+    monkeypatch.setattr(repo_walk, "RepoWalkSession", BrokenSession)
+
+    def fake_files(repo, pack, agents=None, *, session=None):
+        sessions.append(session)
+        return ChannelResult(status="ok")
+
+    def fake_history(repo, pack, agents=None, *, limit=100, session=None):
+        sessions.append(session)
+        return {key: ChannelResult(status="ok") for key in ("author", "commit_trailer", "bot")}
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_files_local", fake_files)
+    monkeypatch.setattr("detect.git_orchestrator.detect_history_local", fake_history)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    active = frozenset({"file", "author"})
+
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, active),
+        PACK,
+        active,
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+    )
+
+    assert scan.repo_id == 1
+    assert sessions == [None, None]
+    assert attempts == [1]
+
+
+def test_scan_one_never_opens_a_walk_session_for_branch_only_scans(tmp_path, monkeypatch):
+    class ExplodingSession:
+        @classmethod
+        def open(cls, repo):
+            raise AssertionError("branch-only scans must not open a walk session")
+
+    monkeypatch.setattr(repo_walk, "RepoWalkSession", ExplodingSession)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    active = frozenset({"branch"})
+
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, active),
+        PACK,
+        active,
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+    )
+
+    assert scan.repo_id == 1
 
 
 class FakeOutQueue:

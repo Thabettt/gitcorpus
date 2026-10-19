@@ -487,12 +487,17 @@ def walk_windows(
 
 
 def walk_windows_with_records(
-    repo: GitRepo, refs: Mapping[int, str], *, depth: int
+    repo: GitRepo,
+    refs: Mapping[int, str],
+    *,
+    depth: int,
+    session: RepoWalkSession | None = None,
 ) -> tuple[dict[int, tuple[str, ...]], dict[str, CommitRecord]]:
     """PR tip → first ``depth`` commits plus the records parsed from the walk.
 
     Walks served by ``rev-list`` (fallback/verify substitution) carry no
-    records; callers backfill those SHAs through ``read_commits``.
+    records; callers backfill those SHAs through ``read_commits``. A supplied
+    ``session`` is reused and never closed by this call.
     """
     if not refs:
         return {}, {}
@@ -510,9 +515,9 @@ def walk_windows_with_records(
     verify_budget = _VERIFY_MAX_PER_REPO
     results: dict[int, tuple[str, ...]] = {}
     exact = not bool(_state["disabled"])
-    session: RepoWalkSession | None = None
+    owns_session = session is None
     try:
-        if exact:
+        if exact and owns_session:
             try:
                 session = RepoWalkSession.open(repo)
             except WalkAnomaly:
@@ -534,7 +539,7 @@ def walk_windows_with_records(
             for number in numbers:
                 results[number] = shas
     finally:
-        if session is not None:
+        if owns_session and session is not None:
             session.close()
     records: dict[str, CommitRecord] = {}
     if session is not None:

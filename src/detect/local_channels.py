@@ -28,11 +28,13 @@ from detect.gitio import (
     read_log,
     read_pr_refs_snapshot,
     remote_refs,
+    resolve_head,
     retry_call,
 )
 from detect.packs import Pack
-from detect.repo_walk import walk_windows_with_records
+from detect.repo_walk import RepoWalkSession, WalkAnomaly, walk_windows_with_records
 from enrich.trees_first import FilePresence
+from lib.cancellation import RunCancelled
 
 CONTENT_PROBE_LIMIT = 5
 _GIT_FAILURES = (GitError, subprocess.TimeoutExpired)
@@ -55,8 +57,33 @@ def _entries(record: CommitRecord) -> tuple[dict[str, str], dict[str, str]]:
     )
 
 
+def _session_blob_contents(
+    session: RepoWalkSession, paths: list[str], by_path: Mapping[str, str]
+) -> dict[str, str | None] | None:
+    """Blob contents via the shared session, or None when a fallback is needed."""
+    contents: dict[str, str | None] = {}
+    try:
+        for path in paths:
+            if path == ".gitignore" and path not in by_path:
+                contents[path] = None
+                continue
+            data = session.blob(f"HEAD:{path}")
+            if data is None:
+                return None
+            contents[path] = data.decode("utf-8", errors="replace")
+    except RunCancelled:
+        raise
+    except Exception:
+        return None
+    return contents
+
+
 def detect_files_local(
-    repo: GitRepo, pack: Pack, agents: frozenset[str] | None = None
+    repo: GitRepo,
+    pack: Pack,
+    agents: frozenset[str] | None = None,
+    *,
+    session: RepoWalkSession | None = None,
 ) -> ChannelResult:
     try:
         entries = list_tree_entries(repo)
@@ -71,22 +98,27 @@ def detect_files_local(
     probe_order = sorted(
         {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
     )[:CONTENT_PROBE_LIMIT]
-    needed: list[str] = []
-    ignore_oid = by_path.get(".gitignore")
-    if ignore_oid is not None:
-        needed.append(ignore_oid)
-    for path in probe_order:
-        oid = by_path.get(path)
-        if oid is not None and oid not in needed:
-            needed.append(oid)
-    if needed:
-        # One round trip for .gitignore plus the content probes; a failure
-        # degrades to the per-read lazy fetches rather than losing the channel.
-        try:
-            fetch_blobs(repo, needed)
-        except _GIT_FAILURES:
-            pass
-    contents = repo.read_blobs([".gitignore", *probe_order])
+    requested = [".gitignore", *probe_order]
+    contents: dict[str, str | None] | None = None
+    if session is not None:
+        contents = _session_blob_contents(session, requested, by_path)
+    if contents is None:
+        needed: list[str] = []
+        ignore_oid = by_path.get(".gitignore")
+        if ignore_oid is not None:
+            needed.append(ignore_oid)
+        for path in probe_order:
+            oid = by_path.get(path)
+            if oid is not None and oid not in needed:
+                needed.append(oid)
+        if needed:
+            # One round trip for .gitignore plus the content probes; a failure
+            # degrades to the per-read lazy fetches rather than losing the channel.
+            try:
+                fetch_blobs(repo, needed)
+            except _GIT_FAILURES:
+                pass
+        contents = repo.read_blobs(requested)
     ignore_text = contents.get(".gitignore")
     if ignore_text:
         ignored = tuple(
@@ -116,18 +148,42 @@ def detect_files_local(
     return ChannelResult(hits=tuple(hits), status="ok", note="local clone; tree + .gitignore")
 
 
+def _walked_record(
+    session: RepoWalkSession, walked: Mapping[str, CommitRecord], sha: str
+) -> CommitRecord:
+    record = walked.get(sha)
+    if record is None:
+        record = session.record(sha)
+    if record is None:
+        raise WalkAnomaly(f"commit {sha} is missing")
+    return record
+
+
 def detect_history_local(
     repo: GitRepo,
     pack: Pack,
     agents: frozenset[str] | None = None,
     *,
     limit: int = 100,
+    session: RepoWalkSession | None = None,
 ) -> dict[str, ChannelResult]:
     keys = ("author", "commit_trailer", "bot")
-    try:
-        records = read_log(repo, limit=limit)
-    except _GIT_FAILURES:
-        return {key: ChannelResult(status="unavailable", note="empty repository") for key in keys}
+    records: tuple[CommitRecord, ...] | None = None
+    if session is not None:
+        try:
+            shas, walked = session.window(resolve_head(repo), limit)
+            records = tuple(_walked_record(session, walked, sha) for sha in shas)
+        except RunCancelled:
+            raise
+        except Exception:
+            records = None
+    if records is None:
+        try:
+            records = read_log(repo, limit=limit)
+        except _GIT_FAILURES:
+            return {
+                key: ChannelResult(status="unavailable", note="empty repository") for key in keys
+            }
     identities: list[dict[str, str]] = []
     bot_candidates: list[dict[str, str]] = []
     messages: list[tuple[str, str]] = []
@@ -180,6 +236,7 @@ def detect_pr_commits_local(
     gate: object | None = None,
     refs: Mapping[int, str] | None = None,
     gate_reserved: bool = False,
+    session: RepoWalkSession | None = None,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
     resumed_note = ""
@@ -204,7 +261,7 @@ def detect_pr_commits_local(
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     try:
-        walks, walked_records = walk_windows_with_records(repo, refs, depth=depth)
+        walks, walked_records = walk_windows_with_records(repo, refs, depth=depth, session=session)
     except _GIT_FAILURES as exc:
         return ChannelResult(
             status="partial",

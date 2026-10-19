@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from detect.gitio import (
     GitError,
     GitRepo,
     RemoteRefs,
+    parse_log,
     read_pr_refs_snapshot,
     write_pr_refs_snapshot,
 )
@@ -20,7 +22,7 @@ from detect.local_channels import (
     detect_pr_commits_local,
 )
 from detect.packs import Pack, Pattern
-from detect.repo_walk import reset_verification
+from detect.repo_walk import WalkAnomaly, reset_verification
 
 PACK = Pack(
     version="v1",
@@ -93,6 +95,43 @@ _FILE_OIDS = {
     ".gitignore": "e" * 40,
 }
 
+_FILE_BLOBS = {
+    ".gitignore": ".cursor/\n# comment\n",
+    "CLAUDE.md": "# guidance\n",
+    ".cursor/rules/x.md": "rules\n",
+    "AGENTS.md": "# agents\n",
+}
+
+
+def _files_handler(blobs):
+    files = ["CLAUDE.md", ".cursor/rules/x.md", "AGENTS.md", "CONVENTIONS.md", ".gitignore"]
+
+    def handler(args):
+        if args[0] == "ls-tree":
+            return "".join(f"100644 blob {_FILE_OIDS[path]}\t{path}\n" for path in files)
+        if args[0] == "show":
+            return blobs.get(args[1][5:])
+        if "fetch" in args:
+            return ""
+        return None
+
+    return handler
+
+
+class _BlobSession:
+    def __init__(self, contents=None, *, error=None):
+        self.contents = {
+            f"HEAD:{path}": text.encode("utf-8") for path, text in (contents or {}).items()
+        }
+        self.error = error
+        self.requests: list[str] = []
+
+    def blob(self, request):
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.contents.get(request)
+
 
 def test_detect_files_local_matches_tree_gitignore_and_probes_content():
     files = ["CLAUDE.md", ".cursor/rules/x.md", "AGENTS.md", "CONVENTIONS.md", ".gitignore"]
@@ -147,6 +186,40 @@ def test_detect_files_local_fetch_failure_falls_back_to_lazy_reads():
 def test_detect_files_local_reports_empty_repository():
     result = detect_files_local(FakeRepo(lambda args: None if args[0] == "ls-tree" else ""), PACK)
     assert result.status == "unavailable"
+
+
+def test_detect_files_local_reads_blobs_through_the_session():
+    repo = FakeRepo(_files_handler(_FILE_BLOBS))
+    session = _BlobSession(_FILE_BLOBS)
+    result = detect_files_local(repo, PACK, session=session)
+    baseline = detect_files_local(FakeRepo(_files_handler(_FILE_BLOBS)), PACK)
+    assert result == baseline
+    assert session.requests == [
+        "HEAD:.gitignore",
+        "HEAD:.cursor/rules/x.md",
+        "HEAD:AGENTS.md",
+        "HEAD:CLAUDE.md",
+    ]
+    assert repo.calls == [("ls-tree", "-r", "HEAD")]
+
+
+def test_detect_files_local_falls_back_when_the_session_blob_is_missing():
+    repo = FakeRepo(_files_handler(_FILE_BLOBS))
+    session = _BlobSession()
+    result = detect_files_local(repo, PACK, session=session)
+    baseline = detect_files_local(FakeRepo(_files_handler(_FILE_BLOBS)), PACK)
+    assert result == baseline
+    assert session.requests == ["HEAD:.gitignore"]
+    assert any(call[0] == "read_blobs" for call in repo.calls)
+
+
+def test_detect_files_local_falls_back_when_the_session_raises():
+    repo = FakeRepo(_files_handler(_FILE_BLOBS))
+    session = _BlobSession(error=WalkAnomaly("cat-file wedged"))
+    result = detect_files_local(repo, PACK, session=session)
+    baseline = detect_files_local(FakeRepo(_files_handler(_FILE_BLOBS)), PACK)
+    assert result == baseline
+    assert any(call[0] == "read_blobs" for call in repo.calls)
 
 
 _LOGGED = (
@@ -204,6 +277,75 @@ def test_detect_history_local_empty_repository():
     repo = FakeRepo(lambda args: None if args[0] == "log" else "")
     results = detect_history_local(repo, PACK)
     assert all(result.status == "unavailable" for result in results.values())
+
+
+class _WindowSession:
+    def __init__(self, records=(), *, omitted=(), error=None):
+        self.records = {record.sha: record for record in records}
+        self.shas = tuple(self.records)
+        self.omitted = frozenset(omitted)
+        self.error = error
+        self.window_args: tuple[str, int] | None = None
+        self.backfilled: list[str] = []
+
+    def window(self, tip, depth):
+        self.window_args = (tip, depth)
+        if self.error is not None:
+            raise self.error
+        walked = {sha: record for sha, record in self.records.items() if sha not in self.omitted}
+        return self.shas, walked
+
+    def record(self, sha):
+        self.backfilled.append(sha)
+        return self.records.get(sha)
+
+
+def _log_repo():
+    return FakeRepo(lambda args: _LOGGED if args[0] == "log" else None)
+
+
+def test_detect_history_local_matches_read_log_through_a_session_window(monkeypatch):
+    records = parse_log(_LOGGED)
+    session = _WindowSession(records)
+    monkeypatch.setattr("detect.local_channels.resolve_head", lambda repo: "HEADTIP")
+    repo = FakeRepo(lambda args: None)
+    result = detect_history_local(repo, PACK, limit=100, session=session)
+    baseline = detect_history_local(_log_repo(), PACK, limit=100)
+    assert result == baseline
+    assert session.window_args == ("HEADTIP", 100)
+    assert session.backfilled == []
+    assert repo.calls == []
+
+
+def test_detect_history_local_backfills_boundary_records_from_the_session(monkeypatch):
+    records = parse_log(_LOGGED)
+    session = _WindowSession(records, omitted={records[-1].sha})
+    monkeypatch.setattr("detect.local_channels.resolve_head", lambda repo: "HEADTIP")
+    result = detect_history_local(FakeRepo(lambda args: None), PACK, limit=100, session=session)
+    baseline = detect_history_local(_log_repo(), PACK, limit=100)
+    assert result == baseline
+    assert session.backfilled == [records[-1].sha]
+
+
+def test_detect_history_local_falls_back_to_read_log_when_the_window_fails(monkeypatch):
+    session = _WindowSession(parse_log(_LOGGED), error=WalkAnomaly("cat-file stream ended"))
+    monkeypatch.setattr("detect.local_channels.resolve_head", lambda repo: "HEADTIP")
+    repo = _log_repo()
+    result = detect_history_local(repo, PACK, limit=100, session=session)
+    baseline = detect_history_local(_log_repo(), PACK, limit=100)
+    assert result == baseline
+    assert any(call[0] == "log" for call in repo.calls)
+
+
+def test_detect_history_local_falls_back_on_an_unborn_head(monkeypatch):
+    def unborn(repo):
+        raise GitError(["rev-parse", "HEAD"], 128, "fatal: ambiguous argument 'HEAD'")
+
+    monkeypatch.setattr("detect.local_channels.resolve_head", unborn)
+    session = _WindowSession(parse_log(_LOGGED))
+    result = detect_history_local(FakeRepo(lambda args: None), PACK, limit=100, session=session)
+    assert all(channel.status == "unavailable" for channel in result.values())
+    assert session.window_args is None
 
 
 _PR_LOG = (
@@ -285,6 +427,39 @@ def test_detect_pr_commits_local_forwards_prefetched_refs_and_reserved_gate(monk
     )
     assert captured == {"gate": gate, "refs": prefetched, "gate_reserved": True}
     assert result.status == "ok"
+
+
+def test_detect_pr_commits_local_passes_the_session_into_the_walk(tmp_path, monkeypatch):
+    session = object()
+    captured: dict[str, object] = {}
+    record = CommitRecord(
+        sha="s1",
+        author_name="Claude",
+        author_email="noreply@anthropic.com",
+        committer_name="Claude",
+        committer_email="noreply@anthropic.com",
+        committed_at="2026-02-01T00:00:00+00:00",
+        message="feat: pr work",
+    )
+
+    def fake_walk(repo, refs, *, depth, session=None):
+        captured.update(refs=dict(refs), depth=depth, session=session)
+        return {7: ("s1",)}, {"s1": record}
+
+    monkeypatch.setattr("detect.local_channels.walk_windows_with_records", fake_walk)
+    repo = FakeRepo(lambda args: "" if args[0] == "fetch" else None, dest=_repo_dir(tmp_path))
+    result = detect_pr_commits_local(repo, PACK, depth=100, refs={7: "aaa"}, session=session)
+    assert captured == {"refs": {7: "aaa"}, "depth": 100, "session": session}
+    assert result.status == "ok"
+    assert {(hit.evidence["pr"], hit.evidence["commit"]) for hit in result.hits} == {(7, "s1")}
+    assert result.stats["propagated_oids"] == ("s1",)
+
+
+def test_local_channels_take_session_as_a_keyword_only_default_none():
+    for func in (detect_files_local, detect_history_local, detect_pr_commits_local):
+        parameter = inspect.signature(func).parameters["session"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameter.default is None
 
 
 def test_detect_pr_commits_local_retries_a_transient_fetch_failure(tmp_path):
