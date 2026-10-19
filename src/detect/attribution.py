@@ -87,20 +87,20 @@ def _is_multi_token(pattern: str) -> bool:
     return " " in plain or "\t" in plain or "-" in plain
 
 
-def _trailer_lines(message: str) -> list[str]:
+def _trailer_lines(message: str) -> list[tuple[str, bool]]:
     lines = message.split("\n")
     last_blank = -1
     for index, line in enumerate(lines):
         if not line.strip():
             last_blank = index
-    extracts: list[str] = []
+    extracts: list[tuple[str, bool]] = []
     for index, line in enumerate(lines):
         if _TRAILER_LINE.match(line) or _FOOTER_LINE.match(line):
-            extracts.append(line)
+            extracts.append((line, False))
         elif last_blank >= 0 and index > last_blank:
             token = _GENERIC_TOKEN_LINE.match(line)
             if token is not None and token.group(1).lower() not in _PROSE_TOKENS:
-                extracts.append(line)
+                extracts.append((line, True))
     return extracts
 
 
@@ -182,7 +182,7 @@ def is_noise_commit(message: str) -> bool:
 
 
 def adoption_level(ratio: float | None) -> str:
-    if ratio is None:
+    if ratio is None or ratio == 0.0:
         return "none"
     if ratio < 0.01:
         return "experimental"
@@ -249,9 +249,13 @@ def matchers_for(pack: Pack, agents: frozenset[str] | None = None) -> dict[str, 
     cached = _MATCHER_CACHE.get(key)
     if cached is None:
         author_patterns = _selected(pack.authors, agents)
+        distinctive_patterns = tuple(
+            pattern for pattern in author_patterns if not is_ambiguous(pattern.pattern)
+        )
         cached = {
             "file": build_channel_regex(_selected(pack.files, agents), is_files=True),
             "author": build_channel_regex(author_patterns, is_authors=True),
+            "author_distinctive": build_channel_regex(distinctive_patterns, is_authors=True),
             "author_email": build_channel_regex(
                 tuple(pattern for pattern in author_patterns if "@" in pattern.pattern),
                 is_authors=True,
@@ -453,6 +457,7 @@ def match_commit_messages(
     channel = channels["author"]
     if channel.regex is None:
         return []
+    distinctive_channel = channels["author_distinctive"]
     email_channel = channels["author_email"]
     hits: list[Hit] = []
     seen: set[tuple[str, str]] = set()
@@ -465,14 +470,17 @@ def match_commit_messages(
             continue
         snippets: dict[str, str] = {}
         tier1_email = False
-        for line in extracts:
-            for match in channel.regex.finditer(line):
+        for line, distinctive_only in extracts:
+            matcher = distinctive_channel if distinctive_only else channel
+            if matcher.regex is None:
+                continue
+            for match in matcher.regex.finditer(line):
                 if match.lastgroup is None:
                     continue
                 if "@" in match.group():
                     tier1_email = True
                 snippets.setdefault(
-                    channel.names[match.lastgroup], _snippet(line, match.start(), match.end())
+                    matcher.names[match.lastgroup], _snippet(line, match.start(), match.end())
                 )
         if has_email and not tier1_email and email_channel.regex is not None:
             for match in email_channel.regex.finditer(message):

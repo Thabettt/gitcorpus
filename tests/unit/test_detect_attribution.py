@@ -313,7 +313,7 @@ def test_issue_participants_and_levels():
     assert adoption_level(0.03) == "limited"
     assert adoption_level(0.1) == "consistent"
     assert adoption_level(0.5) == "pervasive"
-    assert adoption_level(0.0) == "experimental"
+    assert adoption_level(0.0) == "none"
     assert adoption_level(None) == "none"
     assert redact_emails("a <b@c.dev>") == "a <email>"
 
@@ -417,7 +417,22 @@ def test_generic_token_in_prose_does_not_match():
 
 def test_generic_token_lines_require_a_blank_line_separated_trailer_block():
     assert match_commit_messages(PACK_2026_10_19, [("c1", "Jira: cursor position")]) == []
-    hits = match_commit_messages(PACK_2026_10_19, [("c2", "feat: work\n\nTracker: Cursor")])
+    hits = match_commit_messages(
+        PACK_2026_10_19, [("c2", "feat: work\n\nTracker: devin-ai-integration")]
+    )
+    assert [(h.agent, h.channel) for h in hits] == [("Devin", "commit_trailer")]
+
+
+def test_generic_token_lines_only_match_distinctive_patterns():
+    assert (
+        match_commit_messages(PACK_2026_10_19, [("c1", "feat: x\n\nTests: cursor rendering fixed")])
+        == []
+    )
+    assert (
+        match_commit_messages(PACK_2026_10_19, [("c2", "feat: x\n\nDocs: codex instructions")])
+        == []
+    )
+    hits = match_commit_messages(PACK_2026_10_19, [("c3", "feat: x\n\nCo-authored-by: Cursor")])
     assert [(h.agent, h.channel) for h in hits] == [("Cursor", "commit_trailer")]
 
 
