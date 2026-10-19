@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -705,6 +706,28 @@ def test_remove_tree_deletes_a_real_directory(tmp_path):
     (target / "a" / "b" / "file").write_text("x", encoding="utf-8")
     _remove_tree(target)
     assert not target.exists()
+
+
+def test_remove_tree_deletes_read_only_files(tmp_path):
+    # Git for Windows marks pack files read-only, which turned the previous
+    # ignore_errors=True sweep into a silent no-op.
+    target = tmp_path / "run"
+    pack_dir = target / ".git" / "objects" / "pack"
+    pack_dir.mkdir(parents=True)
+    pack = pack_dir / "x.pack"
+    pack.write_text("pack", encoding="utf-8")
+    os.chmod(pack, stat.S_IREAD)
+    (target / "nested").mkdir()
+    (target / "nested" / "keep.txt").write_text("x", encoding="utf-8")
+    _remove_tree(target)
+    assert not target.exists()
+
+
+def test_remove_tree_returns_immediately_for_a_missing_path(tmp_path, monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("detect.git_orchestrator.time.sleep", sleeps.append)
+    _remove_tree(tmp_path / "missing")
+    assert sleeps == []
 
 
 class FakeWorker:

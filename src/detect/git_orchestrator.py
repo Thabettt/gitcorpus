@@ -6,6 +6,7 @@ import multiprocessing
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import time
 from collections import deque
@@ -101,11 +102,19 @@ def pr_gate_permits_from_env() -> int:
     return value if value > 0 else _DEFAULT_PR_GATE_PERMITS
 
 
+def _clear_read_only(func, path, _exc) -> None:
+    # Git for Windows marks pack files read-only; without clearing the
+    # attribute rmtree's unlink fails and the whole sweep survives.
+    with contextlib.suppress(OSError):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+
 def _remove_tree(path: Path) -> None:
     for delay in (0.0, 0.2, 1.0, 0.0, 0.5):
         if delay:
             time.sleep(delay)
-        shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(path, onexc=_clear_read_only)
         if not path.exists():
             return
 
