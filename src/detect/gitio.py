@@ -499,6 +499,43 @@ def read_log(repo: GitRepo, *, limit: int) -> tuple[CommitRecord, ...]:
     return cached
 
 
+def _head_from_git_dir(git_dir: Path) -> str:
+    content = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    if _is_sha(content):
+        return content
+    if not content.startswith("ref: "):
+        raise ValueError(f"unrecognized HEAD contents: {content!r}")
+    ref = content[len("ref: ") :].strip()
+    parts = ref.split("/")
+    if not ref.startswith("refs/") or any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"unrecognized HEAD ref: {ref!r}")
+    with contextlib.suppress(OSError):
+        loose = git_dir.joinpath(*parts).read_text(encoding="utf-8").strip()
+        if _is_sha(loose):
+            return loose
+    with contextlib.suppress(OSError):
+        for line in (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            sha, _sep, name = line.partition(" ")
+            if name.strip() == ref and _is_sha(sha):
+                return sha
+    raise ValueError(f"HEAD ref {ref!r} does not resolve to an object id")
+
+
+def resolve_head(repo: GitRepo) -> str:
+    """HEAD's object id read from the git directory, spawning git only if needed.
+
+    A symbolic HEAD resolves through its loose ref file first and
+    ``packed-refs`` second; a detached HEAD is already a SHA. Anything
+    unreadable or unexpected falls back to ``git rev-parse HEAD``.
+    """
+    try:
+        return _head_from_git_dir(Path(repo.dest) / ".git")
+    except (OSError, ValueError):
+        return repo.git("rev-parse", "HEAD").strip()
+
+
 _client_local = threading.local()
 
 _LS_REFS_HEADERS = {

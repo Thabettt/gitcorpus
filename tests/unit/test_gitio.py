@@ -33,6 +33,7 @@ from detect.gitio import (
     read_pr_refs_snapshot,
     remote_pr_refs,
     remote_refs_for,
+    resolve_head,
     retry_call,
     run_git,
     run_git_bytes,
@@ -940,6 +941,94 @@ def test_read_log_caches_the_parsed_window_per_repo():
     second = read_log(fake, limit=100)
     assert first == second
     assert [call[0] for call in calls] == ["log"]
+
+
+def _head_git_dir(tmp_path: Path) -> Path:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir(parents=True)
+    return git_dir
+
+
+def test_resolve_head_reads_a_detached_head(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text(f"{_SHA_A}\n", encoding="utf-8")
+    fake = FakeRepo(lambda args: None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_A
+    assert fake.calls == []
+
+
+def test_resolve_head_reads_a_loose_symbolic_ref(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    loose = git_dir / "refs" / "heads" / "main"
+    loose.parent.mkdir(parents=True)
+    loose.write_text(f"{_SHA_A}\n", encoding="utf-8")
+    fake = FakeRepo(lambda args: None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_A
+    assert fake.calls == []
+
+
+def test_resolve_head_reads_a_packed_ref(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (git_dir / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted\n"
+        f"{_SHA_B} refs/heads/other\n"
+        f"{_SHA_A} refs/heads/main\n"
+        f"^{_SHA_C}\n",
+        encoding="utf-8",
+    )
+    fake = FakeRepo(lambda args: None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_A
+    assert fake.calls == []
+
+
+def test_resolve_head_falls_back_to_rev_parse_on_unparseable_head(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text("garbage\n", encoding="utf-8")
+    fake = FakeRepo(lambda args: f"{_SHA_A}\n" if args[0] == "rev-parse" else None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_A
+    assert fake.calls == [("rev-parse", "HEAD")]
+
+
+def test_resolve_head_falls_back_when_the_symbolic_ref_is_unresolvable(tmp_path):
+    git_dir = _head_git_dir(tmp_path)
+    (git_dir / "HEAD").write_text("ref: refs/heads/gone\n", encoding="utf-8")
+    fake = FakeRepo(lambda args: f"{_SHA_B}\n" if args[0] == "rev-parse" else None, dest=tmp_path)
+    assert resolve_head(fake) == _SHA_B
+
+
+@needs_git
+def test_resolve_head_matches_rev_parse_for_loose_and_packed_refs(tmp_path):
+    repo_dir = tmp_path / "r"
+    repo_dir.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Jane",
+        "GIT_AUTHOR_EMAIL": "jane@example.com",
+        "GIT_COMMITTER_NAME": "Jane",
+        "GIT_COMMITTER_EMAIL": "jane@example.com",
+    }
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_dir, check=True, env=env)
+    (repo_dir / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=repo_dir, check=True, env=env)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    repo = GitRepo(repo_dir)
+    assert resolve_head(repo) == sha
+    assert (repo_dir / ".git" / "refs" / "heads" / "main").exists()
+
+    subprocess.run(["git", "pack-refs", "--all"], cwd=repo_dir, check=True, env=env)
+    assert not (repo_dir / ".git" / "refs" / "heads" / "main").exists()
+    assert resolve_head(repo) == sha
 
 
 def test_read_commits_parses_log_no_walk_output():

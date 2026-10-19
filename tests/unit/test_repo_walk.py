@@ -13,6 +13,7 @@ import detect.repo_walk as repo_walk
 from detect.gitio import GitRepo, read_commits
 from detect.repo_walk import (
     CatFileBatch,
+    RepoWalkSession,
     WalkAnomaly,
     reset_verification,
     verification_summary,
@@ -425,6 +426,91 @@ def test_cat_file_batch_close_is_idempotent_and_leaves_no_thread(tmp_path):
     assert cat._process.poll() is not None
     cat.close()
     assert not thread.is_alive()
+
+
+@needs_git
+def test_cat_file_batch_read_serves_commit_oids_and_head_paths(tmp_path):
+    dest = _repo(tmp_path, 2)
+    head = _rev_parse(dest, "HEAD")
+    blob_oid = _rev_parse(dest, "HEAD:f.txt")
+    cat = CatFileBatch(dest)
+    try:
+        parsed = cat.read(head)
+        assert parsed is not None
+        header, body = parsed
+        assert header == f"{head} commit {len(body)}"
+        assert body.startswith(b"tree ")
+        assert b"author Jane <jane@example.com>" in body
+        assert cat.read("HEAD:f.txt") == (f"{blob_oid} blob 2", b"1\n")
+        assert cat.read("HEAD:missing.txt") is None
+        assert cat.read("f" * 40) is None
+    finally:
+        cat.close()
+
+
+@needs_git
+def test_repo_walk_session_window_matches_the_walker_on_a_linear_repo(tmp_path):
+    reset_verification()
+    dest = _repo(tmp_path, 30)
+    head = _rev_parse(dest, "HEAD")
+    repo = GitRepo(dest)
+    with RepoWalkSession.open(repo) as session:
+        shas, records = session.window(head, 10)
+    assert shas == walk_windows(repo, {1: head}, depth=10)[1]
+    assert set(shas) == set(_rev_list(dest, head, 10))
+    assert records == read_commits(repo, shas)
+
+
+@needs_git
+def test_repo_walk_session_window_matches_the_walker_with_merge_commits(tmp_path):
+    reset_verification()
+    dest = _repo(tmp_path, 5)
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=dest, check=True, env=ENV)
+    (dest / "s.txt").write_text("s\n", encoding="utf-8")
+    _commit(dest, "feat: side")
+    subprocess.run(["git", "checkout", "-q", "-"], cwd=dest, check=True, env=ENV)
+    (dest / "m.txt").write_text("m\n", encoding="utf-8")
+    _commit(dest, "feat: main")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-q", "-m", "Merge branch 'side'", "side"],
+        cwd=dest,
+        check=True,
+        env=ENV,
+    )
+    head = _rev_parse(dest, "HEAD")
+    repo = GitRepo(dest)
+    with RepoWalkSession.open(repo) as session:
+        shas, records = session.window(head, 100)
+    assert shas == walk_windows(repo, {1: head}, depth=100)[1]
+    assert set(shas) == set(_rev_list(dest, head, 100))
+    assert records == read_commits(repo, shas)
+
+
+@needs_git
+def test_repo_walk_session_record_and_blob_share_the_commit_cache(tmp_path):
+    reset_verification()
+    dest = _repo(tmp_path, 3)
+    head = _rev_parse(dest, "HEAD")
+    repo = GitRepo(dest)
+    with RepoWalkSession.open(repo) as session:
+        record = session.record(head)
+        assert record == read_commits(repo, [head])[head]
+        assert session.record(head) is record
+        assert session.record("f" * 40) is None
+        assert session.blob("HEAD:f.txt") == b"2\n"
+        assert session.blob("HEAD:missing.txt") is None
+
+
+@needs_git
+def test_repo_walk_session_close_is_idempotent_and_the_context_manager_closes(tmp_path):
+    dest = _repo(tmp_path, 3)
+    session = RepoWalkSession.open(GitRepo(dest))
+    process = session._cat._process
+    with session:
+        session.window(_rev_parse(dest, "HEAD"), 1)
+    assert process.poll() is not None
+    session.close()
+    assert not session._cat._watchdog.is_alive()
 
 
 def _init_repo(tmp_path: Path) -> Path:

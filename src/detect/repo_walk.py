@@ -8,7 +8,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +29,7 @@ _REPO_TIMEOUT_ENV = "GITCORPUS_CATFILE_REPO_TIMEOUT_SECONDS"
 _DEFAULT_OP_TIMEOUT = 60.0
 _DEFAULT_REPO_TIMEOUT = 180.0
 
-_HDR = re.compile(rb"^([0-9a-f]{40}) (commit|tree|blob|tag) (\d+)$")
+_HDR = re.compile(r"^([0-9a-f]{40}) (commit|tree|blob|tag) (\d+)$")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _IDENT = re.compile(rb"^(.*?) <(.*?)> (\d+) ([+-]\d{4})$")
 
@@ -251,14 +251,18 @@ class CatFileBatch:
             self._raise_if_timed_out()
             raise WalkAnomaly(f"cat-file read failed: {exc}") from exc
 
-    def commit(self, oid: str) -> tuple[tuple[str, ...], int, CommitRecord] | None:
-        """Return (parents, committer epoch, record) or None when the object is missing."""
+    def read(self, request: str) -> tuple[str, bytes] | None:
+        """Send one request (an OID or a ``HEAD:<path>`` spec) and read its reply.
+
+        Returns the ``<oid> <type> <size>`` header line plus the object's raw
+        body; ``None`` means the object is missing.
+        """
         if self._process.stdin is None or self._process.stdout is None:
             raise WalkAnomaly("cat-file pipes unavailable")
         self._start_operation()
         try:
             try:
-                self._process.stdin.write(oid.encode("ascii") + b"\n")
+                self._process.stdin.write(request.encode("utf-8") + b"\n")
                 self._process.stdin.flush()
             except (OSError, ValueError) as exc:
                 self._raise_if_timed_out()
@@ -269,19 +273,28 @@ class CatFileBatch:
                 raise WalkAnomaly("cat-file stream ended")
             if header.endswith(b" missing\n"):
                 return None
-            match = _HDR.match(header.rstrip(b"\n"))
+            line = header.decode("utf-8", errors="replace").rstrip("\n")
+            match = _HDR.match(line)
             if match is None:
                 self._raise_if_timed_out()
                 raise WalkAnomaly(f"unexpected cat-file header: {header[:80]!r}")
-            if match.group(2) != b"commit":
-                raise WalkAnomaly(f"object {oid} is not a commit")
-            size = int(match.group(3))
-            body = self._read_stdout(size)
+            body = self._read_stdout(int(match.group(3)))
             self._read_stdout(1)
             self._raise_if_timed_out()
-            return _parse_raw_commit(oid, body)
+            return line, body
         finally:
             self._finish_operation()
+
+    def commit(self, oid: str) -> tuple[tuple[str, ...], int, CommitRecord] | None:
+        """Return (parents, committer epoch, record) or None when the object is missing."""
+        result = self.read(oid)
+        if result is None:
+            return None
+        header, body = result
+        match = _HDR.match(header)
+        if match is None or match.group(2) != "commit":
+            raise WalkAnomaly(f"object {oid} is not a commit")
+        return _parse_raw_commit(oid, body)
 
     def close(self) -> None:
         with self._condition:
@@ -385,6 +398,59 @@ def _load_shallow(git_dir: Path) -> frozenset[str]:
     )
 
 
+class RepoWalkSession:
+    """One repository's cat-file child, commit cache, and shallow set.
+
+    Owns a single ``git cat-file --batch`` process (and its watchdog) so every
+    channel that reads this repository shares one child and one parsed-commit
+    cache. ``window()`` is the walk primitive; ``record()`` and ``blob()``
+    serve single-commit and single-path reads on the same child.
+    """
+
+    def __init__(self, cat: CatFileBatch, shallow: frozenset[str]) -> None:
+        self._cat = cat
+        self._shallow = shallow
+        self._cache: dict[str, tuple[tuple[str, ...], int, CommitRecord]] = {}
+
+    @classmethod
+    def open(cls, repo: GitRepo) -> RepoWalkSession:
+        dest = Path(repo.dest)
+        return cls(CatFileBatch(dest), _load_shallow(dest / ".git"))
+
+    def window(self, tip: str, depth: int) -> tuple[tuple[str, ...], dict[str, CommitRecord]]:
+        """First ``depth`` commits of ``tip`` plus the records parsed for them."""
+        shas = _walk_one(self._cat, self._cache, tip, depth, self._shallow)
+        return shas, self.records_for(shas)
+
+    def records_for(self, shas: Iterable[str]) -> dict[str, CommitRecord]:
+        """Records already in the cache for ``shas``; never reads git."""
+        return {sha: self._cache[sha][2] for sha in shas if sha in self._cache}
+
+    def record(self, oid: str) -> CommitRecord | None:
+        """One commit's record from the shared cache; ``None`` when missing."""
+        entry = self._cache.get(oid)
+        if entry is None:
+            entry = self._cat.commit(oid)
+            if entry is None:
+                return None
+            self._cache[oid] = entry
+        return entry[2]
+
+    def blob(self, request: str) -> bytes | None:
+        """Raw bytes for a ``HEAD:<path>`` (or OID) request; ``None`` when missing."""
+        result = self._cat.read(request)
+        return None if result is None else result[1]
+
+    def close(self) -> None:
+        self._cat.close()
+
+    def __enter__(self) -> RepoWalkSession:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
 def _verification_due(shas: tuple[str, ...], depth: int, pct: int, budget: int) -> bool:
     """Only non-exhausted windows are sampled, and only within the spawn budget."""
     if budget <= 0 or pct <= 0 or len(shas) < depth:
@@ -439,23 +505,21 @@ def walk_windows_with_records(
             for number in numbers:
                 fallback_results[number] = shas
         return fallback_results, {}
-    shallow = _load_shallow(git_dir)
     pct = _verify_pct()
     verify_budget = _VERIFY_MAX_PER_REPO
     results: dict[int, tuple[str, ...]] = {}
     exact = not bool(_state["disabled"])
-    cache: dict[str, tuple[tuple[str, ...], int, CommitRecord]] = {}
-    cat: CatFileBatch | None = None
+    session: RepoWalkSession | None = None
     try:
         if exact:
             try:
-                cat = CatFileBatch(Path(repo.dest))
+                session = RepoWalkSession.open(repo)
             except WalkAnomaly:
                 exact = False
         for sha, numbers in grouped.items():
-            if exact and cat is not None:
+            if exact and session is not None:
                 try:
-                    shas = _walk_one(cat, cache, sha, depth, shallow)
+                    shas, _ = session.window(sha, depth)
                 except WalkAnomaly:
                     shas = _fallback(repo, sha, depth)
                 else:
@@ -469,7 +533,10 @@ def walk_windows_with_records(
             for number in numbers:
                 results[number] = shas
     finally:
-        if cat is not None:
-            cat.close()
-    records = {sha: cache[sha][2] for shas in results.values() for sha in shas if sha in cache}
+        if session is not None:
+            session.close()
+    records: dict[str, CommitRecord] = {}
+    if session is not None:
+        for shas in results.values():
+            records.update(session.records_for(shas))
     return results, records
