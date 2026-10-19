@@ -87,7 +87,12 @@ jobs:
       - name: Start Redis 7-compatible server (Memurai)
         shell: pwsh
         run: |
-          choco install memurai-developer --version=4.1.8 --no-progress -y
+          $zip = Join-Path $env:RUNNER_TEMP "memurai-developer.install.4.1.8.zip"
+          $dir = Join-Path $env:RUNNER_TEMP "memurai-developer.install.4.1.8"
+          Invoke-WebRequest -UseBasicParsing "https://community.chocolatey.org/api/v2/package/memurai-developer.install/4.1.8" -OutFile $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+          $install = Start-Process msiexec.exe -ArgumentList "/i `"$dir\tools\Memurai-Developer.msi`" /quiet /norestart" -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "Memurai installer failed with exit code $($install.ExitCode)" }
           Start-Service -Name Memurai -ErrorAction SilentlyContinue
           & "C:\Program Files\Memurai\memurai-cli.exe" ping
       - uses: actions/setup-python@v5
