@@ -393,6 +393,9 @@ def test_cat_file_batch_op_timeout_kills_a_silent_child(tmp_path, monkeypatch):
     assert time.monotonic() - started < 10.0
     with pytest.raises(WalkAnomaly, match="cat-file timed out"):
         cat.commit("f" * 40)
+    deadline = time.monotonic() + 10.0
+    while cat._process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert cat._process.poll() is not None
     try:
         cat.close()
