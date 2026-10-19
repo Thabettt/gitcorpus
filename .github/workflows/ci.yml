@@ -87,13 +87,7 @@ jobs:
       - name: Start Redis 7-compatible server (Memurai)
         shell: pwsh
         run: |
-          $cli = "C:\Program Files\Memurai\memurai-cli.exe"
-          for ($i = 1; $i -le 5; $i++) {
-            choco install memurai-developer --version=4.1.8 --no-progress -y
-            if (Test-Path $cli) { break }
-            Start-Sleep -Seconds 15
-          }
-          if (-not (Test-Path $cli)) { throw "Memurai installation failed" }
+          choco install memurai-developer --version=4.1.8 --no-progress -y
           Start-Service -Name Memurai -ErrorAction SilentlyContinue
           & "C:\Program Files\Memurai\memurai-cli.exe" ping
       - uses: actions/setup-python@v5
