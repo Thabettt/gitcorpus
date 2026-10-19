@@ -34,6 +34,12 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 _IDENT = re.compile(rb"^(.*?) <(.*?)> (\d+) ([+-]\d{4})$")
 
 _state: dict[str, object] = {"checked": 0, "mismatches": 0, "disabled": False}
+_spawns = threading.local()
+
+
+def cat_file_spawns() -> int:
+    """Cat-file children spawned on this thread (per-repo phase diagnostics)."""
+    return int(getattr(_spawns, "count", 0))
 
 
 class WalkAnomaly(RuntimeError):
@@ -176,6 +182,7 @@ class CatFileBatch:
             )
         except OSError as exc:
             raise WalkAnomaly(f"cat-file failed to start: {exc}") from exc
+        _spawns.count = cat_file_spawns() + 1
         self._condition = threading.Condition()
         self._op_deadline: float | None = None
         self._repo_deadline = time.monotonic() + self._repo_timeout

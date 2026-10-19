@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import detect.phase_metrics as phase_metrics
 import detect.repo_walk as repo_walk
 from detect.gitio import (
     CommitRecord,
@@ -453,6 +454,51 @@ def test_detect_pr_commits_local_passes_the_session_into_the_walk(tmp_path, monk
     assert result.status == "ok"
     assert {(hit.evidence["pr"], hit.evidence["commit"]) for hit in result.hits} == {(7, "s1")}
     assert result.stats["propagated_oids"] == ("s1",)
+
+
+def test_detect_pr_commits_local_records_walk_ms_in_phase_metrics(tmp_path, monkeypatch):
+    record = CommitRecord(
+        sha="s1",
+        author_name="Claude",
+        author_email="noreply@anthropic.com",
+        committer_name="Claude",
+        committer_email="noreply@anthropic.com",
+        committed_at="2026-02-01T00:00:00+00:00",
+        message="feat: pr work",
+    )
+
+    def fake_walk(repo, refs, *, depth, session=None):
+        return {7: ("s1",)}, {"s1": record}
+
+    monkeypatch.setattr("detect.local_channels.walk_windows_with_records", fake_walk)
+    metrics = phase_metrics.RepoPhaseMetrics(full_name="octo/one")
+    token = phase_metrics.collecting(metrics)
+    try:
+        repo = FakeRepo(lambda args: "" if args[0] == "fetch" else None, dest=_repo_dir(tmp_path))
+        result = detect_pr_commits_local(repo, PACK, depth=100, refs={7: "aaa"})
+    finally:
+        phase_metrics.reset(token)
+
+    assert result.status == "ok"
+    assert isinstance(metrics.walk_ms, float)
+    assert metrics.refs_count == 1
+
+
+def test_detect_pr_commits_local_records_walk_ms_when_the_walk_fails(tmp_path, monkeypatch):
+    def exploding_walk(repo, refs, *, depth, session=None):
+        raise GitError(["rev-list"], 128, "fatal: bad object")
+
+    monkeypatch.setattr("detect.local_channels.walk_windows_with_records", exploding_walk)
+    metrics = phase_metrics.RepoPhaseMetrics(full_name="octo/one")
+    token = phase_metrics.collecting(metrics)
+    try:
+        repo = FakeRepo(lambda args: "" if args[0] == "fetch" else None, dest=_repo_dir(tmp_path))
+        result = detect_pr_commits_local(repo, PACK, depth=100, refs={7: "aaa"})
+    finally:
+        phase_metrics.reset(token)
+
+    assert result.status == "partial"
+    assert isinstance(metrics.walk_ms, float)
 
 
 def test_local_channels_take_session_as_a_keyword_only_default_none():

@@ -13,7 +13,7 @@ from typing import BinaryIO
 import httpx
 import pytest
 
-from detect import gitio
+from detect import gitio, phase_metrics
 from detect.gitio import (
     GitError,
     GitRepo,
@@ -867,6 +867,66 @@ def test_fetch_pr_refs_fetches_monsters_ungated_without_a_gate(monkeypatch, tmp_
         dest=_repo_dir(tmp_path),
     )
     assert len(fetch_pr_refs(fake, depth=100, gate=None)) == 501
+
+
+def test_fetch_pr_refs_records_phase_metrics_for_a_gated_monster(tmp_path):
+    fake = FakeRepo(
+        lambda args: _ls_remote_lines(501) if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    record = phase_metrics.RepoPhaseMetrics(full_name="octo/monster")
+    token = phase_metrics.collecting(record)
+    try:
+        assert len(fetch_pr_refs(fake, depth=100, gate=FakeGate())) == 501
+    finally:
+        phase_metrics.reset(token)
+    assert record.refs_count == 501
+    assert isinstance(record.pr_listing_ms, float)
+    assert isinstance(record.pr_fetch_ms, float)
+    assert record.gated is True
+    assert record.gate_wait_ms is not None and record.gate_wait_ms >= 0.0
+
+
+def test_fetch_pr_refs_phase_metrics_mark_ordinary_repos_ungated(tmp_path):
+    fake = FakeRepo(
+        lambda args: _LS_REMOTE_OUTPUT if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    record = phase_metrics.RepoPhaseMetrics(full_name="octo/small")
+    token = phase_metrics.collecting(record)
+    try:
+        fetch_pr_refs(fake, depth=100, gate=FakeGate())
+    finally:
+        phase_metrics.reset(token)
+    assert record.refs_count == 2
+    assert record.gated is False
+    assert record.gate_wait_ms is None
+
+
+def test_fetch_pr_refs_phase_metrics_skip_listing_for_prefetched_refs(tmp_path):
+    fake = FakeRepo(
+        lambda args: "" if args[0] == "fetch" else None,
+        dest=_repo_dir(tmp_path),
+    )
+    record = phase_metrics.RepoPhaseMetrics(full_name="octo/prefetched")
+    token = phase_metrics.collecting(record)
+    try:
+        assert fetch_pr_refs(fake, depth=100, refs={7: "sha7"}) == {7: "sha7"}
+    finally:
+        phase_metrics.reset(token)
+    assert record.pr_listing_ms is None
+    assert record.refs_count == 1
+    assert isinstance(record.pr_fetch_ms, float)
+    assert record.gated is False
+
+
+def test_fetch_pr_refs_phase_metrics_are_absent_without_a_record(tmp_path):
+    fake = FakeRepo(
+        lambda args: "" if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    assert fetch_pr_refs(fake, depth=100) == {}
+    assert phase_metrics.current() is None
 
 
 def test_read_pr_refs_snapshot_none_when_missing_corrupt_or_unknown(tmp_path):

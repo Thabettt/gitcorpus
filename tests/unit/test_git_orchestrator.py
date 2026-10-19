@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -12,6 +14,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+import detect.phase_metrics as phase_metrics
 import detect.repo_walk as repo_walk
 from detect.breaker import local_values
 from detect.channels import ChannelResult
@@ -23,8 +26,10 @@ from detect.git_orchestrator import (
     _kill_tree,
     _offline_refs,
     _remove_tree,
+    _run_git_detection_processes,
     _scan_one,
     _scan_worker_main,
+    pr_gate_permits_from_env,
     run_git_detection,
 )
 from detect.gitio import GitError, GitRepo, RemoteRefs, RemoteRefsUnavailable
@@ -1634,3 +1639,236 @@ def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_p
     # test_scan_one_releases_a_reserved_permit_in_finally.
     assert gate.acquires == 1 and gate.held == 1
     assert out_queue.messages and out_queue.messages[0][0] == "scan"
+
+
+def test_git_scan_config_defaults_pr_gate_permits_to_32():
+    assert GitScanConfig().pr_gate_permits == 32
+
+
+def test_pr_gate_permits_from_env_reads_a_positive_override(monkeypatch):
+    monkeypatch.setenv("GITCORPUS_PR_GATE", "64")
+    assert pr_gate_permits_from_env() == 64
+
+
+@pytest.mark.parametrize("raw", ["", " ", "abc", "0", "-5", "3.5"])
+def test_pr_gate_permits_from_env_falls_back_to_32(monkeypatch, raw):
+    monkeypatch.setenv("GITCORPUS_PR_GATE", raw)
+    assert pr_gate_permits_from_env() == 32
+
+
+def test_pr_gate_permits_from_env_defaults_to_32_when_unset(monkeypatch):
+    monkeypatch.delenv("GITCORPUS_PR_GATE", raising=False)
+    assert pr_gate_permits_from_env() == 32
+
+
+class _GateRecorded(RuntimeError):
+    """Stops the spawn path the moment the fleet gate is built."""
+
+
+class _RecordingGateContext:
+    def __init__(self) -> None:
+        self.permits: list[int] = []
+
+    def Queue(self):
+        return object()
+
+    def Event(self):
+        return object()
+
+    def Value(self, *_args):
+        return object()
+
+    def BoundedSemaphore(self, value):
+        self.permits.append(value)
+        raise _GateRecorded()
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(128, 128), (0, 1), (-4, 1)])
+def test_run_git_detection_processes_builds_the_gate_with_the_configured_permits(
+    tmp_path, monkeypatch, configured, expected
+):
+    context = _RecordingGateContext()
+    monkeypatch.setattr(multiprocessing, "get_context", lambda name: context)
+    with pytest.raises(_GateRecorded):
+        _run_git_detection_processes(
+            None,
+            1,
+            make_spec(1, frozenset()),
+            PACK,
+            GitScanConfig(pr_gate_permits=configured),
+            tmp_path,
+            tmp_path,
+            [],
+            0,
+            [],
+            _offline_refs,
+        )
+    assert context.permits == [expected]
+
+
+def _phase_metrics_lines(directory: Path) -> list[dict]:
+    rows: list[dict] = []
+    for path in sorted(directory.glob("phase-metrics-*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            rows.append(json.loads(line))
+    return rows
+
+
+def test_phase_metrics_writer_appends_json_lines(monkeypatch, tmp_path):
+    monkeypatch.setenv(phase_metrics.PHASE_METRICS_ENV, str(tmp_path / "metrics"))
+    phase_metrics.write_phase_metrics(
+        phase_metrics.RepoPhaseMetrics(full_name="octo/one", probe_ms=1.5)
+    )
+    phase_metrics.write_phase_metrics(phase_metrics.RepoPhaseMetrics(full_name="octo/two"))
+
+    rows = _phase_metrics_lines(tmp_path / "metrics")
+    assert [row["full_name"] for row in rows] == ["octo/one", "octo/two"]
+    assert set(rows[0]) == {
+        "full_name",
+        "probe_ms",
+        "clone_ms",
+        "files_ms",
+        "history_ms",
+        "pr_listing_ms",
+        "pr_fetch_ms",
+        "walk_ms",
+        "total_ms",
+        "refs_count",
+        "gated",
+        "gate_wait_ms",
+        "cat_file_spawns",
+    }
+    assert rows[0]["probe_ms"] == 1.5
+    assert rows[0]["clone_ms"] is None
+
+
+def test_phase_metrics_writer_is_silent_when_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv(phase_metrics.PHASE_METRICS_ENV, raising=False)
+    phase_metrics.write_phase_metrics(phase_metrics.RepoPhaseMetrics(full_name="octo/one"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_phase_metrics_writer_survives_a_write_failure(monkeypatch, tmp_path):
+    target = tmp_path / "not-a-directory"
+    target.write_text("filed", encoding="utf-8")
+    monkeypatch.setenv(phase_metrics.PHASE_METRICS_ENV, str(target))
+    phase_metrics.write_phase_metrics(phase_metrics.RepoPhaseMetrics(full_name="octo/one"))
+
+
+def test_scan_one_appends_a_phase_metrics_line_when_enabled(tmp_path, monkeypatch):
+    metrics_dir = tmp_path / "metrics"
+    monkeypatch.setenv(phase_metrics.PHASE_METRICS_ENV, str(metrics_dir))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        frozenset({"file"}),
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+        probe_ms=12.5,
+    )
+
+    assert scan.repo_id == 1
+    rows = _phase_metrics_lines(metrics_dir)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["full_name"] == "octo/one"
+    assert row["probe_ms"] == 12.5
+    assert isinstance(row["clone_ms"], float)
+    assert isinstance(row["files_ms"], float)
+    assert isinstance(row["total_ms"], float)
+    assert isinstance(row["cat_file_spawns"], int)
+    assert row["history_ms"] is None
+    assert row["pr_listing_ms"] is None
+    assert row["pr_fetch_ms"] is None
+    assert row["walk_ms"] is None
+    assert row["refs_count"] is None
+    assert row["gated"] is None
+    assert row["gate_wait_ms"] is None
+
+
+def test_scan_one_writes_no_metrics_when_the_env_is_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(phase_metrics.PHASE_METRICS_ENV, raising=False)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        frozenset({"file"}),
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+    )
+
+    assert not [path for path in tmp_path.rglob("phase-metrics-*.jsonl")]
+
+
+def test_scan_worker_main_measures_and_forwards_probe_ms(tmp_path, monkeypatch):
+    seen: list[dict] = []
+
+    def fake_scan_one(run_dir, cfg, spec, pack, active, candidate, **kwargs):
+        seen.append(kwargs)
+        return _failed_scan(candidate, GitError(["git"], 128, "synthetic"), failure_class="fatal")
+
+    def slow_probe(full_name: str) -> RemoteRefs:
+        # 60ms clears Windows' 15.6ms monotonic tick so the elapsed reading
+        # can never round to zero.
+        time.sleep(0.06)
+        return _offline_refs(full_name)
+
+    monkeypatch.setattr("detect.git_orchestrator._scan_one", fake_scan_one)
+    out_queue = FakeOutQueue()
+    _scan_main_isolated(
+        [_candidate("octo/one")],
+        out_queue,
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        AdmissionGate(),
+        slow_probe,
+    )
+
+    assert len(seen) == 1
+    assert seen[0]["probe_ms"] >= 20.0
+
+
+def test_scan_worker_main_records_probe_metrics_for_dead_repos(tmp_path, monkeypatch):
+    metrics_dir = tmp_path / "metrics"
+    monkeypatch.setenv(phase_metrics.PHASE_METRICS_ENV, str(metrics_dir))
+    dead_error = GitError(["ls-refs"], 128, "remote: Repository not found.")
+
+    def probe(full_name: str) -> RemoteRefs:
+        raise dead_error
+
+    out_queue = FakeOutQueue()
+    _scan_main_isolated(
+        [_candidate("octo/gone")],
+        out_queue,
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        AdmissionGate(),
+        probe,
+    )
+
+    rows = _phase_metrics_lines(metrics_dir)
+    assert len(rows) == 1
+    assert rows[0]["full_name"] == "octo/gone"
+    assert rows[0]["probe_ms"] is not None
+    assert rows[0]["clone_ms"] is None

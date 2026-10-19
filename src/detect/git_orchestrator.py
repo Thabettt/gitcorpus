@@ -19,7 +19,7 @@ from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
-from detect import repo_walk
+from detect import phase_metrics, repo_walk
 from detect.attribution import dedupe_hits
 from detect.breaker import CircuitBreaker, local_values
 from detect.channels import ChannelResult
@@ -72,6 +72,8 @@ API_ONLY_CHANNELS = ("label", "issue")
 _HISTORY_KEYS = ("author", "commit_trailer", "bot")
 _CANCEL_POLL_SECONDS = 0.25
 _LOW_DISK_MARKER = "low_disk"
+_DEFAULT_PR_GATE_PERMITS = 32
+_PR_GATE_ENV = "GITCORPUS_PR_GATE"
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,19 @@ class GitScanConfig:
     attempts: int = 4
     retry_delay: float = 1.0
     processes: int = 0
+    pr_gate_permits: int = _DEFAULT_PR_GATE_PERMITS
+
+
+def pr_gate_permits_from_env() -> int:
+    """The serve layer's fleet-gate size; invalid or non-positive means 32."""
+    raw = os.environ.get(_PR_GATE_ENV)
+    if raw is None or not raw.strip():
+        return _DEFAULT_PR_GATE_PERMITS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_PR_GATE_PERMITS
+    return value if value > 0 else _DEFAULT_PR_GATE_PERMITS
 
 
 def _remove_tree(path: Path) -> None:
@@ -128,9 +143,13 @@ def _scan_one(
     pr_gate: object | None = None,
     prefetched: RemoteRefs | None = None,
     gate_reserved: bool = False,
+    probe_ms: float | None = None,
 ) -> _RepoScan:
     session: repo_walk.RepoWalkSession | None = None
     session_failed = False
+    started = time.monotonic()
+    spawns_before = repo_walk.cat_file_spawns()
+    metrics = phase_metrics.RepoPhaseMetrics(full_name="", probe_ms=probe_ms)
 
     def walk_session(repo: GitRepo) -> repo_walk.RepoWalkSession | None:
         nonlocal session, session_failed
@@ -143,8 +162,10 @@ def _scan_one(
                 session_failed = True
         return session
 
+    token = phase_metrics.collecting(metrics)
     try:
         full_name = str(candidate["full_name"])
+        metrics.full_name = full_name
         dest = run_dir / full_name.replace("/", "__")
         if not (cfg.keep and (dest / MARKER_NAME).exists()):
 
@@ -153,23 +174,35 @@ def _scan_one(
                 clone_one(full_name, dest)
                 (dest / MARKER_NAME).write_text("", encoding="utf-8")
 
-            retry_call(
-                clone_attempt,
-                attempts=cfg.attempts,
-                base_delay=cfg.retry_delay,
-                retryable=lambda exc: classify_git_failure(exc) != "dead",
-            )
+            clone_started = time.monotonic()
+            try:
+                retry_call(
+                    clone_attempt,
+                    attempts=cfg.attempts,
+                    base_delay=cfg.retry_delay,
+                    retryable=lambda exc: classify_git_failure(exc) != "dead",
+                )
+            finally:
+                metrics.clone_ms = phase_metrics.elapsed_ms(clone_started)
         repo = make_repo(dest, full_name)
         results: dict[str, ChannelResult] = {}
         history_stats: Mapping[str, object] = {}
         if "file" in active:
-            results["file"] = detect_files_local(
-                repo, pack, spec.agents, session=walk_session(repo)
-            )
+            files_started = time.monotonic()
+            try:
+                results["file"] = detect_files_local(
+                    repo, pack, spec.agents, session=walk_session(repo)
+                )
+            finally:
+                metrics.files_ms = phase_metrics.elapsed_ms(files_started)
         if set(_HISTORY_KEYS) & active:
-            history = detect_history_local(
-                repo, pack, spec.agents, limit=cfg.depth, session=walk_session(repo)
-            )
+            history_started = time.monotonic()
+            try:
+                history = detect_history_local(
+                    repo, pack, spec.agents, limit=cfg.depth, session=walk_session(repo)
+                )
+            finally:
+                metrics.history_ms = phase_metrics.elapsed_ms(history_started)
             for key in _HISTORY_KEYS:
                 if key in active:
                     results[key] = history[key]
@@ -204,6 +237,10 @@ def _scan_one(
         scan.document = _repo_document(scan)
         return scan
     finally:
+        phase_metrics.reset(token)
+        metrics.total_ms = phase_metrics.elapsed_ms(started)
+        metrics.cat_file_spawns = repo_walk.cat_file_spawns() - spawns_before
+        phase_metrics.write_phase_metrics(metrics)
         if session is not None:
             with contextlib.suppress(Exception):
                 session.close()
@@ -397,6 +434,15 @@ def _scan_worker_main(
     )
     breaker = CircuitBreaker(*breaker_values)
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
+    probe_times: dict[str, float] = {}
+
+    def timed_probe(full_name: str) -> RemoteRefs:
+        started = time.monotonic()
+        try:
+            return admission_probe(full_name)
+        finally:
+            probe_times[full_name] = phase_metrics.elapsed_ms(started)
+
     try:
         pending = deque(_Pending(candidate) for candidate in slice_candidates)
         retry_candidates: list[Mapping] = []
@@ -405,6 +451,14 @@ def _scan_worker_main(
         exhausted = False
 
         def emit_dead(scan: _RepoScan) -> None:
+            # Dead repos never reach _scan_one; record their probe cost here so
+            # the metrics stream still has one line per scheduled repo.
+            phase_metrics.write_phase_metrics(
+                phase_metrics.RepoPhaseMetrics(
+                    full_name=scan.full_name,
+                    probe_ms=probe_times.pop(scan.full_name, None),
+                )
+            )
             out_queue.put(("scan", scan, _failure_message(scan)))
 
         while True:
@@ -417,7 +471,7 @@ def _scan_worker_main(
                     exhausted = True
                     out_queue.put((_LOW_DISK_MARKER, float(free)))
                     break
-                admission = _admit(pending, admission_probe, pr_gate, emit_dead)
+                admission = _admit(pending, timed_probe, pr_gate, emit_dead)
                 if admission is None:
                     if wave == 1 and retry_candidates:
                         wave = 2
@@ -442,6 +496,7 @@ def _scan_worker_main(
                         pr_gate=pr_gate,
                         prefetched=admission.prefetched,
                         gate_reserved=admission.gate_reserved,
+                        probe_ms=probe_times.pop(str(admission.candidate["full_name"]), None),
                     )
                 except BaseException:
                     # A reserved permit must never outlive its admission, even
@@ -529,7 +584,7 @@ def _run_git_detection_processes(
         mp_context.Value("d", 0.0),
         mp_context.Value("d", 0.0),
     )
-    pr_gate = mp_context.BoundedSemaphore(32)
+    pr_gate = mp_context.BoundedSemaphore(max(1, cfg.pr_gate_permits))
     slices = [candidates[index::processes] for index in range(processes)]
     workers = []
     try:

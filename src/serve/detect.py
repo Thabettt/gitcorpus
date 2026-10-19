@@ -19,6 +19,7 @@ from detect.git_orchestrator import (
     API_ONLY_CHANNELS,
     GitScanConfig,
     _remove_tree,
+    pr_gate_permits_from_env,
     run_git_detection,
 )
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
@@ -125,6 +126,7 @@ def build_detect_runner(engine: Engine) -> Runner:
                     workers=settings.detect_concurrency,
                     processes=4,
                     scan_root=detect_clone_root(),
+                    pr_gate_permits=pr_gate_permits_from_env(),
                 ),
             )
         from serve.runner import build_deps

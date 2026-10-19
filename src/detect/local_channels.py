@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from collections.abc import Mapping
 
+from detect import phase_metrics
 from detect.attribution import (
     Hit,
     dedupe_hits,
@@ -240,6 +242,7 @@ def detect_pr_commits_local(
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
     resumed_note = ""
+    metrics = phase_metrics.current()
 
     def fetch_and_list() -> dict[int, str]:
         return fetch_pr_refs(repo, depth=depth, gate=gate, refs=refs, gate_reserved=gate_reserved)
@@ -258,11 +261,16 @@ def detect_pr_commits_local(
             )
         refs = snapshot
         resumed_note = f"resumed from persisted PR ref snapshot: {git_error_tail(exc)}"
+        if metrics is not None:
+            metrics.refs_count = len(refs)
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
+    walk_started = time.monotonic()
     try:
         walks, walked_records = walk_windows_with_records(repo, refs, depth=depth, session=session)
     except _GIT_FAILURES as exc:
+        if metrics is not None:
+            metrics.walk_ms = phase_metrics.elapsed_ms(walk_started)
         return ChannelResult(
             status="partial",
             note=f"pull refs walk failed: {git_error_tail(exc)}",
@@ -278,11 +286,15 @@ def detect_pr_commits_local(
         try:
             records.update(read_commits(repo, missing))
         except _GIT_FAILURES as exc:
+            if metrics is not None:
+                metrics.walk_ms = phase_metrics.elapsed_ms(walk_started)
             return ChannelResult(
                 status="partial",
                 note=f"commit read failed: {git_error_tail(exc)}",
                 stats=empty_stats,
             )
+    if metrics is not None:
+        metrics.walk_ms = phase_metrics.elapsed_ms(walk_started)
     hits: list[Hit] = []
     for sha, number in sorted(sha_to_pr.items(), key=lambda item: (item[1], item[0])):
         record = records.get(sha)

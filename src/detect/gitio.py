@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 from urllib.parse import urlparse
 
+from detect import phase_metrics
 from lib import cancellation
 from lib.batching import chunked
 
@@ -780,44 +781,71 @@ def fetch_pr_refs(
     # ``gate_reserved=True`` so the fetch neither acquires nor releases it.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
-    remote = dict(refs) if refs is not None else remote_refs(repo).pr_refs
+    metrics = phase_metrics.current()
+    if refs is not None:
+        remote = dict(refs)
+    else:
+        listing_started = time.monotonic()
+        try:
+            remote = dict(remote_refs(repo).pr_refs)
+        finally:
+            if metrics is not None:
+                metrics.pr_listing_ms = phase_metrics.elapsed_ms(listing_started)
+    if metrics is not None:
+        metrics.refs_count = len(remote)
     if not remote:
         # A kept clone must never resume from refs the remote no longer has.
         with contextlib.suppress(OSError):
             (Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT).unlink()
         return {}
-    gated = gate is not None and not gate_reserved and len(remote) > _MONSTER_PR_THRESHOLD
-    for numbers in chunked(sorted(remote), chunk_refs):
-        if gated:
-            _acquire_gate(gate)
-        try:
-            request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
-            handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
-            try:
-                handle.write(request.encode("ascii"))
-                handle.close()
-                with open(handle.name, "rb") as stdin:
-                    repo.git(
-                        "fetch",
-                        "--quiet",
-                        "--depth",
-                        str(depth),
-                        "--filter=tree:0",
-                        "--no-tags",
-                        "--no-write-fetch-head",
-                        "--recurse-submodules=no",
-                        "origin",
-                        "--stdin",
-                        stdin=stdin,
-                        timeout=_PR_CHUNK_TIMEOUT,
-                        env_extra={"GIT_NO_LAZY_FETCH": "1"},
-                    )
-            finally:
-                with contextlib.suppress(OSError):
-                    os.unlink(handle.name)
-        finally:
+    monster = len(remote) > _MONSTER_PR_THRESHOLD
+    gated = gate is not None and not gate_reserved and monster
+    if metrics is not None:
+        # A scheduler reservation engaged the fleet gate without waiting, so
+        # it counts as gated with zero wait; an ungated fetch stays null.
+        metrics.gated = gate is not None and monster
+        metrics.gate_wait_ms = 0.0 if metrics.gated else None
+    gate_wait_ms = 0.0
+    fetch_started = time.monotonic()
+    try:
+        for numbers in chunked(sorted(remote), chunk_refs):
             if gated:
-                gate.release()
+                wait_started = time.monotonic()
+                _acquire_gate(gate)
+                gate_wait_ms += phase_metrics.elapsed_ms(wait_started)
+            try:
+                request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
+                handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
+                try:
+                    handle.write(request.encode("ascii"))
+                    handle.close()
+                    with open(handle.name, "rb") as stdin:
+                        repo.git(
+                            "fetch",
+                            "--quiet",
+                            "--depth",
+                            str(depth),
+                            "--filter=tree:0",
+                            "--no-tags",
+                            "--no-write-fetch-head",
+                            "--recurse-submodules=no",
+                            "origin",
+                            "--stdin",
+                            stdin=stdin,
+                            timeout=_PR_CHUNK_TIMEOUT,
+                            env_extra={"GIT_NO_LAZY_FETCH": "1"},
+                        )
+                finally:
+                    with contextlib.suppress(OSError):
+                        os.unlink(handle.name)
+            finally:
+                if gated:
+                    gate.release()
+    finally:
+        if metrics is not None:
+            metrics.pr_fetch_ms = phase_metrics.elapsed_ms(fetch_started)
+            if metrics.gated:
+                metrics.gate_wait_ms = gate_wait_ms
     try:
         write_pr_refs_snapshot(repo, remote)
     except OSError:

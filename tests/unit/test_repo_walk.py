@@ -304,6 +304,16 @@ def test_cat_file_batch_close_survives_posix_communicate_semantics(tmp_path, mon
     assert cat._process.poll() is not None
 
 
+@needs_git
+def test_cat_file_batch_counts_spawned_children_per_thread(tmp_path):
+    before = repo_walk.cat_file_spawns()
+    cat = CatFileBatch(tmp_path)
+    try:
+        assert repo_walk.cat_file_spawns() == before + 1
+    finally:
+        cat.close()
+
+
 def _sleeping_popen(monkeypatch):
     real_popen = subprocess.Popen
 
