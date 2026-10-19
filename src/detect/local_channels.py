@@ -26,6 +26,7 @@ from detect.gitio import (
     read_commits,
     read_log,
     read_pr_refs_snapshot,
+    remote_refs,
     retry_call,
 )
 from detect.packs import Pack
@@ -246,6 +247,14 @@ def detect_pr_commits_local(
     )
 
 
+def _remote_head_refs(repo: GitRepo) -> dict[str, str] | None:
+    """Remote head refs, or None when the listing failed (degrade quietly)."""
+    try:
+        return remote_refs(repo).head_refs
+    except Exception:
+        return None
+
+
 def detect_branch_local(
     repo: GitRepo,
     pack: Pack,
@@ -268,8 +277,21 @@ def detect_branch_local(
                     {"pr": number, "head": head, "match": hit.evidence["match"]},
                 )
             )
-    return ChannelResult(
-        hits=tuple(dedupe_hits(hits)),
-        status="ok",
-        note=f"window: last {limit} commits; merge messages only",
-    )
+    note = f"window: last {limit} commits; merge messages only"
+    if pack.branches:
+        # Agent-named branches linger on the remote even when nothing was
+        # merged, so the head refs catch adoption the merge messages miss.
+        head_refs = _remote_head_refs(repo)
+        if head_refs is not None:
+            for name in sorted(head_refs):
+                branch = name.removeprefix("refs/heads/")
+                for hit in match_branches(pack, [branch], agents):
+                    hits.append(
+                        Hit(
+                            hit.agent,
+                            "branch",
+                            {"pr": None, "head": branch, "match": hit.evidence["match"]},
+                        )
+                    )
+            note = f"window: last {limit} commits; merge messages + remote branch heads"
+    return ChannelResult(hits=tuple(dedupe_hits(hits)), status="ok", note=note)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import detect.repo_walk as repo_walk
@@ -8,6 +9,7 @@ from detect.gitio import (
     CommitRecord,
     GitError,
     GitRepo,
+    RemoteRefs,
     read_pr_refs_snapshot,
     write_pr_refs_snapshot,
 )
@@ -394,6 +396,68 @@ def test_detect_branch_local_parses_merge_messages():
         (9, "cursor/tool"),
     }
     assert {h.agent for h in result.hits} == {"Claude Code", "Cursor"}
+
+
+def test_detect_branch_local_matches_remote_head_refs():
+    repo = FakeRepo(lambda args: "" if args[0] == "log" else None)
+    repo._remote_refs_cache = RemoteRefs(
+        pr_refs={},
+        head_refs={"refs/heads/claude/fix-tests": "a" * 40, "refs/heads/main": "b" * 40},
+    )
+    result = detect_branch_local(repo, PACK, limit=100)
+    assert result.status == "ok"
+    assert result.note == "window: last 100 commits; merge messages + remote branch heads"
+    assert [(h.agent, h.evidence) for h in result.hits] == [
+        ("Claude Code", {"pr": None, "head": "claude/fix-tests", "match": "claude/"})
+    ]
+
+
+def test_detect_branch_local_merges_merge_message_and_remote_head_evidence():
+    log = (
+        "m1\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+        "\x1f2026-03-01T00:00:00+00:00\x1fMerge pull request #123 from octo/claude/fix\x1e"
+    )
+    repo = FakeRepo(lambda args: log if args[0] == "log" else None)
+    repo._remote_refs_cache = RemoteRefs(pr_refs={}, head_refs={"refs/heads/cursor/tool": "c" * 40})
+    result = detect_branch_local(repo, PACK, limit=100)
+    assert {(h.evidence["pr"], h.evidence["head"]) for h in result.hits} == {
+        (123, "claude/fix"),
+        (None, "cursor/tool"),
+    }
+    assert result.note == "window: last 100 commits; merge messages + remote branch heads"
+
+
+def test_detect_branch_local_degrades_to_merge_messages_when_listing_fails():
+    log = (
+        "m1\x1fJane\x1fjane@example.com\x1fJane\x1fjane@example.com"
+        "\x1f2026-03-01T00:00:00+00:00\x1fMerge pull request #123 from octo/claude/fix\x1e"
+    )
+    repo = FakeRepo(lambda args: log if args[0] == "log" else None)
+    result = detect_branch_local(repo, PACK, limit=100)
+    assert result.status == "ok"
+    assert result.note == "window: last 100 commits; merge messages only"
+    assert {(h.evidence["pr"], h.evidence["head"]) for h in result.hits} == {(123, "claude/fix")}
+
+
+def test_detect_branch_local_never_raises_when_listing_explodes(monkeypatch):
+    def boom(repo):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("detect.local_channels.remote_refs", boom)
+    result = detect_branch_local(FakeRepo(lambda args: "" if args[0] == "log" else None), PACK)
+    assert result.status == "ok"
+    assert result.hits == ()
+
+
+def test_detect_branch_local_skips_listing_without_branch_patterns(monkeypatch):
+    def boom(repo):
+        raise AssertionError("remote_refs must not be called")
+
+    monkeypatch.setattr("detect.local_channels.remote_refs", boom)
+    pack = replace(PACK, branches=())
+    result = detect_branch_local(FakeRepo(lambda args: "" if args[0] == "log" else None), pack)
+    assert result.status == "ok"
+    assert result.note == "window: last 100 commits; merge messages only"
 
 
 _A_TIP = "a1" * 20
