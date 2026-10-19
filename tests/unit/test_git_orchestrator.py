@@ -1137,6 +1137,16 @@ def test_admit_passes_a_transient_probe_failure_through_without_refs():
     assert (gate.acquires, gate.releases) == (0, 0)
 
 
+def test_admit_passes_a_retryable_git_error_through_without_refs():
+    probe = _probe({"octo/one": GitError(["ls-refs"], 128, "fatal: connection reset")})
+    gate = AdmissionGate()
+
+    admission = _admit(deque([_candidate("octo/one")]), probe, gate)
+
+    assert admission == Admission(_candidate("octo/one"), None, False)
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
 def test_admit_requeues_a_monster_and_pops_the_tail():
     monster = _candidate("octo/monster")
     tail = _candidate("octo/tail", repo_id=2)
@@ -1146,11 +1156,13 @@ def test_admit_requeues_a_monster_and_pops_the_tail():
     admission = _admit(pending, _probe({"octo/monster": _refs(501)}), gate)
 
     assert admission == Admission(tail, None, False)
-    assert list(pending) == [monster]  # requeued with its prefetched refs
+    requeued = list(pending)
+    assert [entry.candidate for entry in requeued] == [monster]
+    assert requeued[0].refs == _refs(501)  # carried for the next admission
     assert (gate.acquires, gate.releases) == (1, 0)  # failed attempt holds nothing
 
 
-def test_admit_requeues_the_monster_with_its_prefetched_refs():
+def test_admit_requeued_monster_is_not_re_probed(tmp_path, monkeypatch):
     monster = _candidate("octo/monster")
     pending = deque([monster, _candidate("octo/tail", repo_id=2)])
     refs = _refs(501)
@@ -1163,20 +1175,40 @@ def test_admit_requeues_the_monster_with_its_prefetched_refs():
     _admit(pending, probe, AdmissionGate(grants=False))
 
     assert probed == ["octo/monster"]  # the tail is never probed here
-    assert list(pending) == [monster]  # requeued with its prefetched refs intact
-    second = _admit(deque([monster]), probe, AdmissionGate())
-    assert second is not None and second.prefetched is refs
+    requeued = list(pending)
+    assert [entry.candidate for entry in requeued] == [monster]
+    assert requeued[0].refs is refs
 
+    # A second admission of the requeued entry must not probe again, and the
+    # carried refs must reach the submitted scan.
+    seen: list[dict] = []
 
-def test_admit_still_requeues_when_the_monster_is_paired_with_a_single_tail():
-    monster = _candidate("octo/monster")
-    tail = _candidate("octo/tail", repo_id=2)
-    pending = deque([monster, tail])
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+        seen.append({"refs": refs, "gate_reserved": gate_reserved})
+        return ChannelResult(status="ok")
 
-    admission = _admit(pending, _probe({"octo/monster": _refs(501)}), AdmissionGate(grants=False))
-
-    assert admission is not None and admission.candidate is tail
-    assert list(pending) == [monster]
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    second_gate = AdmissionGate(grants=False)
+    admission = _admit(pending, probe, second_gate, None)
+    assert admission is not None and admission.candidate is monster
+    assert probed == ["octo/monster"]  # no re-probe of the requeued entry
+    _scan_one(
+        run_dir,
+        GitScanConfig(attempts=1, retry_delay=0.0),
+        make_spec(1, frozenset({"pr_metadata"})),
+        PACK,
+        frozenset({"pr_metadata"}),
+        admission.candidate,
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+        pr_gate=second_gate,
+        prefetched=admission.prefetched,
+        gate_reserved=admission.gate_reserved,
+    )
+    assert seen == [{"refs": refs.pr_refs, "gate_reserved": False}]
+    assert (second_gate.acquires, second_gate.releases) == (1, 0)  # no permit was taken
 
 
 def test_admit_falls_back_to_the_sole_monster_when_the_gate_is_busy():

@@ -297,6 +297,13 @@ class Admission(NamedTuple):
     gate_reserved: bool
 
 
+class _Pending(NamedTuple):
+    """A queued candidate; refs already probed are carried across requeues."""
+
+    candidate: Mapping
+    refs: RemoteRefs | None = None
+
+
 def _failure_message(scan: _RepoScan) -> str:
     return f"{scan.full_name}: {scan.document['notes'][0]}"
 
@@ -308,6 +315,11 @@ def _is_monster(refs: RemoteRefs) -> bool:
 def _offline_refs(full_name: str) -> RemoteRefs:
     """Empty probe result; lets process-path tests stay offline."""
     return RemoteRefs(pr_refs={}, head_refs={})
+
+
+def _entry(item) -> _Pending:
+    """Accept a pending deque item as either a _Pending or a bare mapping."""
+    return item if isinstance(item, _Pending) else _Pending(item)
 
 
 def _admit(
@@ -323,24 +335,29 @@ def _admit(
     means the queue drained. A monster whose fleet permit cannot be taken
     immediately is appended back with its prefetched refs and the candidate at
     the tail is admitted instead, so a wave of giants cannot starve the
-    ordinary lane; when the monster is the only candidate left it is admitted
-    anyway and its fetch path blocks on the gate as before.
+    ordinary lane; the refs ride on the requeued entry, so it is never
+    re-probed while the gate stays saturated; when the monster is the only
+    candidate left it is admitted anyway and its fetch path blocks on the
+    gate as before.
     """
     while pending:
-        candidate = pending.popleft()
+        entry = _entry(pending.popleft())
+        candidate = entry.candidate
         full_name = str(candidate["full_name"])
-        try:
-            refs = probe(full_name)
-        except GitError as exc:
-            failure_class = classify_git_failure(exc)
-            if failure_class == "dead":
-                dead = _failed_scan(candidate, exc, failure_class=failure_class)
-                if emit_failure is not None:
-                    emit_failure(dead)
-                continue
-            refs = None
-        except RemoteRefsUnavailable:
-            refs = None
+        refs = entry.refs
+        if refs is None:
+            try:
+                refs = probe(full_name)
+            except GitError as exc:
+                failure_class = classify_git_failure(exc)
+                if failure_class == "dead":
+                    dead = _failed_scan(candidate, exc, failure_class=failure_class)
+                    if emit_failure is not None:
+                        emit_failure(dead)
+                    continue
+                refs = None
+            except RemoteRefsUnavailable:
+                refs = None
         if refs is not None and gate is not None and _is_monster(refs):
             if _acquire_gate(gate, blocking=False):
                 return Admission(candidate, refs, True)
@@ -348,9 +365,9 @@ def _admit(
                 # Two lanes: requeue the monster with its prefetched refs and
                 # admit the candidate at the tail instead. The permit attempt
                 # failed, so no permit is held while the monster waits.
-                pending.appendleft(candidate)
-                candidate = pending.pop()
-                return Admission(candidate, None, False)
+                pending.appendleft(_Pending(candidate, refs))
+                tail = _entry(pending.pop())
+                return Admission(tail.candidate, None, False)
             # It is the only candidate left; admit it anyway and let the
             # fetch path block on the gate as today.
         return Admission(candidate, refs, False)
@@ -382,7 +399,7 @@ def _scan_worker_main(
     breaker = CircuitBreaker(*breaker_values)
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     try:
-        pending = deque(slice_candidates)
+        pending = deque(_Pending(candidate) for candidate in slice_candidates)
         retry_candidates: list[Mapping] = []
         wave = 1
         in_flight: dict[Future, Mapping] = {}
@@ -405,27 +422,34 @@ def _scan_worker_main(
                 if admission is None:
                     if wave == 1 and retry_candidates:
                         wave = 2
-                        pending = deque(retry_candidates)
+                        pending = deque(_Pending(candidate) for candidate in retry_candidates)
                         retry_candidates = []
                         continue
                     exhausted = True
                     break
                 context = contextvars.copy_context()
-                future = pool.submit(
-                    context.run,
-                    _scan_one,
-                    run_dir,
-                    cfg,
-                    spec,
-                    pack,
-                    active,
-                    admission.candidate,
-                    clone_one=clone_one,
-                    make_repo=make_repo,
-                    pr_gate=pr_gate,
-                    prefetched=admission.prefetched,
-                    gate_reserved=admission.gate_reserved,
-                )
+                try:
+                    future = pool.submit(
+                        context.run,
+                        _scan_one,
+                        run_dir,
+                        cfg,
+                        spec,
+                        pack,
+                        active,
+                        admission.candidate,
+                        clone_one=clone_one,
+                        make_repo=make_repo,
+                        pr_gate=pr_gate,
+                        prefetched=admission.prefetched,
+                        gate_reserved=admission.gate_reserved,
+                    )
+                except BaseException:
+                    # A reserved permit must never outlive its admission, even
+                    # when the submission itself fails.
+                    if admission.gate_reserved and pr_gate is not None:
+                        pr_gate.release()
+                    raise
                 in_flight[future] = admission.candidate
             if not in_flight:
                 break
@@ -657,7 +681,7 @@ def run_git_detection(
             candidates,
             total,
             warnings,
-            admission_probe or remote_refs_for,
+            remote_refs_for if admission_probe is None else admission_probe,
         )
         cancelled = False
     else:
