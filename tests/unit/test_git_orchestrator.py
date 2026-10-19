@@ -29,7 +29,7 @@ class FakeRepo(GitRepo):
         self._handler = handler
         self.calls: list[tuple[str, ...]] = []
 
-    def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+    def git(self, *args: str, timeout: float | None = None, stdin=None, env_extra=None) -> str:
         self.calls.append(args)
         result = self._handler(args)
         if result is None:
@@ -662,7 +662,7 @@ def test_run_git_detection_cancel_reaches_scan_workers(clean_db, tmp_path, monke
     seen_cancel = threading.Event()
 
     class CancellableRepo(FakeRepo):
-        def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+        def git(self, *args: str, timeout: float | None = None, stdin=None, env_extra=None) -> str:
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
                 try:
@@ -715,7 +715,7 @@ def test_run_git_detection_cancel_returns_promptly_with_wedged_scans(
     started = threading.Event()
 
     class WedgedRepo(FakeRepo):
-        def git(self, *args: str, timeout: float | None = None, stdin=None) -> str:
+        def git(self, *args: str, timeout: float | None = None, stdin=None, env_extra=None) -> str:
             started.set()
             release.wait()
             return happy_handler(args)

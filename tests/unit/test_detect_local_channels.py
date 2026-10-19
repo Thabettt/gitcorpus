@@ -219,7 +219,7 @@ def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes(tmp_path):
         if args[0] == "fetch":
             return ""
         if args[0] == "rev-list":
-            return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[3]]
+            return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[-1]]
         if args[0] == "log":
             return _PR_LOG
         return None

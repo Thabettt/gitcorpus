@@ -334,6 +334,7 @@ def _read_blobs_batch(repo: GitRepo, paths: Sequence[str]) -> dict[str, str | No
                 cwd=repo.dest,
                 timeout=repo.timeout,
                 stdin=stdin,
+                env_extra={"GIT_NO_LAZY_FETCH": "1"},
             )
     except (GitError, subprocess.TimeoutExpired):
         return {path: read_blob(repo, path) for path in paths}
@@ -609,7 +610,13 @@ def read_commits(repo: GitRepo, shas: Sequence[str]) -> dict[str, CommitRecord]:
     # `log --no-walk` reads commit objects only, so it stays local and exact.
     records: dict[str, CommitRecord] = {}
     for batch in chunked(list(shas), _SHOW_BATCH):
-        output = repo.git("log", "--no-walk", f"--format={LOG_FORMAT}", *batch)
+        output = repo.git(
+            "log",
+            "--no-walk",
+            f"--format={LOG_FORMAT}",
+            *batch,
+            env_extra={"GIT_NO_LAZY_FETCH": "1"},
+        )
         for record in parse_log(output):
             records[record.sha] = record
     return records

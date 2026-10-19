@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ import detect.repo_walk as repo_walk
 from detect.gitio import GitRepo, read_commits
 from detect.repo_walk import (
     CatFileBatch,
+    WalkAnomaly,
     reset_verification,
     verification_summary,
     walk_windows,
@@ -213,7 +216,7 @@ def test_walk_windows_falls_back_to_rev_list_without_a_repo(tmp_path):
         def __init__(self):
             super().__init__(tmp_path / "not-a-repo")
 
-        def git(self, *args, timeout=None, stdin=None):
+        def git(self, *args, timeout=None, stdin=None, env_extra=None):
             assert args[:2] == ("rev-list", "-n")
             return "s1\ns2\n"
 
@@ -228,7 +231,7 @@ def test_fallback_walks_each_unique_tip_once(tmp_path):
         def __init__(self):
             super().__init__(tmp_path / "not-a-repo")
 
-        def git(self, *args, timeout=None, stdin=None):
+        def git(self, *args, timeout=None, stdin=None, env_extra=None):
             assert args[:2] == ("rev-list", "-n")
             calls.append(args)
             return "s1\ns2\n" if args[-1] == "aaa" else "s3\n"
@@ -236,6 +239,25 @@ def test_fallback_walks_each_unique_tip_once(tmp_path):
     result = walk_windows(FakeRepo(), {1: "aaa", 2: "aaa", 3: "bbb"}, depth=100)
     assert len(calls) == 2
     assert result == {1: ("s1", "s2"), 2: ("s1", "s2"), 3: ("s3",)}
+
+
+def test_fallback_rev_list_excludes_promisor_objects_without_lazy_fetch(tmp_path):
+    captured: list[tuple[tuple[str, ...], dict[str, str] | None]] = []
+
+    class FakeRepo(GitRepo):
+        def __init__(self):
+            super().__init__(tmp_path / "not-a-repo")
+
+        def git(self, *args, timeout=None, stdin=None, env_extra=None):
+            captured.append((args, env_extra))
+            return "s1\ns2\n"
+
+    result = walk_windows(FakeRepo(), {1: "aaa"}, depth=100)
+    assert result == {1: ("s1", "s2")}
+    args, env_extra = captured[0]
+    assert "--exclude-promisor-objects" in args
+    assert args[-1] == "aaa"
+    assert env_extra == {"GIT_NO_LAZY_FETCH": "1"}
 
 
 @needs_git
@@ -279,6 +301,113 @@ def test_cat_file_batch_close_survives_posix_communicate_semantics(tmp_path, mon
     cat.close()
 
     assert cat._process.poll() is not None
+
+
+def _sleeping_popen(monkeypatch):
+    real_popen = subprocess.Popen
+
+    def sleeping_popen(argv, **kwargs):
+        return real_popen([sys.executable, "-c", "import time; time.sleep(30.0)"], **kwargs)
+
+    monkeypatch.setattr(repo_walk.subprocess, "Popen", sleeping_popen)
+
+
+@needs_git
+@needs_git
+def test_cat_file_batch_child_environment_disables_lazy_fetch(tmp_path, monkeypatch):
+    captured: dict[str, object] = {}
+    real_popen = subprocess.Popen
+
+    def recording_popen(argv, **kwargs):
+        captured.update(kwargs)
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(repo_walk.subprocess, "Popen", recording_popen)
+    cat = CatFileBatch(tmp_path)
+    try:
+        env = captured["env"]
+        assert env["GIT_NO_LAZY_FETCH"] == "1"
+    finally:
+        cat.close()
+
+
+@needs_git
+def test_cat_file_batch_timeout_defaults_come_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_CATFILE_OP_TIMEOUT_SECONDS", "1.5")
+    monkeypatch.setenv("GITCORPUS_CATFILE_REPO_TIMEOUT_SECONDS", "7")
+    cat = CatFileBatch(tmp_path)
+    try:
+        assert cat._op_timeout == 1.5
+        assert cat._repo_timeout == 7.0
+    finally:
+        cat.close()
+
+
+@needs_git
+def test_cat_file_batch_timeout_defaults_are_60_and_180_seconds(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITCORPUS_CATFILE_OP_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("GITCORPUS_CATFILE_REPO_TIMEOUT_SECONDS", raising=False)
+    cat = CatFileBatch(tmp_path)
+    try:
+        assert cat._op_timeout == 60.0
+        assert cat._repo_timeout == 180.0
+    finally:
+        cat.close()
+
+
+@needs_git
+def test_cat_file_batch_op_timeout_kills_a_silent_child(tmp_path, monkeypatch):
+    _sleeping_popen(monkeypatch)
+    cat = CatFileBatch(tmp_path, op_timeout=0.2, repo_timeout=30.0)
+    started = time.monotonic()
+    with pytest.raises(WalkAnomaly, match="cat-file timed out"):
+        cat.commit("f" * 40)
+    assert time.monotonic() - started < 10.0
+    with pytest.raises(WalkAnomaly, match="cat-file timed out"):
+        cat.commit("f" * 40)
+    assert cat._process.poll() is not None
+    try:
+        cat.close()
+        assert not cat._watchdog.is_alive()
+    finally:
+        if cat._process.poll() is None:
+            cat._process.kill()
+
+
+@needs_git
+def test_cat_file_batch_repo_timeout_kills_an_idle_child(tmp_path, monkeypatch):
+    _sleeping_popen(monkeypatch)
+    cat = CatFileBatch(tmp_path, op_timeout=30.0, repo_timeout=0.2)
+    deadline = time.monotonic() + 10.0
+    while cat._process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert cat._process.poll() is not None
+    with pytest.raises(WalkAnomaly, match="cat-file timed out"):
+        cat.commit("f" * 40)
+    cat.close()
+
+
+@needs_git
+def test_cat_file_batch_fast_commits_are_unaffected_by_the_watchdog(tmp_path):
+    dest = _init_repo(tmp_path)
+    sha = _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    cat = CatFileBatch(dest, op_timeout=10.0, repo_timeout=30.0)
+    try:
+        parsed = cat.commit(sha)
+    finally:
+        cat.close()
+    assert parsed is not None
+    assert parsed[2].sha == sha
+
+
+@needs_git
+def test_cat_file_batch_close_is_idempotent_and_leaves_no_thread(tmp_path):
+    cat = CatFileBatch(tmp_path)
+    thread = cat._watchdog
+    cat.close()
+    assert cat._process.poll() is not None
+    cat.close()
+    assert not thread.is_alive()
 
 
 def _init_repo(tmp_path: Path) -> Path:
@@ -325,6 +454,40 @@ def _hash_commit(dest: Path, raw: bytes) -> str:
         .stdout.decode()
         .strip()
     )
+
+
+@needs_git
+def test_missing_parent_is_a_shallow_boundary_without_a_rev_list_fallback(tmp_path):
+    reset_verification()
+    dest = _init_repo(tmp_path)
+    (dest / "f.txt").write_text("0\n", encoding="utf-8")
+    _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    tree = _rev_parse(dest, "HEAD^{tree}")
+    raw = (
+        f"tree {tree}\n"
+        f"parent {'0' * 40}\n"
+        "author Jane <jane@example.com> 1770000000 +0000\n"
+        "committer Jane <jane@example.com> 1770000000 +0000\n"
+        "\n"
+        "feat: orphaned parent\n"
+    ).encode()
+    tip = _hash_commit(dest, raw)
+    repo, calls = _tracking_repo(dest)
+    result = walk_windows(repo, {1: tip}, depth=10)
+    assert result[1] == (tip,)
+    assert calls == []
+
+
+@needs_git
+def test_missing_tip_still_raises_walk_anomaly(tmp_path):
+    dest = _init_repo(tmp_path)
+    _commit_message(dest, "feat: base\n", date="2026-01-01T00:00:00+00:00")
+    cat = CatFileBatch(dest)
+    try:
+        with pytest.raises(WalkAnomaly, match="missing"):
+            repo_walk._walk_one(cat, {}, "f" * 40, 5, frozenset())
+    finally:
+        cat.close()
 
 
 @needs_git
@@ -548,7 +711,7 @@ def test_walk_windows_with_records_falls_back_without_records(tmp_path):
         def __init__(self):
             super().__init__(tmp_path / "not-a-repo")
 
-        def git(self, *args, timeout=None, stdin=None):
+        def git(self, *args, timeout=None, stdin=None, env_extra=None):
             assert args[:2] == ("rev-list", "-n")
             return "s1\ns2\n"
 

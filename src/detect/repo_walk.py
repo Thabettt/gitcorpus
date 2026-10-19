@@ -6,6 +6,8 @@ import os
 import random
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +21,13 @@ from lib import cancellation
 _VERIFY_ENV = "GITCORPUS_WALK_VERIFY_PCT"
 _MAX_MISMATCHES = 3
 _VERIFY_MAX_PER_REPO = 2
+
+# A lazy fetch can stall behind a network round trip forever; the watchdog
+# bounds both a single batch operation and the whole repository walk.
+_OP_TIMEOUT_ENV = "GITCORPUS_CATFILE_OP_TIMEOUT_SECONDS"
+_REPO_TIMEOUT_ENV = "GITCORPUS_CATFILE_REPO_TIMEOUT_SECONDS"
+_DEFAULT_OP_TIMEOUT = 60.0
+_DEFAULT_REPO_TIMEOUT = 180.0
 
 _HDR = re.compile(rb"^([0-9a-f]{40}) (commit|tree|blob|tag) (\d+)$")
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -120,10 +129,42 @@ def _parse_raw_commit(oid: str, raw: bytes) -> tuple[tuple[str, ...], int, Commi
     return tuple(parents), committer[2], record
 
 
+def _timeout_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 class CatFileBatch:
     """One long-lived `git cat-file --batch` process per repository."""
 
-    def __init__(self, dest: Path) -> None:
+    def __init__(
+        self,
+        dest: Path,
+        *,
+        op_timeout: float | None = None,
+        repo_timeout: float | None = None,
+    ) -> None:
+        self._op_timeout = (
+            _timeout_seconds(_OP_TIMEOUT_ENV, _DEFAULT_OP_TIMEOUT)
+            if op_timeout is None
+            else op_timeout
+        )
+        self._repo_timeout = (
+            _timeout_seconds(_REPO_TIMEOUT_ENV, _DEFAULT_REPO_TIMEOUT)
+            if repo_timeout is None
+            else repo_timeout
+        )
+        # Lazy fetching is what wedged Run #99: a missing object turned every
+        # read into an unbounded network round trip. The walk reads only what
+        # the fetch already brought; legitimate object fetches stay elsewhere.
+        env = git_env()
+        env["GIT_NO_LAZY_FETCH"] = "1"
         try:
             self._process = subprocess.Popen(
                 ["git", "cat-file", "--batch"],
@@ -131,42 +172,131 @@ class CatFileBatch:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env=git_env(),
+                env=env,
             )
         except OSError as exc:
             raise WalkAnomaly(f"cat-file failed to start: {exc}") from exc
+        self._condition = threading.Condition()
+        self._op_deadline: float | None = None
+        self._repo_deadline = time.monotonic() + self._repo_timeout
+        self._timed_out = False
+        self._closed = False
+        self._watchdog = threading.Thread(
+            target=self._watch_for_timeouts,
+            name="cat-file-watchdog",
+            daemon=True,
+        )
+        self._watchdog.start()
+
+    def _timeout_message(self) -> str:
+        return (
+            f"cat-file timed out after {self._op_timeout:g}s for one operation "
+            f"or {self._repo_timeout:g}s for the repository"
+        )
+
+    def _watch_for_timeouts(self) -> None:
+        with self._condition:
+            while not self._closed:
+                deadlines = [
+                    deadline
+                    for deadline in (self._op_deadline, self._repo_deadline)
+                    if deadline is not None
+                ]
+                if not deadlines:
+                    self._condition.wait()
+                    continue
+                remaining = min(deadlines) - time.monotonic()
+                if remaining > 0:
+                    self._condition.wait(timeout=remaining)
+                    continue
+                if self._timed_out:
+                    self._condition.wait()
+                    continue
+                self._timed_out = True
+                if self._process.poll() is None:
+                    with contextlib.suppress(OSError):
+                        self._process.kill()
+
+    def _start_operation(self) -> None:
+        with self._condition:
+            if self._timed_out:
+                raise WalkAnomaly(self._timeout_message())
+            if self._closed:
+                raise WalkAnomaly("cat-file batch is closed")
+            self._op_deadline = time.monotonic() + self._op_timeout
+            self._condition.notify_all()
+
+    def _finish_operation(self) -> None:
+        with self._condition:
+            self._op_deadline = None
+            self._condition.notify_all()
+
+    def _raise_if_timed_out(self) -> None:
+        with self._condition:
+            timed_out = self._timed_out
+        if timed_out:
+            raise WalkAnomaly(self._timeout_message())
+
+    def _read_stdout(self, size: int) -> bytes:
+        try:
+            return self._process.stdout.read(size)
+        except (OSError, ValueError) as exc:
+            self._raise_if_timed_out()
+            raise WalkAnomaly(f"cat-file read failed: {exc}") from exc
+
+    def _readline_stdout(self) -> bytes:
+        try:
+            return self._process.stdout.readline()
+        except (OSError, ValueError) as exc:
+            self._raise_if_timed_out()
+            raise WalkAnomaly(f"cat-file read failed: {exc}") from exc
 
     def commit(self, oid: str) -> tuple[tuple[str, ...], int, CommitRecord] | None:
         """Return (parents, committer epoch, record) or None when the object is missing."""
         if self._process.stdin is None or self._process.stdout is None:
             raise WalkAnomaly("cat-file pipes unavailable")
+        self._start_operation()
         try:
-            self._process.stdin.write(oid.encode("ascii") + b"\n")
-            self._process.stdin.flush()
-        except (OSError, ValueError) as exc:
-            raise WalkAnomaly(f"cat-file pipe failed: {exc}") from exc
-        header = self._process.stdout.readline()
-        if not header:
-            raise WalkAnomaly("cat-file stream ended")
-        if header.endswith(b" missing\n"):
-            return None
-        match = _HDR.match(header.rstrip(b"\n"))
-        if match is None:
-            raise WalkAnomaly(f"unexpected cat-file header: {header[:80]!r}")
-        if match.group(2) != b"commit":
-            raise WalkAnomaly(f"object {oid} is not a commit")
-        size = int(match.group(3))
-        body = self._process.stdout.read(size)
-        self._process.stdout.read(1)
-        return _parse_raw_commit(oid, body)
+            try:
+                self._process.stdin.write(oid.encode("ascii") + b"\n")
+                self._process.stdin.flush()
+            except (OSError, ValueError) as exc:
+                self._raise_if_timed_out()
+                raise WalkAnomaly(f"cat-file pipe failed: {exc}") from exc
+            header = self._readline_stdout()
+            if not header:
+                self._raise_if_timed_out()
+                raise WalkAnomaly("cat-file stream ended")
+            if header.endswith(b" missing\n"):
+                return None
+            match = _HDR.match(header.rstrip(b"\n"))
+            if match is None:
+                self._raise_if_timed_out()
+                raise WalkAnomaly(f"unexpected cat-file header: {header[:80]!r}")
+            if match.group(2) != b"commit":
+                raise WalkAnomaly(f"object {oid} is not a commit")
+            size = int(match.group(3))
+            body = self._read_stdout(size)
+            self._read_stdout(1)
+            self._raise_if_timed_out()
+            return _parse_raw_commit(oid, body)
+        finally:
+            self._finish_operation()
 
     def close(self) -> None:
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._condition.notify_all()
+        self._watchdog.join()
         process = self._process
         if process.stdin is not None:
             with contextlib.suppress(OSError, ValueError):
                 process.stdin.close()
         if process.poll() is None:
-            process.kill()
+            with contextlib.suppress(OSError):
+                process.kill()
         with contextlib.suppress(OSError):
             process.wait()
         if process.stdout is not None:
@@ -175,7 +305,14 @@ class CatFileBatch:
 
 
 def _fallback(repo: GitRepo, sha: str, depth: int) -> tuple[str, ...]:
-    output = repo.git("rev-list", "-n", str(depth), sha)
+    output = repo.git(
+        "rev-list",
+        "-n",
+        str(depth),
+        "--exclude-promisor-objects",
+        sha,
+        env_extra={"GIT_NO_LAZY_FETCH": "1"},
+    )
     return tuple(line for line in output.splitlines() if line)
 
 
@@ -217,7 +354,9 @@ def _walk_one(
             if parent_record is None:
                 parent_record = cat.commit(parent)
                 if parent_record is None:
-                    raise WalkAnomaly(f"parent {parent} of {oid} is missing")
+                    # A parent the promisor clone never fetched is a shallow
+                    # boundary, exactly like a graft: stop expanding here.
+                    continue
                 cache[parent] = parent_record
             parent_ts = parent_record[1]
             seq += 1

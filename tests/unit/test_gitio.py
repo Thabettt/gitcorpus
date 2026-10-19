@@ -145,6 +145,21 @@ def test_list_tree_entries_parses_paths_and_oids():
 def test_read_blob_returns_none_when_git_fails():
     fake = FakeRepo(lambda args: None)
     assert read_blob(fake, ".gitignore") is None
+    assert fake.env_extras == [None]
+
+
+def test_read_blobs_batch_disables_lazy_fetch(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_run_git_bytes(argv, **kwargs):
+        captured["argv"] = argv
+        captured["env_extra"] = kwargs.get("env_extra")
+        return b"abc123 blob 6\nhello\n"
+
+    monkeypatch.setattr(gitio, "run_git_bytes", fake_run_git_bytes)
+    assert GitRepo(tmp_path).read_blobs(["README"]) == {"README": "hello\n"}
+    assert captured["argv"] == ["cat-file", "--batch"]
+    assert captured["env_extra"] == {"GIT_NO_LAZY_FETCH": "1"}
 
 
 def test_read_log_uses_limit_and_parses():
@@ -749,6 +764,7 @@ def test_fetch_blobs_batches_objects_into_one_stdin_fetch():
     ]
     assert fake.stdins == [b"blob1\nblob2\n"]
     assert fake.timeouts == [gitio._PR_CHUNK_TIMEOUT]
+    assert fake.env_extras == [None]
 
 
 def test_fetch_blobs_is_a_noop_without_objects():
@@ -802,6 +818,7 @@ def test_read_commits_parses_log_no_walk_output():
     records = read_commits(fake, ["a", "b"])
     assert set(records) == {"a", "b"}
     assert records["a"].message == "feat a"
+    assert fake.env_extras == [{"GIT_NO_LAZY_FETCH": "1"}]
 
 
 def test_read_commits_never_uses_show_so_trees_are_not_demanded():
