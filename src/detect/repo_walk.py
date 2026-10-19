@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from detect.gitio import CommitRecord, GitRepo, git_env
+from detect.gitio import CommitRecord, GitRepo, git_binary, git_env
 from lib import cancellation
 
 # Environment knob: percentage of order-dependent walks that are additionally
@@ -167,7 +167,7 @@ class CatFileBatch:
         env["GIT_NO_LAZY_FETCH"] = "1"
         try:
             self._process = subprocess.Popen(
-                ["git", "cat-file", "--batch"],
+                [git_binary(), "cat-file", "--batch"],
                 cwd=str(dest),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,

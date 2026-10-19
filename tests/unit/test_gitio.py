@@ -236,6 +236,93 @@ def test_git_env_keeps_two_config_entries_and_no_header_without_a_token(monkeypa
     )
 
 
+@pytest.fixture
+def reset_git_binary(monkeypatch):
+    monkeypatch.setattr(gitio, "_GIT_BINARY", None)
+
+
+def test_git_binary_prefers_an_existing_env_override(tmp_path, monkeypatch, reset_git_binary):
+    override = tmp_path / "git.exe"
+    override.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GITCORPUS_GIT_BIN", str(override))
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: "/usr/bin/git")
+    assert gitio.git_binary() == str(override)
+
+
+def test_git_binary_ignores_a_missing_env_override(tmp_path, monkeypatch, reset_git_binary):
+    monkeypatch.setenv("GITCORPUS_GIT_BIN", str(tmp_path / "gone" / "git.exe"))
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: None)
+    assert gitio.git_binary() == "git"
+
+
+def test_git_binary_prefers_the_mingw64_sibling_over_the_cmd_shim(
+    tmp_path, monkeypatch, reset_git_binary
+):
+    shim = tmp_path / "Git" / "cmd" / "git.exe"
+    real = tmp_path / "Git" / "mingw64" / "bin" / "git.exe"
+    for path in (shim, real):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    monkeypatch.delenv("GITCORPUS_GIT_BIN", raising=False)
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: str(shim))
+    assert gitio.git_binary() == str(real)
+
+
+def test_git_binary_keeps_the_cmd_shim_when_the_sibling_is_missing(
+    tmp_path, monkeypatch, reset_git_binary
+):
+    shim = tmp_path / "Git" / "cmd" / "git.exe"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("", encoding="utf-8")
+    monkeypatch.delenv("GITCORPUS_GIT_BIN", raising=False)
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: str(shim))
+    assert gitio.git_binary() == str(shim)
+
+
+def test_git_binary_keeps_a_non_cmd_which_result(monkeypatch, reset_git_binary):
+    monkeypatch.delenv("GITCORPUS_GIT_BIN", raising=False)
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: "/usr/bin/git")
+    assert gitio.git_binary() == "/usr/bin/git"
+
+
+def test_git_binary_falls_back_to_bare_git(monkeypatch, reset_git_binary):
+    monkeypatch.delenv("GITCORPUS_GIT_BIN", raising=False)
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: None)
+    assert gitio.git_binary() == "git"
+
+
+def test_git_binary_is_resolved_once_per_process(monkeypatch, reset_git_binary):
+    calls: list[str] = []
+    monkeypatch.delenv("GITCORPUS_GIT_BIN", raising=False)
+    monkeypatch.setattr(gitio.shutil, "which", lambda name: calls.append(name) or None)
+    assert gitio.git_binary() == "git"
+    assert gitio.git_binary() == "git"
+    assert calls == ["git"]
+
+
+def test_run_git_process_spawns_the_resolved_binary(tmp_path, monkeypatch):
+    spawned: list[list[str]] = []
+
+    class RecordingProcess:
+        def __init__(self, argv, **kwargs):
+            spawned.append([str(part) for part in argv])
+            self.returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            pass
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+    monkeypatch.setattr(gitio, "git_binary", lambda: "C:/resolved/mingw64/git.exe")
+    monkeypatch.setattr(gitio.subprocess, "Popen", RecordingProcess)
+    run_git(["status"], cwd=tmp_path)
+    assert spawned == [["C:/resolved/mingw64/git.exe", "status"]]
+
+
 def test_clone_lean_uses_depth_and_blob_filter(tmp_path, monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(gitio, "run_git", lambda argv, **kw: calls.append(list(argv)) or "")

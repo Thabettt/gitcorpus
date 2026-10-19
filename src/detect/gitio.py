@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -231,6 +232,38 @@ def _terminate(process: subprocess.Popen) -> None:
     process.communicate()
 
 
+_GIT_BINARY: str | None = None
+
+
+def git_binary() -> str:
+    """Resolve the git executable once per process.
+
+    ``shutil.which("git")`` finds the Git-for-Windows cmd shim, which spawns
+    the real mingw64 binary as a child; running the sibling directly halves
+    the per-invocation spawn cost. Everything else (a POSIX git, a custom
+    install) is used as found.
+    """
+    global _GIT_BINARY
+    if _GIT_BINARY is not None:
+        return _GIT_BINARY
+    override = os.environ.get("GITCORPUS_GIT_BIN")
+    if override and Path(override).exists():
+        _GIT_BINARY = override
+        return override
+    found = shutil.which("git")
+    if found is not None:
+        resolved = Path(found)
+        if resolved.parent.name.lower() == "cmd":
+            sibling = resolved.parent.parent / "mingw64" / "bin" / "git.exe"
+            if sibling.exists():
+                _GIT_BINARY = str(sibling)
+                return _GIT_BINARY
+        _GIT_BINARY = found
+        return found
+    _GIT_BINARY = "git"
+    return "git"
+
+
 def _run_git_process(
     argv: Sequence[str],
     *,
@@ -244,7 +277,7 @@ def _run_git_process(
     if env_extra:
         env.update(env_extra)
     process = subprocess.Popen(
-        ["git", *argv],
+        [git_binary(), *argv],
         cwd=str(cwd),
         stdin=stdin if stdin is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,

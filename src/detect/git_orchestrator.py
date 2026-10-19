@@ -86,31 +86,8 @@ class GitScanConfig:
     processes: int = 0
 
 
-def _spawn_rmdir(path: Path) -> None:
-    # Deletion walks thousands of files; pushing that work into a child
-    # process keeps the CPU off the caller's thread (and off its GIL).
-    if os.name != "nt":
-        shutil.rmtree(path, ignore_errors=True)
-        return
-    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-        subprocess.run(
-            ["cmd", "/c", "rmdir", "/s", "/q", str(path)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=300,
-            check=False,
-        )
-
-
 def _remove_tree(path: Path) -> None:
-    for delay in (0.0, 0.2, 1.0):
-        if delay:
-            time.sleep(delay)
-        _spawn_rmdir(path)
-        if not path.exists():
-            return
-    for delay in (0.0, 0.5):
+    for delay in (0.0, 0.2, 1.0, 0.0, 0.5):
         if delay:
             time.sleep(delay)
         shutil.rmtree(path, ignore_errors=True)

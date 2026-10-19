@@ -41,3 +41,11 @@ def test_eta_provisional_value_is_phase_relative():
 
 def test_eta_beyond_a_day_renders_in_days():
     assert _format_span(3 * 86400 + 5 * 3600) == "3d 5h"
+
+
+def test_writing_stage_suppresses_the_eta():
+    summary = _progress_summary(_row(50, 100, seconds=60.0, phase="writing"))
+    assert summary["label"] == "Saving results"
+    assert summary["eta"] is None
+    assert summary["eta_seconds"] is None
+    assert summary["eta_provisional"] is False

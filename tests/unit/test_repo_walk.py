@@ -331,6 +331,23 @@ def test_cat_file_batch_child_environment_disables_lazy_fetch(tmp_path, monkeypa
         cat.close()
 
 
+def test_cat_file_batch_spawns_the_resolved_git_binary(tmp_path, monkeypatch):
+    spawned: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def recording_popen(argv, **kwargs):
+        spawned.append([str(part) for part in argv])
+        return real_popen([sys.executable, "-c", "pass"], **kwargs)
+
+    monkeypatch.setattr(repo_walk, "git_binary", lambda: "C:/resolved/mingw64/git.exe")
+    monkeypatch.setattr(repo_walk.subprocess, "Popen", recording_popen)
+    cat = CatFileBatch(tmp_path)
+    try:
+        assert spawned == [["C:/resolved/mingw64/git.exe", "cat-file", "--batch"]]
+    finally:
+        cat.close()
+
+
 @needs_git
 def test_cat_file_batch_timeout_defaults_come_from_the_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("GITCORPUS_CATFILE_OP_TIMEOUT_SECONDS", "1.5")

@@ -583,7 +583,7 @@ def _progress_summary(row) -> dict | None:
     percent = int(done * 100 / total) if total else None
     eta = None
     phase_started = row["progress_started_at"] or row["started_at"]
-    if total and done >= 1 and phase_started is not None:
+    if phase != "writing" and total and done >= 1 and phase_started is not None:
         elapsed = max((datetime.now(UTC) - phase_started).total_seconds(), 0.0)
         if elapsed > 0:
             candidate = elapsed * (total - done) / done

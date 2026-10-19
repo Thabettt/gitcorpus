@@ -674,7 +674,6 @@ def test_remove_tree_retries_after_a_transient_failure(tmp_path, monkeypatch):
             return
         real(path, *args, **kwargs)
 
-    monkeypatch.setattr("detect.git_orchestrator._spawn_rmdir", lambda path: None)
     monkeypatch.setattr("detect.git_orchestrator.shutil.rmtree", flaky)
     monkeypatch.setattr("detect.git_orchestrator.time.sleep", lambda _: None)
     _remove_tree(target)
