@@ -8,10 +8,12 @@ import queue
 import shutil
 import subprocess
 import time
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -21,7 +23,18 @@ from detect import repo_walk
 from detect.attribution import dedupe_hits
 from detect.breaker import CircuitBreaker, local_values
 from detect.channels import ChannelResult
-from detect.gitio import GitRepo, classify_git_failure, clone_lean, retry_call
+from detect.gitio import (
+    _MONSTER_PR_THRESHOLD,
+    GitError,
+    GitRepo,
+    RemoteRefs,
+    RemoteRefsUnavailable,
+    _acquire_gate,
+    classify_git_failure,
+    clone_lean,
+    remote_refs_for,
+    retry_call,
+)
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
@@ -136,59 +149,70 @@ def _scan_one(
     clone_one: Callable[[str, Path], None],
     make_repo: Callable[[Path, str], GitRepo],
     pr_gate: object | None = None,
+    prefetched: RemoteRefs | None = None,
+    gate_reserved: bool = False,
 ) -> _RepoScan:
-    full_name = str(candidate["full_name"])
-    dest = run_dir / full_name.replace("/", "__")
-    if not (cfg.keep and (dest / MARKER_NAME).exists()):
+    try:
+        full_name = str(candidate["full_name"])
+        dest = run_dir / full_name.replace("/", "__")
+        if not (cfg.keep and (dest / MARKER_NAME).exists()):
 
-        def clone_attempt() -> None:
-            shutil.rmtree(dest, ignore_errors=True)
-            clone_one(full_name, dest)
-            (dest / MARKER_NAME).write_text("", encoding="utf-8")
+            def clone_attempt() -> None:
+                shutil.rmtree(dest, ignore_errors=True)
+                clone_one(full_name, dest)
+                (dest / MARKER_NAME).write_text("", encoding="utf-8")
 
-        retry_call(
-            clone_attempt,
-            attempts=cfg.attempts,
-            base_delay=cfg.retry_delay,
-            retryable=lambda exc: classify_git_failure(exc) != "dead",
+            retry_call(
+                clone_attempt,
+                attempts=cfg.attempts,
+                base_delay=cfg.retry_delay,
+                retryable=lambda exc: classify_git_failure(exc) != "dead",
+            )
+        repo = make_repo(dest, full_name)
+        results: dict[str, ChannelResult] = {}
+        history_stats: Mapping[str, object] = {}
+        if "file" in active:
+            results["file"] = detect_files_local(repo, pack, spec.agents)
+        if set(_HISTORY_KEYS) & active:
+            history = detect_history_local(repo, pack, spec.agents, limit=cfg.depth)
+            for key in _HISTORY_KEYS:
+                if key in active:
+                    results[key] = history[key]
+            history_stats = history["author"].stats
+        pr_result: ChannelResult | None = None
+        if "pr_metadata" in active:
+            pr_result = detect_pr_commits_local(
+                repo,
+                pack,
+                spec.agents,
+                depth=cfg.depth,
+                attempts=cfg.attempts,
+                retry_delay=cfg.retry_delay,
+                gate=pr_gate,
+                refs=prefetched.pr_refs if prefetched is not None else None,
+                gate_reserved=gate_reserved,
+            )
+            results["pr_metadata"] = pr_result
+        if "branch" in active:
+            results["branch"] = detect_branch_local(repo, pack, spec.agents, limit=cfg.depth)
+        hits = dedupe_hits([hit for result in results.values() for hit in result.hits])
+        scan = _RepoScan(
+            repo_id=int(candidate["repo_id"]),
+            full_name=full_name,
+            stargazers=candidate["stargazers"],
+            hits=hits,
+            results=results,
+            pr_result=pr_result,
+            history_stats=history_stats,
         )
-    repo = make_repo(dest, full_name)
-    results: dict[str, ChannelResult] = {}
-    history_stats: Mapping[str, object] = {}
-    if "file" in active:
-        results["file"] = detect_files_local(repo, pack, spec.agents)
-    if set(_HISTORY_KEYS) & active:
-        history = detect_history_local(repo, pack, spec.agents, limit=cfg.depth)
-        for key in _HISTORY_KEYS:
-            if key in active:
-                results[key] = history[key]
-        history_stats = history["author"].stats
-    pr_result: ChannelResult | None = None
-    if "pr_metadata" in active:
-        pr_result = detect_pr_commits_local(
-            repo,
-            pack,
-            spec.agents,
-            depth=cfg.depth,
-            attempts=cfg.attempts,
-            retry_delay=cfg.retry_delay,
-            gate=pr_gate,
-        )
-        results["pr_metadata"] = pr_result
-    if "branch" in active:
-        results["branch"] = detect_branch_local(repo, pack, spec.agents, limit=cfg.depth)
-    hits = dedupe_hits([hit for result in results.values() for hit in result.hits])
-    scan = _RepoScan(
-        repo_id=int(candidate["repo_id"]),
-        full_name=full_name,
-        stargazers=candidate["stargazers"],
-        hits=hits,
-        results=results,
-        pr_result=pr_result,
-        history_stats=history_stats,
-    )
-    scan.document = _repo_document(scan)
-    return scan
+        scan.document = _repo_document(scan)
+        return scan
+    finally:
+        # A scheduler-reserved fleet permit is released exactly here, whatever
+        # the outcome; the acquire happened in the scheduler's thread, and a
+        # BoundedSemaphore has no thread ownership, so this is legal.
+        if gate_reserved and pr_gate is not None:
+            pr_gate.release()  # type: ignore
 
 
 def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> None:
@@ -265,6 +289,74 @@ def _retain(scan: _RepoScan) -> _RetainedScan:
     )
 
 
+class Admission(NamedTuple):
+    """Scheduler decision for one admitted candidate."""
+
+    candidate: Mapping
+    prefetched: RemoteRefs | None
+    gate_reserved: bool
+
+
+def _failure_message(scan: _RepoScan) -> str:
+    return f"{scan.full_name}: {scan.document['notes'][0]}"
+
+
+def _is_monster(refs: RemoteRefs) -> bool:
+    return len(refs.pr_refs) > _MONSTER_PR_THRESHOLD
+
+
+def _offline_refs(full_name: str) -> RemoteRefs:
+    """Empty probe result; lets process-path tests stay offline."""
+    return RemoteRefs(pr_refs={}, head_refs={})
+
+
+def _admit(
+    pending: deque,
+    probe,
+    gate: object | None,
+    emit_failure: Callable[[_RepoScan], None] | None = None,
+) -> Admission | None:
+    """Decide the next candidate to submit, driving the pure admission rules.
+
+    Dead repositories are emitted as failed scans without cloning (one at a
+    time, then the loop keeps scanning) and never admitted; a ``None`` return
+    means the queue drained. A monster whose fleet permit cannot be taken
+    immediately is appended back with its prefetched refs and the candidate at
+    the tail is admitted instead, so a wave of giants cannot starve the
+    ordinary lane; when the monster is the only candidate left it is admitted
+    anyway and its fetch path blocks on the gate as before.
+    """
+    while pending:
+        candidate = pending.popleft()
+        full_name = str(candidate["full_name"])
+        try:
+            refs = probe(full_name)
+        except GitError as exc:
+            failure_class = classify_git_failure(exc)
+            if failure_class == "dead":
+                dead = _failed_scan(candidate, exc, failure_class=failure_class)
+                if emit_failure is not None:
+                    emit_failure(dead)
+                continue
+            refs = None
+        except RemoteRefsUnavailable:
+            refs = None
+        if refs is not None and gate is not None and _is_monster(refs):
+            if _acquire_gate(gate, blocking=False):
+                return Admission(candidate, refs, True)
+            if pending:
+                # Two lanes: requeue the monster with its prefetched refs and
+                # admit the candidate at the tail instead. The permit attempt
+                # failed, so no permit is held while the monster waits.
+                pending.appendleft(candidate)
+                candidate = pending.pop()
+                return Admission(candidate, None, False)
+            # It is the only candidate left; admit it anyway and let the
+            # fetch path block on the gate as today.
+        return Admission(candidate, refs, False)
+    return None
+
+
 def _scan_worker_main(
     slice_candidates: Sequence[Mapping],
     out_queue: multiprocessing.Queue,
@@ -276,6 +368,7 @@ def _scan_worker_main(
     threads: int,
     breaker_values: tuple,
     pr_gate: multiprocessing.BoundedSemaphore,
+    admission_probe: Callable[[str], RemoteRefs] = remote_refs_for,
 ) -> None:
     cancellation.bind(cancel_event.is_set)
     run_dir = Path(run_dir_str)
@@ -289,11 +382,15 @@ def _scan_worker_main(
     breaker = CircuitBreaker(*breaker_values)
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     try:
-        pending = iter(slice_candidates)
+        pending = deque(slice_candidates)
         retry_candidates: list[Mapping] = []
         wave = 1
         in_flight: dict[Future, Mapping] = {}
         exhausted = False
+
+        def emit_dead(scan: _RepoScan) -> None:
+            out_queue.put(("scan", scan, _failure_message(scan)))
+
         while True:
             if cancel_event.is_set():
                 raise RunCancelled()
@@ -304,11 +401,11 @@ def _scan_worker_main(
                     exhausted = True
                     out_queue.put((_LOW_DISK_MARKER, float(free)))
                     break
-                candidate = next(pending, None)
-                if candidate is None:
+                admission = _admit(pending, admission_probe, pr_gate, emit_dead)
+                if admission is None:
                     if wave == 1 and retry_candidates:
                         wave = 2
-                        pending = iter(retry_candidates)
+                        pending = deque(retry_candidates)
                         retry_candidates = []
                         continue
                     exhausted = True
@@ -322,12 +419,14 @@ def _scan_worker_main(
                     spec,
                     pack,
                     active,
-                    candidate,
+                    admission.candidate,
                     clone_one=clone_one,
                     make_repo=make_repo,
                     pr_gate=pr_gate,
+                    prefetched=admission.prefetched,
+                    gate_reserved=admission.gate_reserved,
                 )
-                in_flight[future] = candidate
+                in_flight[future] = admission.candidate
             if not in_flight:
                 break
             ready, _ = wait(in_flight, timeout=_CANCEL_POLL_SECONDS, return_when=FIRST_COMPLETED)
@@ -351,7 +450,7 @@ def _scan_worker_main(
                         deferred = True
                 scan = _failed_scan(candidate, exc, failure_class=failure_class)
                 if not deferred:
-                    failure = f"{scan.full_name}: {scan.document['notes'][0]}"
+                    failure = _failure_message(scan)
             else:
                 breaker.record_success()
             out_queue.put(("scan", scan, failure))
@@ -394,6 +493,7 @@ def _run_git_detection_processes(
     candidates: list[dict],
     total: int,
     warnings: list[str],
+    admission_probe: Callable[[str], RemoteRefs] = remote_refs_for,
 ) -> tuple[list[_RetainedScan], list[str], bool, bool]:
     processes = max(2, cfg.processes)
     threads = max(1, cfg.workers // processes)
@@ -424,6 +524,7 @@ def _run_git_detection_processes(
                     threads,
                     breaker_values,
                     pr_gate,
+                    admission_probe,
                 ),
                 daemon=True,
             )
@@ -520,6 +621,7 @@ def run_git_detection(
     config: GitScanConfig | None = None,
     clone_fn: Callable[[str, Path], None] | None = None,
     repo_factory: Callable[[Path, str], GitRepo] | None = None,
+    admission_probe: Callable[[str], RemoteRefs] | None = None,
 ) -> RunPayload:
     cfg = config or GitScanConfig()
     scan_root = Path(os.path.abspath(cfg.scan_root))
@@ -545,7 +647,17 @@ def run_git_detection(
     )
     if use_processes:
         records, failures, stopped_for_disk, worker_lost = _run_git_detection_processes(
-            engine, run_id, spec, pack, cfg, scan_root, run_dir, candidates, total, warnings
+            engine,
+            run_id,
+            spec,
+            pack,
+            cfg,
+            scan_root,
+            run_dir,
+            candidates,
+            total,
+            warnings,
+            admission_probe or remote_refs_for,
         )
         cancelled = False
     else:

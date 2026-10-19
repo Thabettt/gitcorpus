@@ -694,6 +694,7 @@ def fetch_pr_refs(
     chunk_refs: int | None = None,
     gate: object | None = None,
     refs: Mapping[int, str] | None = None,
+    gate_reserved: bool = False,
 ) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
     # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
@@ -704,7 +705,8 @@ def fetch_pr_refs(
     # so a wave of giants cannot saturate the link at once and a cancelled
     # wait is noticed between polls; ordinary repos never touch it. Callers
     # that already listed the refs pass them via ``refs`` to skip the round
-    # trip entirely.
+    # trip entirely; callers that already hold a fleet permit pass
+    # ``gate_reserved=True`` so the fetch neither acquires nor releases it.
     if chunk_refs is None:
         chunk_refs = _PR_FETCH_CHUNK_REFS
     remote = dict(refs) if refs is not None else remote_refs(repo).pr_refs
@@ -713,7 +715,7 @@ def fetch_pr_refs(
         with contextlib.suppress(OSError):
             (Path(repo.dest) / ".git" / _PR_REFS_SNAPSHOT).unlink()
         return {}
-    gated = gate is not None and len(remote) > _MONSTER_PR_THRESHOLD
+    gated = gate is not None and not gate_reserved and len(remote) > _MONSTER_PR_THRESHOLD
     for numbers in chunked(sorted(remote), chunk_refs):
         if gated:
             _acquire_gate(gate)

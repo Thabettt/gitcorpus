@@ -990,9 +990,7 @@ _SHA_B = "b" * 40
 _SHA_C = "c" * 40
 _LS_REFS_URL = "https://github.com/octo/repo.git/git-upload-pack"
 _FALLBACK_LS_REMOTE = (
-    f"{_SHA_A}\trefs/pull/7/head\n"
-    f"{_SHA_B}\trefs/heads/claude/fix-tests\n"
-    "sha3\trefs/tags/v1\n"
+    f"{_SHA_A}\trefs/pull/7/head\n{_SHA_B}\trefs/heads/claude/fix-tests\nsha3\trefs/tags/v1\n"
 )
 
 
@@ -1210,3 +1208,38 @@ def test_fetch_pr_refs_with_refs_skips_the_remote_listing(tmp_path):
     assert fetch_pr_refs(fake, depth=100, refs={7: _SHA_A}) == {7: _SHA_A}
     assert [call[0] for call in fake.calls] == ["fetch"]
     assert fake.stdins == [b"refs/pull/7/head\n"]
+
+
+def test_fetch_pr_refs_with_refs_prefers_them_over_the_remote_listing(tmp_path):
+    fake = FakeRepo(
+        lambda args: f"{_SHA_B}\trefs/pull/9/head\n" if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    assert fetch_pr_refs(fake, depth=100, refs={7: _SHA_A}) == {7: _SHA_A}
+    assert [call[0] for call in fake.calls] == ["fetch"]
+    assert fake.stdins == [b"refs/pull/7/head\n"]
+    assert read_pr_refs_snapshot(fake) == {7: _SHA_A}
+
+
+def test_fetch_pr_refs_with_reserved_gate_leaves_the_gate_alone_per_chunk(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 200)
+    gate = FakeGate()
+    fake = FakeRepo(
+        lambda args: _ls_remote_lines(501) if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    refs = fetch_pr_refs(fake, depth=100, gate=gate, gate_reserved=True)
+    assert len(refs) == 501
+    assert len([call for call in fake.calls if call[0] == "fetch"]) == 3
+    assert (gate.acquires, gate.releases, gate.held) == (0, 0, 0)
+
+
+def test_fetch_pr_refs_with_reserved_gate_still_honours_prefetched_refs(tmp_path):
+    gate = FakeGate()
+    prefetched = {7: _SHA_A, 9: _SHA_B}
+    fake = FakeRepo(lambda args: "" if args[0] == "fetch" else None, dest=_repo_dir(tmp_path))
+    assert fetch_pr_refs(fake, depth=100, gate=gate, refs=prefetched, gate_reserved=True) == (
+        prefetched
+    )
+    assert [call[0] for call in fake.calls] == ["fetch"]
+    assert (gate.acquires, gate.releases) == (0, 0)

@@ -246,13 +246,13 @@ def test_detect_pr_commits_local_forwards_the_gate(monkeypatch):
     captured: dict[str, object] = {}
     gate = object()
 
-    def fake_fetch(repo, *, depth, gate=None):
-        captured["gate"] = gate
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+        captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
         return {}
 
     monkeypatch.setattr("detect.local_channels.fetch_pr_refs", fake_fetch)
     result = detect_pr_commits_local(FakeRepo(lambda args: None), PACK, gate=gate)
-    assert captured["gate"] is gate
+    assert captured == {"gate": gate, "refs": None, "gate_reserved": False}
     assert result.status == "ok"
     assert result.note == "no pull requests found"
 
@@ -260,13 +260,30 @@ def test_detect_pr_commits_local_forwards_the_gate(monkeypatch):
 def test_detect_pr_commits_local_defaults_to_no_gate(monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_fetch(repo, *, depth, gate=None):
-        captured["gate"] = gate
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+        captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
         return {}
 
     monkeypatch.setattr("detect.local_channels.fetch_pr_refs", fake_fetch)
     result = detect_pr_commits_local(FakeRepo(lambda args: None), PACK)
-    assert captured["gate"] is None
+    assert captured == {"gate": None, "refs": None, "gate_reserved": False}
+    assert result.status == "ok"
+
+
+def test_detect_pr_commits_local_forwards_prefetched_refs_and_reserved_gate(monkeypatch):
+    captured: dict[str, object] = {}
+    gate = object()
+    prefetched = {7: "aaa"}
+
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+        captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
+        return {}
+
+    monkeypatch.setattr("detect.local_channels.fetch_pr_refs", fake_fetch)
+    result = detect_pr_commits_local(
+        FakeRepo(lambda args: None), PACK, gate=gate, refs=prefetched, gate_reserved=True
+    )
+    assert captured == {"gate": gate, "refs": prefetched, "gate_reserved": True}
     assert result.status == "ok"
 
 

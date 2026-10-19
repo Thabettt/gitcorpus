@@ -5,15 +5,28 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 
+from detect.breaker import local_values
 from detect.channels import ChannelResult
-from detect.git_orchestrator import GitScanConfig, _kill_tree, _remove_tree, run_git_detection
-from detect.gitio import GitError, GitRepo
-from detect.orchestrator import DetectOptions
+from detect.git_orchestrator import (
+    Admission,
+    GitScanConfig,
+    _admit,
+    _failure_message,
+    _kill_tree,
+    _offline_refs,
+    _remove_tree,
+    _scan_one,
+    _scan_worker_main,
+    run_git_detection,
+)
+from detect.gitio import GitError, GitRepo, RemoteRefs, RemoteRefsUnavailable
+from detect.orchestrator import DetectOptions, _failed_scan
 from detect.packs import Pack, Pattern, freeze_pack
 from enrich.cloner import MARKER_NAME
 from lib import cancellation
@@ -143,8 +156,7 @@ def test_run_git_detection_records_evidence_and_summary(clean_db, tmp_path, monk
     with engine.connect() as connection:
         rows = connection.execute(
             text(
-                "SELECT channel, agent FROM detection_evidence"
-                " WHERE run_id = :run ORDER BY channel"
+                "SELECT channel, agent FROM detection_evidence WHERE run_id = :run ORDER BY channel"
             ),
             {"run": detect_run},
         ).all()
@@ -526,6 +538,7 @@ def test_run_git_detection_spreads_workers_over_processes(clean_db, tmp_path):
             workers=4,
             processes=2,
         ),
+        admission_probe=_offline_refs,
     )
     assert payload.result_summary["repos_scanned"] == 2
     assert payload.result_summary["repos_unavailable"] == 0
@@ -584,7 +597,7 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     )
     captured: dict[str, object] = {}
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate):
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
         captured.update(
             depth=depth,
             attempts=attempts,
@@ -627,7 +640,7 @@ def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp
     )
     gates: list[object] = []
 
-    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate):
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
         gates.append(gate)
         return ChannelResult(status="ok")
 
@@ -986,8 +999,7 @@ def test_run_git_detection_records_compact_repo_filter_facets(clean_db, tmp_path
         facets = set(
             connection.execute(
                 text(
-                    "SELECT repo_id, agent, channel FROM detection_repo_filters"
-                    " WHERE run_id = :run"
+                    "SELECT repo_id, agent, channel FROM detection_repo_filters WHERE run_id = :run"
                 ),
                 {"run": detect_run},
             ).all()
@@ -1056,3 +1068,334 @@ def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_pa
     assert sample["run_id"] == detect_run
     assert sample["detected_at"] is not None
     assert payload.items[0].detection["agents"] == ["Claude Code"]
+
+
+class AdmissionGate:
+    """Gate double recording non-blocking probes and permits held."""
+
+    def __init__(self, grants: bool = True) -> None:
+        self.grants = grants
+        self.acquires = 0
+        self.releases = 0
+        self.held = 0
+
+    def acquire(self, *, timeout: float | None = None) -> bool:
+        self.acquires += 1
+        if not self.grants:
+            return False
+        self.held += 1
+        return True
+
+    def release(self) -> None:
+        self.releases += 1
+        self.held -= 1
+
+
+def _candidate(name: str, repo_id: int = 1) -> dict:
+    return {"full_name": name, "repo_id": repo_id, "stargazers": 10}
+
+
+def _refs(count: int) -> RemoteRefs:
+    return RemoteRefs(pr_refs={number: f"sha{number}" for number in range(count)}, head_refs={})
+
+
+def _probe(mapping):
+    def probe(full_name: str) -> RemoteRefs:
+        outcome = mapping[full_name]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    return probe
+
+
+def test_admit_skips_a_dead_repo_without_an_admission():
+    pending = deque([_candidate("octo/gone")])
+    dead_error = GitError(["ls-refs"], 128, "remote: Repository not found.")
+    emitted: list = []
+
+    admission = _admit(pending, _probe({"octo/gone": dead_error}), AdmissionGate(), emitted.append)
+
+    assert admission is None
+    assert len(emitted) == 1
+    dead = emitted[0]
+    assert dead.repo_id == 1
+    assert dead.full_name == "octo/gone"
+    assert dead.document["failure_class"] == "dead"
+    assert dead.document["unavailable"] is True
+    assert _failure_message(dead).startswith("octo/gone: GitError:")
+    assert not pending
+
+
+def test_admit_passes_a_transient_probe_failure_through_without_refs():
+    probe = _probe({"octo/one": RemoteRefsUnavailable("ls-refs failed")})
+    gate = AdmissionGate()
+
+    admission = _admit(deque([_candidate("octo/one")]), probe, gate)
+
+    assert admission == Admission(_candidate("octo/one"), None, False)
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def test_admit_requeues_a_monster_and_pops_the_tail():
+    monster = _candidate("octo/monster")
+    tail = _candidate("octo/tail", repo_id=2)
+    pending = deque([monster, tail])
+    gate = AdmissionGate(grants=False)
+
+    admission = _admit(pending, _probe({"octo/monster": _refs(501)}), gate)
+
+    assert admission == Admission(tail, None, False)
+    assert list(pending) == [monster]  # requeued with its prefetched refs
+    assert (gate.acquires, gate.releases) == (1, 0)  # failed attempt holds nothing
+
+
+def test_admit_requeues_the_monster_with_its_prefetched_refs():
+    monster = _candidate("octo/monster")
+    pending = deque([monster, _candidate("octo/tail", repo_id=2)])
+    refs = _refs(501)
+    probed: list[str] = []
+
+    def probe(full_name: str) -> RemoteRefs:
+        probed.append(full_name)
+        return refs
+
+    _admit(pending, probe, AdmissionGate(grants=False))
+
+    assert probed == ["octo/monster"]  # the tail is never probed here
+    assert list(pending) == [monster]  # requeued with its prefetched refs intact
+    second = _admit(deque([monster]), probe, AdmissionGate())
+    assert second is not None and second.prefetched is refs
+
+
+def test_admit_still_requeues_when_the_monster_is_paired_with_a_single_tail():
+    monster = _candidate("octo/monster")
+    tail = _candidate("octo/tail", repo_id=2)
+    pending = deque([monster, tail])
+
+    admission = _admit(pending, _probe({"octo/monster": _refs(501)}), AdmissionGate(grants=False))
+
+    assert admission is not None and admission.candidate is tail
+    assert list(pending) == [monster]
+
+
+def test_admit_falls_back_to_the_sole_monster_when_the_gate_is_busy():
+    monster = _candidate("octo/monster")
+    pending = deque([monster])
+    gate = AdmissionGate(grants=False)
+    refs = _refs(501)
+
+    admission = _admit(pending, _probe({"octo/monster": refs}), gate)
+
+    assert admission == Admission(monster, refs, False)  # fetch path blocks on the gate
+    assert list(pending) == []
+    assert (gate.acquires, gate.releases) == (1, 0)
+
+
+def test_admit_reserves_a_permit_for_a_monster_when_the_gate_grants():
+    monster = _candidate("octo/monster")
+    gate = AdmissionGate()
+
+    admission = _admit(deque([monster]), _probe({"octo/monster": _refs(501)}), gate)
+
+    assert admission == Admission(monster, _refs(501), True)
+    assert (gate.acquires, gate.held) == (1, 1)
+
+
+def test_admit_never_touches_the_gate_for_ordinary_repos():
+    gate = AdmissionGate(grants=False)
+    refs = _refs(500)
+
+    admission = _admit(deque([_candidate("octo/one")]), _probe({"octo/one": refs}), gate)
+
+    assert admission == Admission(_candidate("octo/one"), refs, False)
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+def test_admit_drains_an_empty_queue():
+    assert _admit(deque(), _probe({}), AdmissionGate()) is None
+
+
+def test_admit_keeps_scanning_after_a_dead_repo_is_skipped():
+    pending = deque([_candidate("octo/gone"), _candidate("octo/one", repo_id=2)])
+    probe = _probe(
+        {
+            "octo/gone": GitError(["ls-refs"], 128, "remote: Repository not found."),
+            "octo/one": _refs(3),
+        }
+    )
+    emitted: list = []
+
+    admission = _admit(pending, probe, AdmissionGate(), emitted.append)
+
+    assert [scan.full_name for scan in emitted] == ["octo/gone"]
+    assert admission == Admission(_candidate("octo/one", repo_id=2), _refs(3), False)
+    assert not pending
+
+
+def test_scan_one_releases_a_reserved_permit_in_finally(tmp_path, monkeypatch):
+    gate = AdmissionGate()
+    calls: list[dict] = []
+
+    def fake_pr(repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved):
+        calls.append({"refs": refs, "gate_reserved": gate_reserved})
+        return ChannelResult(status="ok")
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prefetched = _refs(501)
+    scan = _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, frozenset({"pr_metadata"})),
+        PACK,
+        frozenset({"pr_metadata"}),
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+        pr_gate=gate,
+        prefetched=prefetched,
+        gate_reserved=True,
+    )
+
+    assert scan.repo_id == 1
+    assert calls == [{"refs": prefetched.pr_refs, "gate_reserved": True}]
+    assert (gate.acquires, gate.releases, gate.held) == (0, 1, -1)
+
+
+def test_scan_one_releases_a_reserved_permit_when_the_scan_raises(tmp_path):
+    gate = AdmissionGate()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    def exploding_clone(full_name, dest):
+        raise RuntimeError("clone exploded")
+
+    with pytest.raises(RuntimeError, match="clone exploded"):
+        _scan_one(
+            run_dir,
+            GitScanConfig(attempts=1, retry_delay=0.0),
+            make_spec(1, frozenset({"file"})),
+            PACK,
+            frozenset({"file"}),
+            _candidate("octo/one"),
+            clone_one=exploding_clone,
+            make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+            pr_gate=gate,
+            gate_reserved=True,
+        )
+
+    assert (gate.acquires, gate.releases, gate.held) == (0, 1, -1)
+
+
+def test_scan_one_leaves_the_gate_alone_without_a_reservation(tmp_path):
+    gate = AdmissionGate()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    _scan_one(
+        run_dir,
+        GitScanConfig(),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        frozenset({"file"}),
+        _candidate("octo/one"),
+        clone_one=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        make_repo=lambda dest, full_name: FakeRepo(happy_handler),
+        pr_gate=gate,
+    )
+
+    assert (gate.acquires, gate.releases) == (0, 0)
+
+
+class FakeOutQueue:
+    """in-process stand-in for multiprocessing.Queue."""
+
+    def __init__(self) -> None:
+        self.messages: list = []
+
+    def put(self, message) -> None:
+        self.messages.append(message)
+
+
+class FakeCancelEvent:
+    def is_set(self) -> bool:
+        return False
+
+
+def _scan_main_isolated(slice_candidates, out_queue, cancel_event, *args):
+    """_scan_worker_main binds the cancellation contextvar; never leak it.
+
+    ``out_queue`` occupies positional slot 2 and ``cancel_event`` slot 3; the
+    remaining positional args pass through unchanged.
+    """
+    token = cancellation.bind(cancel_event.is_set)
+    try:
+        _scan_worker_main(slice_candidates, out_queue, cancel_event, *args)
+    finally:
+        cancellation.reset(token)
+
+
+def test_scan_worker_main_emits_a_failed_scan_for_a_dead_repo(tmp_path):
+    dead_error = GitError(["ls-refs"], 128, "remote: Repository not found.")
+
+    def probe(full_name: str) -> RemoteRefs:
+        raise dead_error
+
+    out_queue = FakeOutQueue()
+    _scan_main_isolated(
+        [_candidate("octo/gone")],
+        out_queue,
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"file"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        AdmissionGate(),
+        probe,
+    )
+
+    assert len(out_queue.messages) == 1
+    tag, scan, failure = out_queue.messages[0]
+    assert tag == "scan"
+    assert scan.full_name == "octo/gone"
+    assert scan.document["failure_class"] == "dead"
+    assert failure is not None and failure.startswith("octo/gone: GitError:")
+    assert not (tmp_path / "octo__gone").exists()
+
+
+def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_path, monkeypatch):
+    seen: list[dict] = []
+
+    def fake_scan_one(run_dir, cfg, spec, pack, active, candidate, **kwargs):
+        seen.append({"candidate": candidate, **kwargs})
+        return _failed_scan(candidate, GitError(["git"], 128, "synthetic"), failure_class="fatal")
+
+    monkeypatch.setattr("detect.git_orchestrator._scan_one", fake_scan_one)
+    gate = AdmissionGate()
+    out_queue = FakeOutQueue()
+    _scan_main_isolated(
+        [_candidate("octo/monster")],
+        out_queue,
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"pr_metadata"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        gate,
+        lambda full_name: _refs(501),
+    )
+
+    assert len(seen) == 1
+    assert seen[0]["candidate"]["full_name"] == "octo/monster"
+    assert seen[0]["prefetched"] == _refs(501)
+    assert seen[0]["gate_reserved"] is True
+    # The fake _scan_one never releases; the real release path is covered by
+    # test_scan_one_releases_a_reserved_permit_in_finally.
+    assert gate.acquires == 1 and gate.held == 1
+    assert out_queue.messages and out_queue.messages[0][0] == "scan"

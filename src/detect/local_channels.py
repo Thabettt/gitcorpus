@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 
 from detect.attribution import (
     Hit,
@@ -177,12 +178,14 @@ def detect_pr_commits_local(
     attempts: int = 4,
     retry_delay: float = 1.0,
     gate: object | None = None,
+    refs: Mapping[int, str] | None = None,
+    gate_reserved: bool = False,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
     resumed_note = ""
 
     def fetch_and_list() -> dict[int, str]:
-        return fetch_pr_refs(repo, depth=depth, gate=gate)
+        return fetch_pr_refs(repo, depth=depth, gate=gate, refs=refs, gate_reserved=gate_reserved)
 
     try:
         refs = retry_call(fetch_and_list, attempts=attempts, base_delay=retry_delay)
