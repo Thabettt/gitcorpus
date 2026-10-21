@@ -266,8 +266,19 @@ def detect_pr_commits_local(
     if not refs:
         return ChannelResult(status="ok", note="no pull requests found", stats=empty_stats)
     walk_started = time.monotonic()
+    walk_failures: dict[int, str] = {}
+
+    def record_walk_failure(number: int, exc: BaseException) -> None:
+        walk_failures[number] = git_error_tail(exc)
+
     try:
-        walks, walked_records = walk_windows_with_records(repo, refs, depth=depth, session=session)
+        walks, walked_records = walk_windows_with_records(
+            repo,
+            refs,
+            depth=depth,
+            session=session,
+            on_failure=record_walk_failure,
+        )
     except _GIT_FAILURES as exc:
         if metrics is not None:
             metrics.walk_ms = phase_metrics.elapsed_ms(walk_started)
@@ -311,9 +322,12 @@ def detect_pr_commits_local(
     note = f"local PR refs; depth {depth}"
     if resumed_note:
         note = f"{note}; {resumed_note}"
+    if walk_failures:
+        number, detail = next(iter(walk_failures.items()))
+        note = f"{note}; {len(walk_failures)} PR walk(s) failed (e.g. #{number}: {detail})"
     return ChannelResult(
         hits=tuple(hits),
-        status="ok",
+        status="partial" if walk_failures else "ok",
         note=note,
         stats={**empty_stats, "propagated_oids": propagated},
     )

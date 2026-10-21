@@ -443,7 +443,7 @@ def test_detect_pr_commits_local_passes_the_session_into_the_walk(tmp_path, monk
         message="feat: pr work",
     )
 
-    def fake_walk(repo, refs, *, depth, session=None):
+    def fake_walk(repo, refs, *, depth, session=None, on_failure=None):
         captured.update(refs=dict(refs), depth=depth, session=session)
         return {7: ("s1",)}, {"s1": record}
 
@@ -467,7 +467,7 @@ def test_detect_pr_commits_local_records_walk_ms_in_phase_metrics(tmp_path, monk
         message="feat: pr work",
     )
 
-    def fake_walk(repo, refs, *, depth, session=None):
+    def fake_walk(repo, refs, *, depth, session=None, on_failure=None):
         return {7: ("s1",)}, {"s1": record}
 
     monkeypatch.setattr("detect.local_channels.walk_windows_with_records", fake_walk)
@@ -485,7 +485,7 @@ def test_detect_pr_commits_local_records_walk_ms_in_phase_metrics(tmp_path, monk
 
 
 def test_detect_pr_commits_local_records_walk_ms_when_the_walk_fails(tmp_path, monkeypatch):
-    def exploding_walk(repo, refs, *, depth, session=None):
+    def exploding_walk(repo, refs, *, depth, session=None, on_failure=None):
         raise GitError(["rev-list"], 128, "fatal: bad object")
 
     monkeypatch.setattr("detect.local_channels.walk_windows_with_records", exploding_walk)
@@ -594,8 +594,30 @@ def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial(tmp_path):
         FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, retry_delay=0.0
     )
     assert result.status == "partial"
-    assert result.note == "pull refs walk failed: fatal: bad object aaa"
+    assert "1 PR walk(s) failed (e.g. #7: fatal: bad object aaa)" in (result.note or "")
     assert result.stats["propagated_oids"] == ()
+
+
+def test_detect_pr_commits_local_keeps_good_prs_when_one_walk_fails(tmp_path):
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "rev-list":
+            if args[-1] == "bbb":
+                raise GitError(list(args), 128, "fatal: bad object bbb")
+            return "s1\n"
+        if args[0] == "log":
+            return _PR_LOG
+        return None
+
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100, retry_delay=0.0
+    )
+    assert result.status == "partial"
+    assert {(hit.evidence["pr"], hit.evidence["commit"]) for hit in result.hits} == {(7, "s1")}
+    assert "1 PR walk(s) failed (e.g. #9: fatal: bad object bbb)" in (result.note or "")
 
 
 def test_detect_pr_commits_local_reports_a_commit_read_failure_as_partial(tmp_path):

@@ -8,11 +8,11 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from detect.gitio import CommitRecord, GitRepo, git_binary, git_env
+from detect.gitio import CommitRecord, GitError, GitRepo, git_binary, git_env
 from lib import cancellation
 
 # Environment knob: percentage of order-dependent walks that are additionally
@@ -485,6 +485,17 @@ def _group_numbers_by_tip(refs: Mapping[int, str]) -> dict[str, list[int]]:
     return grouped
 
 
+def _report_walk_failure(
+    numbers: list[int],
+    exc: BaseException,
+    on_failure: Callable[[int, BaseException], None] | None,
+) -> None:
+    if on_failure is None:
+        raise exc
+    for number in numbers:
+        on_failure(number, exc)
+
+
 def walk_windows(
     repo: GitRepo, refs: Mapping[int, str], *, depth: int
 ) -> dict[int, tuple[str, ...]]:
@@ -499,12 +510,15 @@ def walk_windows_with_records(
     *,
     depth: int,
     session: RepoWalkSession | None = None,
+    on_failure: Callable[[int, BaseException], None] | None = None,
 ) -> tuple[dict[int, tuple[str, ...]], dict[str, CommitRecord]]:
     """PR tip → first ``depth`` commits plus the records parsed from the walk.
 
     Walks served by ``rev-list`` (fallback/verify substitution) carry no
     records; callers backfill those SHAs through ``read_commits``. A supplied
-    ``session`` is reused and never closed by this call.
+    ``session`` is reused and never closed by this call. A supplied
+    ``on_failure`` reports failed tips and keeps walking the rest; without it
+    the first failure propagates.
     """
     if not refs:
         return {}, {}
@@ -514,7 +528,11 @@ def walk_windows_with_records(
     if _has_replace_refs(git_dir) or alternates.exists():
         fallback_results: dict[int, tuple[str, ...]] = {}
         for sha, numbers in grouped.items():
-            shas = _fallback(repo, sha, depth)
+            try:
+                shas = _fallback(repo, sha, depth)
+            except (GitError, subprocess.TimeoutExpired) as exc:
+                _report_walk_failure(numbers, exc, on_failure)
+                continue
             for number in numbers:
                 fallback_results[number] = shas
         return fallback_results, {}
@@ -530,19 +548,23 @@ def walk_windows_with_records(
             except WalkAnomaly:
                 exact = False
         for sha, numbers in grouped.items():
-            if exact and session is not None:
-                try:
-                    shas, _ = session.window(sha, depth)
-                except WalkAnomaly:
-                    shas = _fallback(repo, sha, depth)
+            try:
+                if exact and session is not None:
+                    try:
+                        shas, _ = session.window(sha, depth)
+                    except WalkAnomaly:
+                        shas = _fallback(repo, sha, depth)
+                    else:
+                        if _verification_due(shas, depth, pct, verify_budget):
+                            shas = _verify(repo, sha, depth, shas)
+                            verify_budget -= 1
+                        if _state["disabled"]:
+                            exact = False
                 else:
-                    if _verification_due(shas, depth, pct, verify_budget):
-                        shas = _verify(repo, sha, depth, shas)
-                        verify_budget -= 1
-                    if _state["disabled"]:
-                        exact = False
-            else:
-                shas = _fallback(repo, sha, depth)
+                    shas = _fallback(repo, sha, depth)
+            except (GitError, subprocess.TimeoutExpired) as exc:
+                _report_walk_failure(numbers, exc, on_failure)
+                continue
             for number in numbers:
                 results[number] = shas
     finally:

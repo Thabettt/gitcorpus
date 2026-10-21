@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import detect.repo_walk as repo_walk
-from detect.gitio import CommitRecord, GitRepo, read_commits
+from detect.gitio import CommitRecord, GitError, GitRepo, read_commits
 from detect.repo_walk import (
     CatFileBatch,
     RepoWalkSession,
@@ -240,6 +240,18 @@ def test_fallback_walks_each_unique_tip_once(tmp_path):
     result = walk_windows(FakeRepo(), {1: "aaa", 2: "aaa", 3: "bbb"}, depth=100)
     assert len(calls) == 2
     assert result == {1: ("s1", "s2"), 2: ("s1", "s2"), 3: ("s3",)}
+
+
+def test_walk_windows_still_raises_without_a_failure_callback(tmp_path):
+    class FakeRepo(GitRepo):
+        def __init__(self):
+            super().__init__(tmp_path / "not-a-repo")
+
+        def git(self, *args, timeout=None, stdin=None, env_extra=None):
+            raise GitError(list(args), 128, "fatal: bad object")
+
+    with pytest.raises(GitError):
+        walk_windows(FakeRepo(), {7: "aaa"}, depth=100)
 
 
 def test_fallback_rev_list_disables_lazy_fetch_without_excluding_promisor_objects(tmp_path):
