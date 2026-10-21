@@ -277,6 +277,30 @@ def test_first_signal_at_uses_the_earliest_parsed_instant_for_mixed_offsets():
     assert orchestrator_module._first_signal_at(scan) == "2025-01-01T00:30:00+03:00"
 
 
+def test_first_signal_at_ignores_bot_channel_hits():
+    from detect.attribution import Hit
+    from detect.orchestrator import _RepoScan
+
+    scan = _RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[
+            Hit("dependabot", "bot", {"commit": "a1", "pr": 7}),
+            Hit("Claude Code", "commit_trailer", {"commit": "a2"}),
+        ],
+        results={},
+        pr_result=ChannelResult(stats={"created_at": {7: "2025-01-01T00:00:00Z"}}),
+        history_stats={
+            "committed_at": {
+                "a1": "2025-01-01T00:00:00Z",
+                "a2": "2026-01-02T00:00:00Z",
+            }
+        },
+    )
+    assert orchestrator_module._first_signal_at(scan) == "2026-01-02T00:00:00Z"
+
+
 def test_fold_summary_uses_the_earliest_parsed_instant_for_mixed_offsets():
     from detect.orchestrator import _fold_summary, _SummaryContribution
 

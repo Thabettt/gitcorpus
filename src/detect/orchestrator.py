@@ -210,15 +210,16 @@ def _instant(value: str) -> datetime:
 
 
 def _first_signal_at(scan: _RepoScan) -> str | None:
+    signal_hits = [hit for hit in scan.hits if hit.channel != _BOT_CHANNEL]
     dates: list[str] = []
     committed = scan.history_stats.get("committed_at") or {}
-    for hit in scan.hits:
+    for hit in signal_hits:
         oid = hit.evidence.get("commit")
         if oid is not None and oid in committed:
             dates.append(str(committed[oid]))
     if scan.pr_result is not None:
         created = scan.pr_result.stats.get("created_at") or {}
-        for hit in scan.hits:
+        for hit in signal_hits:
             number = hit.evidence.get("pr")
             if number is not None and number in created:
                 dates.append(str(created[number]))
