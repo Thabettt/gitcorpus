@@ -13,6 +13,13 @@ from detect.gitio import GitError, GitRepo, clone_lean, fetch_pr_refs, git_error
 from detect.repo_walk import walk_windows  # noqa: E402
 
 
+def _repo_is_empty(repo: GitRepo) -> bool:
+    try:
+        return repo.git("rev-list", "--all", "--count").strip() == "0"
+    except (GitError, subprocess.TimeoutExpired):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("repos", nargs="+", help="owner/repo entries to verify")
@@ -65,7 +72,14 @@ def main() -> int:
         try:
             head = repo.git("rev-parse", "HEAD").strip()
         except (GitError, subprocess.TimeoutExpired) as exc:
-            head_label = f"skipped ({git_error_tail(exc)})"
+            reason = git_error_tail(exc)
+            if _repo_is_empty(repo):
+                head_label = f"skipped (empty repository: {reason})"
+            else:
+                # An unreadable HEAD in a repo that has commits is a gate
+                # failure, not a pass we may wave through as "skipped".
+                errors += 1
+                head_label = f"error ({reason})"
         else:
             try:
                 head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
