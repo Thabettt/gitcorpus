@@ -29,7 +29,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root)
-    checked = mismatch = 0
+    checked = mismatch = errors = 0
     started_all = time.monotonic()
     for full_name in args.repos:
         dest = root / full_name.replace("/", "__")
@@ -64,21 +64,26 @@ def main() -> int:
         t_verify = time.monotonic() - t0
         try:
             head = repo.git("rev-parse", "HEAD").strip()
-            head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
-            head_truth = tuple(repo.git("rev-list", "-n", str(args.depth), head).split())
         except (GitError, subprocess.TimeoutExpired) as exc:
             head_label = f"skipped ({git_error_tail(exc)})"
         else:
-            checked += 1
-            head_mismatch = set(head_walk) != set(head_truth)
-            if head_mismatch:
-                mismatch += 1
-                local_mismatch += 1
-                print(
-                    f"MISMATCH {full_name} HEAD:"
-                    f" walked={len(head_walk)} truth={len(head_truth)}"
-                )
-            head_label = "MISMATCH" if head_mismatch else "ok"
+            try:
+                head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
+                head_truth = tuple(repo.git("rev-list", "-n", str(args.depth), head).split())
+            except (GitError, subprocess.TimeoutExpired) as exc:
+                errors += 1
+                head_label = f"error ({git_error_tail(exc)})"
+            else:
+                checked += 1
+                head_mismatch = set(head_walk) != set(head_truth)
+                if head_mismatch:
+                    mismatch += 1
+                    local_mismatch += 1
+                    print(
+                        f"MISMATCH {full_name} HEAD:"
+                        f" walked={len(head_walk)} truth={len(head_truth)}"
+                    )
+                head_label = "MISMATCH" if head_mismatch else "ok"
         print(
             f"{full_name}: tips={len(tips)} verified={len(sampled)} mismatches={local_mismatch}"
             f" head={head_label}"
@@ -86,8 +91,8 @@ def main() -> int:
             flush=True,
         )
     total = time.monotonic() - started_all
-    print(f"\nchecked={checked} mismatches={mismatch} total={total:.1f}s")
-    return 1 if mismatch else 0
+    print(f"\nchecked={checked} mismatches={mismatch} errors={errors} total={total:.1f}s")
+    return 1 if mismatch or errors else 0
 
 
 if __name__ == "__main__":
