@@ -43,9 +43,7 @@ def test_gate_skips_a_head_it_cannot_resolve_in_an_empty_repo(tmp_path, monkeypa
     assert "head=skipped" in capsys.readouterr().out
 
 
-def test_gate_fails_when_a_non_empty_repo_head_cannot_be_resolved(
-    tmp_path, monkeypatch, capsys
-):
+def test_gate_fails_when_a_non_empty_repo_head_cannot_be_resolved(tmp_path, monkeypatch, capsys):
     gate = _load_gate()
     repo = tmp_path / "owner__repo"
     (repo / ".git").mkdir(parents=True)
