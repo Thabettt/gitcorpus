@@ -599,24 +599,32 @@ def test_detect_pr_commits_local_degrades_a_walk_failure_to_partial(tmp_path):
 
 
 def test_detect_pr_commits_local_keeps_good_prs_when_one_walk_fails(tmp_path):
+    log = _PR_LOG + (
+        "s3\x1fClaude\x1fnoreply@anthropic.com\x1fClaude\x1fnoreply@anthropic.com"
+        "\x1f2026-03-01T00:00:00+00:00\x1ffeat: later\x1e"
+    )
+
     def handler(args):
         if args[0] == "ls-remote":
-            return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\n"
+            return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\nccc\trefs/pull/11/head\n"
         if args[0] == "fetch":
             return ""
         if args[0] == "rev-list":
             if args[-1] == "bbb":
                 raise GitError(list(args), 128, "fatal: bad object bbb")
-            return "s1\n"
+            return "s1\n" if args[-1] == "aaa" else "s3\n"
         if args[0] == "log":
-            return _PR_LOG
+            return log
         return None
 
     result = detect_pr_commits_local(
         FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100, retry_delay=0.0
     )
     assert result.status == "partial"
-    assert {(hit.evidence["pr"], hit.evidence["commit"]) for hit in result.hits} == {(7, "s1")}
+    assert {(hit.evidence["pr"], hit.evidence["commit"]) for hit in result.hits} == {
+        (7, "s1"),
+        (11, "s3"),
+    }
     assert "1 PR walk(s) failed (e.g. #9: fatal: bad object bbb)" in (result.note or "")
 
 

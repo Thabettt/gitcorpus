@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import argparse
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from detect.gitio import GitRepo, clone_lean, fetch_pr_refs  # noqa: E402
+from detect.gitio import GitError, GitRepo, clone_lean, fetch_pr_refs, git_error_tail  # noqa: E402
 from detect.repo_walk import walk_windows  # noqa: E402
 
 
@@ -61,21 +62,26 @@ def main() -> int:
                     f" walked={len(walked[number])} truth={len(truth)}"
                 )
         t_verify = time.monotonic() - t0
-        head = repo.git("rev-parse", "HEAD").strip()
-        head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
-        head_truth = tuple(repo.git("rev-list", "-n", str(args.depth), head).split())
-        checked += 1
-        head_mismatch = set(head_walk) != set(head_truth)
-        if head_mismatch:
-            mismatch += 1
-            local_mismatch += 1
-            print(
-                f"MISMATCH {full_name} HEAD:"
-                f" walked={len(head_walk)} truth={len(head_truth)}"
-            )
+        try:
+            head = repo.git("rev-parse", "HEAD").strip()
+            head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
+            head_truth = tuple(repo.git("rev-list", "-n", str(args.depth), head).split())
+        except (GitError, subprocess.TimeoutExpired) as exc:
+            head_label = f"skipped ({git_error_tail(exc)})"
+        else:
+            checked += 1
+            head_mismatch = set(head_walk) != set(head_truth)
+            if head_mismatch:
+                mismatch += 1
+                local_mismatch += 1
+                print(
+                    f"MISMATCH {full_name} HEAD:"
+                    f" walked={len(head_walk)} truth={len(head_truth)}"
+                )
+            head_label = "MISMATCH" if head_mismatch else "ok"
         print(
             f"{full_name}: tips={len(tips)} verified={len(sampled)} mismatches={local_mismatch}"
-            f" head={'MISMATCH' if head_mismatch else 'ok'}"
+            f" head={head_label}"
             f" clone={t_clone:.1f}s fetch={t_fetch:.1f}s walk={t_walk:.2f}s verify={t_verify:.1f}s",
             flush=True,
         )
