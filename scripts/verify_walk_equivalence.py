@@ -61,8 +61,21 @@ def main() -> int:
                     f" walked={len(walked[number])} truth={len(truth)}"
                 )
         t_verify = time.monotonic() - t0
+        head = repo.git("rev-parse", "HEAD").strip()
+        head_walk = walk_windows(repo, {0: head}, depth=args.depth)[0]
+        head_truth = tuple(repo.git("rev-list", "-n", str(args.depth), head).split())
+        checked += 1
+        head_mismatch = set(head_walk) != set(head_truth)
+        if head_mismatch:
+            mismatch += 1
+            local_mismatch += 1
+            print(
+                f"MISMATCH {full_name} HEAD:"
+                f" walked={len(head_walk)} truth={len(head_truth)}"
+            )
         print(
             f"{full_name}: tips={len(tips)} verified={len(sampled)} mismatches={local_mismatch}"
+            f" head={'MISMATCH' if head_mismatch else 'ok'}"
             f" clone={t_clone:.1f}s fetch={t_fetch:.1f}s walk={t_walk:.2f}s verify={t_verify:.1f}s",
             flush=True,
         )
