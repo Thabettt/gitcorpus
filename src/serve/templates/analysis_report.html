@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% block title %}Analysis · {% if run %}detection #{{ run.number }}{% else %}not found{% endif %} · gitcorpus{% endblock %}
+{% block body %}
+{% if not run %}
+<section class="panel" id="analysis-not-found">
+  <h1>Analysis not found</h1>
+  <p class="muted">No detection run with this id exists, or it is not a detection run.</p>
+  <p><a href="/analysis">All analyses</a> · <a href="/detections">All detections</a></p>
+</section>
+{% else %}
+<section class="panel" id="analysis-run-header" data-run-id="{{ run.id }}">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Detection #{{ run.number }}</p>
+      <h1>Analysis</h1>
+    </div>
+    <div class="panel-head-actions">
+      <a class="button ghost" href="/detections/{{ run.id }}">Open detection</a>
+      <a class="button ghost" href="/runs/{{ run.source_run_id }}">Source search #{{ run.source_run_id }}</a>
+      <a class="button ghost" href="/analysis">Change run</a>
+    </div>
+  </div>
+  <div class="run-meta">
+    <span>status <span class="pill {{ run.status }}">{{ status_label(run.status) }}</span></span>
+    <span>source {{ run.api_source }}</span>
+    <span>started {{ run.created_at }}</span>
+    <span>finished {{ run.finished_at }}</span>
+    <span class="mono">{{ run.hash_short }}</span>
+  </div>
+
+  {% if backfill %}
+  <div class="flag {{ 'warn' if backfill.status == 'error' else '' }}" id="analysis-backfill-notice">
+    {% if backfill.status == 'error' %}
+    Country backfill failed: {{ backfill.message }}
+    {% else %}
+    Country backfill finished: fetched {{ backfill.fetched or 0 }} owner locations, resolved {{ backfill.resolved or 0 }}, marked {{ backfill.unmatched or 0 }} unmatched, updated {{ backfill.updated or 0 }} run rows; {{ backfill.remaining or 0 }} owners still unknown.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="cards analysis-kpis" id="analysis-summary">
+    <article class="card"><h3>Repos scanned</h3><p>{{ totals.scanned }}</p></article>
+    <article class="card"><h3>With any agent</h3><p>{{ totals.with_agent }} <span class="muted">{{ totals.adoption_scanned if totals.adoption_scanned is not none else "—" }}%</span></p></article>
+    <article class="card"><h3>Readable repos</h3><p>{{ totals.readable }}</p></article>
+    <article class="card"><h3>Unavailable</h3><p>{{ totals.unavailable }}</p></article>
+    <article class="card"><h3>Known country</h3><p>{{ country.known }} <span class="muted">{{ country.coverage if country.coverage is not none else "—" }}%</span></p></article>
+    <article class="card"><h3>Unknown country</h3><p>{{ country.unknown }}</p></article>
+  </div>
+
+  <div class="analysis-tools">
+    <details id="analysis-country-tools" class="analysis-tool">
+      <summary>Country coverage and backfill</summary>
+      <p class="muted">
+        Country comes from the repository owner’s GitHub location. {{ country.known }} of {{ country.repos }} repos have a known country; {{ country.missing_owners }} of {{ country.owners }} owners are still unresolved.
+        A backfill fetches missing owner locations through the GitHub API, resolves them with the local geo resolver, and freezes the result into this detection run’s rows.
+      </p>
+      <form method="post" action="/analysis/{{ run.id }}/country-backfill" class="inline-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="button" type="submit" id="analysis-country-backfill"{% if not country.missing_owners %} disabled{% endif %}>Resolve missing countries</button>
+        <span class="muted">Up to 500 owners per click; API calls are audited against this run.</span>
+      </form>
+    </details>
+    <details id="analysis-metric-picker" class="analysis-tool">
+      <summary>Choose metrics</summary>
+      <form method="get" action="/analysis/{{ run.id }}">
+        <input type="hidden" name="metrics_present" value="1">
+        <div class="metric-grid">
+          {% for metric in all_metrics %}
+          <label class="metric-option" for="report-metric-{{ metric.key }}">
+            <input type="checkbox" id="report-metric-{{ metric.key }}" name="metric" value="{{ metric.key }}"{{ ' checked' if metric.key in selected }}>
+            <span class="metric-option-copy">
+              <span class="metric-option-title">{{ metric.label }}</span>
+              <span class="metric-option-desc">{{ metric.description }}</span>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="analysis-picker-actions">
+          <button class="button primary" type="submit" id="analysis-metrics-apply">Apply selection</button>
+          <span class="muted">Sections with no data are hidden.</span>
+        </div>
+      </form>
+    </details>
+  </div>
+</section>
+
+{% if selected %}
+{% set counts = {
+  'agent_share': results.agent_share|length if 'agent_share' in results else none,
+  'agents_by_country': results.agents_by_country|length if 'agents_by_country' in results else none,
+  'adoption': results.adoption.levels|length if 'adoption' in results else none,
+  'adoption_by_country': results.adoption_by_country|length if 'adoption_by_country' in results else none,
+  'size_vs_adoption': results.size_vs_adoption.buckets|length if 'size_vs_adoption' in results else none,
+  'agent_debut': results.agent_debut|length if 'agent_debut' in results else none,
+  'fingerprint_debut': results.fingerprint_debut|length if 'fingerprint_debut' in results else none,
+  'country_wealth': results.country_wealth.rows|length if 'country_wealth' in results else none
+} %}
+<nav class="report-tabs" id="analysis-tabs" role="tablist" aria-label="Analysis sections">
+  {% for metric in metrics %}
+  {% set count = counts.get(metric.key) %}
+  <button class="report-tab" type="button" role="tab" id="tab-{{ metric.key }}" data-target="analysis-{{ metric.key|replace('_', '-') }}" aria-controls="analysis-{{ metric.key|replace('_', '-') }}" aria-selected="false" tabindex="-1">
+    {{ metric.label }}
+    {% if count is not none %}<span class="report-tab-count">{{ count }}</span>{% endif %}
+  </button>
+  {% endfor %}
+</nav>
+
+<div class="report-sections" id="analysis-sections">
+
+{% if 'agent_share' in results %}
+<section class="panel analysis-section" id="analysis-agent-share" role="tabpanel" aria-labelledby="tab-agent_share" tabindex="0">
+  <div class="panel-head"><div><h2>Agent share</h2><p class="muted">Repos with each agent, as a share of every scanned repo and of readable repos. A repo can use several agents, so shares do not sum to 100%.</p></div></div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Agent</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Share of scanned</th><th scope="col" class="num">Share of readable</th></tr></thead>
+      <tbody>
+      {% for row in results.agent_share %}
+        <tr>
+          <td>{{ row.agent }}</td>
+          <td class="num">{{ row.repos }}</td>
+          <td class="num">
+            {{ row.share_scanned if row.share_scanned is not none else "—" }}%
+            <div class="progress" aria-hidden="true"><div class="progress-bar" style="--progress: {{ (row.share_scanned or 0) / 100 }}"></div></div>
+          </td>
+          <td class="num">{{ row.share_readable if row.share_readable is not none else "—" }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'agents_by_country' in results %}
+<section class="panel analysis-section" id="analysis-agents-by-country" role="tabpanel" aria-labelledby="tab-agents_by_country" tabindex="0">
+  <div class="panel-head"><div><h2>Agents by country</h2><p class="muted">Repo counts per country and agent, repo-weighted. “Unknown” is the bucket for repos whose owner country could not be resolved. Countries with no agent signal are omitted here; see Agent use by country for full adoption rates.</p></div></div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Country</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Readable</th><th scope="col">Agents (repos)</th></tr></thead>
+      <tbody>
+      {% for row in results.agents_by_country %}
+        <tr>
+          <td>{{ row.country }}{% if row.country_iso != '??' %} <span class="muted mono">{{ row.country_iso }}</span>{% endif %}</td>
+          <td class="num">{{ row.repos }}</td>
+          <td class="num">{{ row.readable }}</td>
+          <td>
+            <span class="agent-chips">
+              {% for agent in row.agents[:6] %}
+              <span class="agent-chip">{{ agent.agent }} <strong>{{ agent.repos }}</strong>{% if agent.share_readable is not none %} <span class="muted">{{ agent.share_readable }}%</span>{% endif %}</span>
+              {% endfor %}
+              {% if row.agents|length > 6 %}<span class="agent-chip muted">+{{ row.agents|length - 6 }} more</span>{% endif %}
+            </span>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'adoption' in results %}
+<section class="panel analysis-section" id="analysis-adoption" role="tabpanel" aria-labelledby="tab-adoption" tabindex="0">
+  <div class="panel-head"><div><h2>Agent use</h2><p class="muted">Share of repos with at least one agent. Readable repos exclude repos the detection could not read.</p></div></div>
+  <div class="cards">
+    <article class="card"><h3>All scanned</h3><p>{{ results.adoption.with_agent }} / {{ results.adoption.scanned }} <span class="muted">{{ results.adoption.adoption_scanned if results.adoption.adoption_scanned is not none else "—" }}%</span></p></article>
+    <article class="card"><h3>Readable</h3><p>{{ results.adoption.with_agent }} / {{ results.adoption.readable }} <span class="muted">{{ results.adoption.adoption_readable if results.adoption.adoption_readable is not none else "—" }}%</span></p></article>
+  </div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Adoption level</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Share</th></tr></thead>
+      <tbody>
+      {% for row in results.adoption.levels %}
+        <tr><td>{{ row.level }}</td><td class="num">{{ row.repos }}</td><td class="num">{{ row.share if row.share is not none else "—" }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'adoption_by_country' in results %}
+<section class="panel analysis-section" id="analysis-adoption-by-country" role="tabpanel" aria-labelledby="tab-adoption_by_country" tabindex="0">
+  <div class="panel-head"><div><h2>Agent use by country</h2><p class="muted">Repo-weighted adoption rate per country. Unknown country is its own bucket. Rates use readable repos as the denominator.</p></div></div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Country</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Readable</th><th scope="col" class="num">With agent</th><th scope="col" class="num">Adoption</th></tr></thead>
+      <tbody>
+      {% for row in results.adoption_by_country %}
+        <tr>
+          <td>{{ row.country }}{% if row.country_iso != '??' %} <span class="muted mono">{{ row.country_iso }}</span>{% endif %}</td>
+          <td class="num">{{ row.repos }}</td>
+          <td class="num">{{ row.readable }}</td>
+          <td class="num">{{ row.with_agent }}</td>
+          <td class="num">
+            {{ row.adoption_readable if row.adoption_readable is not none else "—" }}%
+            <div class="progress" aria-hidden="true"><div class="progress-bar" style="--progress: {{ (row.adoption_readable or 0) / 100 }}"></div></div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'size_vs_adoption' in results %}
+<section class="panel analysis-section" id="analysis-size-vs-adoption" role="tabpanel" aria-labelledby="tab-size_vs_adoption" tabindex="0">
+  <div class="panel-head"><div><h2>Repo size vs agent use</h2><p class="muted">Adoption by repository size in kilobytes. The per-agent columns are shares of readable repos in that bucket; they do not sum to 100% because a repo can use several agents.</p></div></div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead>
+        <tr><th scope="col">Size bucket</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Readable</th><th scope="col" class="num">With agent</th><th scope="col" class="num">Adoption</th>
+        {% for agent in results.size_vs_adoption.agents %}<th scope="col" class="num">{{ agent }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+      {% for bucket in results.size_vs_adoption.buckets %}
+        <tr>
+          <td>{{ bucket.bucket }}</td>
+          <td class="num">{{ bucket.repos }}</td>
+          <td class="num">{{ bucket.readable }}</td>
+          <td class="num">{{ bucket.with_agent }}</td>
+          <td class="num">{{ bucket.adoption_readable if bucket.adoption_readable is not none else "—" }}%</td>
+          {% for agent in bucket.agents %}<td class="num">{{ agent.share if agent.share is not none else "—" }}%</td>{% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'agent_debut' in results %}
+<section class="panel analysis-section" id="analysis-agent-debut" role="tabpanel" aria-labelledby="tab-agent_debut" tabindex="0">
+  <div class="panel-head"><div><h2>Agent debuts</h2><p class="muted">Earliest observed date in the run’s detection window for each agent, and the earliest repository creation date among repos that carry it. The observed signal can only be later than the true first use because detection is windowed.</p></div></div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Agent</th><th scope="col">Earliest observed signal</th><th scope="col">Earliest repo created</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Dated repos</th></tr></thead>
+      <tbody>
+      {% for row in results.agent_debut %}
+        <tr><td>{{ row.agent }}</td><td>{{ row.earliest_signal or "—" }}</td><td>{{ row.earliest_repo_created or "—" }}</td><td class="num">{{ row.repos }}</td><td class="num">{{ row.dated_repos }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if 'fingerprint_debut' in results %}
+<section class="panel analysis-section" id="analysis-fingerprint-debut" role="tabpanel" aria-labelledby="tab-fingerprint_debut" tabindex="0">
+  <div class="panel-head"><div><h2>Fingerprint debuts</h2><p class="muted">Top fingerprints per agent by repo count. “Earliest observed signal” is the earliest repo-level first signal among repos that carry the fingerprint; the true first appearance can be earlier. Derived PR propagation rows and bots are excluded.</p></div></div>
+  <div class="analysis-scroll">
+    {% for group in results.fingerprint_debut %}
+    <details class="evidence-repo" id="analysis-fingerprint-{{ group.agent|replace(' ', '-')|lower }}">
+      <summary>{{ group.agent }} · {{ group.fingerprints|length }} fingerprints</summary>
+      <div class="evidence-body">
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th scope="col">Fingerprint</th><th scope="col">Channel</th><th scope="col" class="num">Repos</th><th scope="col">Earliest observed signal</th><th scope="col">Earliest repo created</th></tr></thead>
+            <tbody>
+            {% for row in group.fingerprints %}
+              <tr><td class="mono">{{ row.fingerprint }}</td><td>{{ row.channel }}</td><td class="num">{{ row.repos }}</td><td>{{ row.earliest_signal or "—" }}</td><td>{{ row.earliest_repo_created or "—" }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if 'country_wealth' in results %}
+<section class="panel analysis-section" id="analysis-country-wealth" role="tabpanel" aria-labelledby="tab-country_wealth" tabindex="0">
+  <div class="panel-head"><div><h2>Country wealth vs agent use</h2><p class="muted">GDP per capita and income group against repo-weighted adoption. This compares country aggregates, not individual developers or repositories, so it cannot support claims about any one person.</p></div></div>
+  <div class="cards">
+    <article class="card"><h3>Pearson r</h3><p>{{ results.country_wealth.correlation if results.country_wealth.correlation is not none else "—" }}</p></article>
+    <article class="card"><h3>Countries in fit</h3><p>{{ results.country_wealth.points }}</p></article>
+    <article class="card"><h3>Minimum readable repos</h3><p>{{ results.country_wealth.min_repos }}</p></article>
+  </div>
+  <p class="muted">{{ results.country_wealth.source }} Correlation uses log10 GDP per capita and adoption fraction for countries with at least {{ results.country_wealth.min_repos }} readable repos; it is descriptive, not causal.</p>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Income group</th><th scope="col" class="num">Countries</th><th scope="col" class="num">Readable repos</th><th scope="col" class="num">With agent</th><th scope="col" class="num">Adoption</th></tr></thead>
+      <tbody>
+      {% for row in results.country_wealth.income_groups %}
+        <tr><td>{{ row.income_group }}</td><td class="num">{{ row.countries }}</td><td class="num">{{ row.repos }}</td><td class="num">{{ row.with_agent }}</td><td class="num">{{ row.adoption if row.adoption is not none else "—" }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Country</th><th scope="col">Income group</th><th scope="col" class="num">GDP per capita</th><th scope="col" class="num">Readable repos</th><th scope="col" class="num">With agent</th><th scope="col" class="num">Adoption</th></tr></thead>
+      <tbody>
+      {% for row in results.country_wealth.rows %}
+        <tr>
+          <td>{{ row.country }}{% if row.country_iso != '??' %} <span class="muted mono">{{ row.country_iso }}</span>{% endif %}</td>
+          <td>{{ row.income_group }}</td>
+          <td class="num">{% if row.gdp_pc is not none %}${{ "{:,.0f}".format(row.gdp_pc) }}{% if row.gdp_year %} <span class="muted">{{ row.gdp_year }}</span>{% endif %}{% else %}—{% endif %}</td>
+          <td class="num">{{ row.readable }}</td>
+          <td class="num">{{ row.with_agent }}</td>
+          <td class="num">{{ row.adoption_readable if row.adoption_readable is not none else "—" }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+</div>
+{% else %}
+<section class="panel" id="analysis-empty-selection">
+  <p class="muted">No metrics selected. Use “Choose metrics” above to add sections.</p>
+</section>
+{% endif %}
+
+<script>
+(function () {
+  "use strict";
+  var tabs = Array.prototype.slice.call(document.querySelectorAll("#analysis-tabs [role='tab']"));
+  var sections = Array.prototype.slice.call(document.querySelectorAll(".analysis-section"));
+  if (!tabs.length || !sections.length) { return; }
+
+  function activate(target, updateHash) {
+    tabs.forEach(function (tab) {
+      var selected = tab.getAttribute("data-target") === target;
+      tab.setAttribute("aria-selected", selected ? "true" : "false");
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    sections.forEach(function (section) {
+      section.hidden = section.id !== target;
+    });
+    if (updateHash) {
+      history.replaceState(null, "", "#" + target.replace(/^analysis-/, ""));
+      var panel = document.getElementById(target);
+      var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (panel) {
+        panel.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+      }
+    }
+  }
+
+  function targetFromHash() {
+    var raw = window.location.hash.replace(/^#/, "");
+    if (!raw) { return null; }
+    var prefixed = raw.indexOf("analysis-") === 0 ? raw : "analysis-" + raw;
+    return document.getElementById(prefixed) ? prefixed : null;
+  }
+
+  tabs.forEach(function (tab, index) {
+    tab.addEventListener("click", function () { activate(tab.getAttribute("data-target"), true); });
+    tab.addEventListener("keydown", function (event) {
+      var next = null;
+      if (event.key === "ArrowRight") { next = tabs[(index + 1) % tabs.length]; }
+      else if (event.key === "ArrowLeft") { next = tabs[(index - 1 + tabs.length) % tabs.length]; }
+      else if (event.key === "Home") { next = tabs[0]; }
+      else if (event.key === "End") { next = tabs[tabs.length - 1]; }
+      if (next) {
+        event.preventDefault();
+        next.focus();
+        activate(next.getAttribute("data-target"), true);
+      }
+    });
+  });
+
+  activate(targetFromHash() || tabs[0].getAttribute("data-target"), false);
+})();
+</script>
+{% endif %}
+{% endblock %}

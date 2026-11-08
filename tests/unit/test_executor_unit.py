@@ -101,6 +101,7 @@ def test_bundle_item_prefers_raw_and_falls_back_to_snapshot():
         "license_spdx": "Apache-2.0",
         "country_iso": "US",
         "geo_confidence": "gazetteer-city",
+        "country": "United States",
         "virtuals": {"team_topic": True},
         "detection": None,
     }
@@ -149,6 +150,8 @@ def test_evidence_header_is_the_flat_schema():
         "identity_field",
         "snippet",
         "propagated",
+        "country_iso",
+        "country",
         "evidence_json",
     ]
 

@@ -115,7 +115,7 @@ def _indexdefs(engine: Engine) -> dict[str, str]:
 
 
 def test_single_alembic_head(alembic_config):
-    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0018"]
+    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0019"]
 
 
 def test_metadata_declares_exactly_the_expected_tables():

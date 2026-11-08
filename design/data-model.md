@@ -84,7 +84,8 @@ CREATE TABLE owners (
   type          TEXT NOT NULL,               -- User/Organization
   location_raw  TEXT,                        -- free-text, nullable
   country_iso   CHAR(2),                     -- resolver output, nullable
-  geo_confidence TEXT,                       -- exact-iso/name/gazetteer-city/geocoder/weak; unmatched = NULL country
+  geo_confidence TEXT,                       -- exact-iso/name/region/gazetteer-city/geocoder/weak; unmatched = NULL country
+  geo_version    TEXT,                       -- resolver rules/data version that produced the answer
   company       TEXT, blog TEXT,
   etag          TEXT,
   synced_at     TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -99,6 +100,7 @@ CREATE TABLE geo_cache (
   country_iso CHAR(2),
   confidence  TEXT NOT NULL,
   raw_sample  TEXT NOT NULL,
+  resolver_version TEXT NOT NULL DEFAULT 'legacy',
   hits        INTEGER NOT NULL DEFAULT 1,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

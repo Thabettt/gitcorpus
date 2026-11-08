@@ -235,6 +235,7 @@
               <option value="" {{ 'selected' if not state.fields.get('min_geo_confidence') }}>any</option>
               <option value="exact-iso" {{ 'selected' if state.fields.get('min_geo_confidence') == 'exact-iso' }}>exact-iso</option>
               <option value="name" {{ 'selected' if state.fields.get('min_geo_confidence') == 'name' }}>name</option>
+              <option value="region" {{ 'selected' if state.fields.get('min_geo_confidence') == 'region' }}>region</option>
               <option value="gazetteer-city" {{ 'selected' if state.fields.get('min_geo_confidence') == 'gazetteer-city' }}>gazetteer-city</option>
               <option value="geocoder" {{ 'selected' if state.fields.get('min_geo_confidence') == 'geocoder' }}>geocoder</option>
               <option value="weak" {{ 'selected' if state.fields.get('min_geo_confidence') == 'weak' }}>weak</option>

@@ -26,6 +26,7 @@ from lib.batching import chunked
 from lib.deadlines import DeadlineExceededError, request_deadline_seconds
 from lib.gh_client import API_VERSION, PartialResultsError, RequestFailed, ThrottledError
 from serve import errors, pages
+from serve.analysis import register_analysis
 from serve.corpora import register_corpora
 from serve.diff import diff_runs
 from serve.executor import (
@@ -1112,6 +1113,7 @@ def create_app(
     )
 
     register_corpora(application, engine_factory=engine_for)
+    register_analysis(application, engine_factory=engine_for)
 
     from serve.detect import register_detect
 

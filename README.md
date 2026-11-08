@@ -83,7 +83,7 @@ filters.json → Validate → Live search → Thin matches → Hydrate → Virtu
 
 **Stage 5 — Enrichment (detail only for survivors).** Only repos that pass every filter get enriched: language byte breakdowns, releases, funding links, discussions. The rules that keep this cheap: one file-tree call answers all path questions; GraphQL batches are used only where one query replaces three or more REST calls; identical files across repos are fetched once by content hash; package data comes from zero-token mirrors (ecosyste.ms, deps.dev) before any GitHub call is spent. Nothing is fetched for a display you won't show.
 
-**Stage 6 — Geo resolve (free text → country, honestly).** Owner `location` is unstructured human text: `"🇩🇪 Berlin"`, `"Lagos"`, `"🌍 remote"`, often empty. The pipeline decodes flag emojis directly (deterministic, free), normalizes and splits multi-place strings ("Berlin / NYC" → two candidates), resolves cities through an offline gazetteer at zero call cost, catches country-name variants ("USA", "Nederland") with an alias table, and only lets the residue touch a geocoder — cached forever by normalized string. Weak hints (domain endings, timezones) break ties, never lead. Every result stores `{country_iso, confidence, raw_location}` with an explicit unmatched bucket: an honest unknown beats a confident wrong answer.
+**Stage 6 — Geo resolve (free text → country, honestly).** Owner `location` is unstructured human text: `"🇩🇪 Berlin"`, `"Lagos"`, `"🌍 remote"`, often empty. The pipeline validates flag emojis, folds Latin accents without damaging other scripts, separates country names from subdivision and city evidence, and resolves exact city names through a curated table plus an offline GeoNames gazetteer. Country, city, subdivision, and trailing-code signals must agree; conflicting flags or multi-country profiles remain unmatched instead of selecting the first place. A geocoder and ccTLD/timezone hints are lower-confidence optional fallbacks. Every result stores `{country_iso, confidence, raw_location}` and the resolver version is persisted with cache and owner rows, so changed rules cannot reuse stale classifications. An honest unknown beats a confident wrong answer.
 
 **Stage 7 — Merge + cache (one result set, many devices).** Survivors merge by immutable repo `id` — never by name, because names change on rename or transfer — so the same filter file run on two laptops produces unionable, dedupe-safe sets. The merged set caches under its `filter_hash` briefly: an identical search minutes later costs zero GitHub calls.
 
@@ -147,7 +147,7 @@ gitcorpus targets the intersection none of them covers: **live measurement at a 
 - **Two hydration paths:** REST `GET /repos/{full_name}` with ETag/`If-None-Match`, and aliased GraphQL batches of up to 20 repos with automatic per-repo REST fallback — so one bad repo never poisons its neighbours. Batches run with bounded concurrency (capped at 20, from `limiter_max_concurrent`), and the same query carries language bytes and watcher counts, so no extra `/languages` call is spent.
 - Commit counts come from GraphQL `defaultBranchRef.target.history.totalCount` or REST `Link: rel=last`.
 - File presence is answered by a GraphQL batch first, with the recursive Git Trees API as fallback — never N× `contents` loops. When a recursive tree is truncated and the path isn't found, the non-recursive root listing is merged in; if presence still can't be proven, the repo is skipped with a warning rather than silently filtered out.
-- Owner locations resolve through the offline gazetteer described in [Stage 6](#the-journey-stage-by-stage) and cache per location in `geo_cache`.
+- Owner locations resolve through the offline gazetteer described in [Stage 6](#the-journey-stage-by-stage) and cache per location in `geo_cache`. The broad city fallback is supplied by `geonamescache` from [GeoNames](https://www.geonames.org/) data (CC BY 4.0); only exact city names are used, and conflicting city/country/region evidence is left unmatched.
 - The cost planner orders all of this record → mirror → single → batched → deep, and the run records per-field source and calls spent.
 
 ### Virtual filters
@@ -160,7 +160,7 @@ All are validated locally with actionable hints; the table says where each is en
 | `team_topic` | topic slug (`^[a-z0-9][a-z0-9-]{0,49}$`) | Translated to `topic:x` |
 | `has_dockerfile` | boolean | File-presence batch (GraphQL → trees fallback) |
 | `owner_country` | ISO 3166-1 alpha-2 (e.g. `DE`) | Owner location → geo resolver → confidence tier |
-| `min_geo_confidence` | `exact-iso` \| `name` \| `gazetteer-city` \| `geocoder` \| `weak` (default `gazetteer-city`) | Confidence floor for `owner_country` |
+| `min_geo_confidence` | `exact-iso` \| `name` \| `region` \| `gazetteer-city` \| `geocoder` \| `weak` (default `gazetteer-city`) | Confidence floor for `owner_country` |
 | `min_commits` / `max_commits` | integer ≥ 0 | Hydrated default-branch commit count |
 | `min_language_bytes` / `max_language_bytes` | integer ≥ 0 | Primary-language byte size carried by the hydration query (no extra call) |
 | `min_loc` / `max_loc` | integer ≥ 0 | **Recorded only — not enforceable yet**; a run using them is flagged incomplete |
@@ -198,7 +198,7 @@ Everything runs from the repo source with `PYTHONPATH=src` (implicit namespace p
 | `src/hydrate/` | REST repo hydration (ETag, redirects, commit counts), GraphQL repo adapter, batched refresh driver |
 | `src/enrich/` | Geo resolver + gazetteer, trees-first file presence, GraphQL file/owner adapters, cost planner, segment executor, repo cloner |
 | `src/serve/` | FastAPI app and middleware, run runner + background executor, filter-spec parsing/hashing, virtual params, console pages/templates/static, exports, clone registry, library, corpora, diff, quality, metrics, settings |
-| `migrations/` | Alembic revisions `0001`–`0013` (11 tables; `0010`–`0011` add the runs progress columns, `0012` adds `app_settings.discovery_concurrency`, `0013` raises the batch-size cap) |
+| `migrations/` | Alembic revisions `0001`–`0019` (14 tables; later revisions add audit telemetry, adaptive/detection settings and evidence, then versioned geo resolution) |
 | `tests/` | `unit/`, `integration/`, `contract/`, `golden/`, `js/` suites |
 | `design/`, `findings/`, `docs/` | Research, frozen specs, plans, environment and legal runbooks (not runtime code) |
 
@@ -215,14 +215,14 @@ Pacing is a first-class subsystem here, not a retry loop bolted on:
 
 ## Data model and run artifacts
 
-Eleven PostgreSQL tables, across thirteen Alembic revisions:
+Fourteen PostgreSQL tables, across nineteen Alembic revisions:
 
 | Table | Purpose |
 |---|---|
-| `owners` | Owner identity (login, type) plus enrichment: location raw, `country_iso`, geo confidence, company/blog, ETag |
+| `owners` | Owner identity (login, type) plus enrichment: location raw, `country_iso`, geo confidence + resolver version, company/blog, ETag |
 | `repos` | Repo metadata mirror keyed on immutable `id`: names, description, language, license, topics, flags, counts, `created/pushed/updated`, ETag, `deleted_at` |
 | `full_name_history` | Rename/transfer log (`repo_id`, `full_name`, `seen_at`) |
-| `geo_cache` | Normalized location → country, confidence, hit count |
+| `geo_cache` | Normalized location + resolver version → country, confidence, hit count |
 | `shards` | Discovery shard state: kind, GraphQL query, `created:` ranges, state, totals, fetched, incomplete |
 | `audit_log` | One row per GitHub response: params, status, rate-limit headers, retry-after, Link, totals, token fingerprint, latency |
 | `runs` | One row per search: filter hash + spec, status (`queued/running/done/partial/failed/cancelled`, the last shown as "Stopped"), timestamps, counters, live progress columns (phase, done/total), error, bundle dir |
@@ -230,6 +230,9 @@ Eleven PostgreSQL tables, across thirteen Alembic revisions:
 | `saved_filters` | Named saved filter specs |
 | `app_settings` | Single-row run limits and toggles (editable at `/settings`, pinnable by env) |
 | `corpora` | Named frozen corpora referencing their source run |
+| `trace_packs` | Immutable, versioned detection patterns and agent/channel metadata |
+| `detection_evidence` | Per-repo, per-agent evidence emitted by detection runs |
+| `detection_repo_filters` | Compact per-run detection facets for fast agent/channel filtering |
 
 One run leaves three things on disk, in a directory named by its filter hash and run id:
 
@@ -384,6 +387,8 @@ alembic upgrade head        # run from the repo root, with DATABASE_URL set
 
 One warning worth reading before you point this at a large database: migrations `0005`–`0007` rewrite constraints and indexes on live tables and take write-blocking locks. On a big database, run them in a maintenance window or convert them to `CONCURRENTLY` builds as described in [`docs/environment.md`](docs/environment.md#migration-locking). A downgrade of `0004` can also be lossy for rows with a `NULL` `repo_id`; see the migration's docstring.
 
+Migration `0019` versions geo-resolution results and clears only the mutable derived country/confidence fields on `owners`; stored raw locations and frozen `run_items` are preserved. New country-filtered searches re-resolve those locations locally, and `scripts/backfill_run_countries.py --run-id ID --freeze-only --repeat` can refresh a stored run without spending GitHub requests.
+
 ## Using gitcorpus
 
 ### A first search
@@ -508,7 +513,7 @@ Clones land in `clones/<filter_hash>/<run_id>/<owner__repo>/`, and completed dir
 
 ## Testing, linting, and type checking
 
-The suite collects **1,634 tests** across five suites. CI runs it on Ubuntu and Windows against real PostgreSQL and Redis (service containers on Linux, native services on Windows).
+The suite collects **2,172 tests** across five suites. CI runs it on Ubuntu and Windows against real PostgreSQL and Redis (service containers on Linux, native services on Windows).
 
 ```bash
 pytest                                   # all suites; DB-backed suites skip without TEST_DATABASE_URL
@@ -542,6 +547,10 @@ mypy                        # gated packages: lib, limiter, store, scheduler (ra
 
 Two pieces of test furniture deserve a sentence each. The `golden/` suite snapshots console pages and pins the OpenAPI schema hash, so any unintended API or markup change fails CI until regenerated deliberately. And the coverage gate (`fail_under = 93`) is a floor, not a target — coverage last measured around 95%.
 
+### Validating owner-country inference
+
+The resolver is paired with a research-validation workflow rather than an accuracy claim inferred from test coverage. `scripts/geo_benchmark.py` creates a deterministic de-identified sample, independently shuffled blinded annotation packs, disagreement-only adjudication, design- and owner-weighted estimates with conservative 95% intervals, predeclared release gates, and a SHA-256 audit package. The untouched holdout is the only split eligible for release claims; weak website/timezone assignments remain outside the default production threshold. See [`docs/geo-validation/README.md`](docs/geo-validation/README.md) and the frozen [`annotation policy`](docs/geo-validation/annotation-policy-v1.md).
+
 ## Being a good citizen
 
 - **Localhost by default, no authentication.** The console is a single-operator tool. It binds `127.0.0.1` and enforces a TrustedHost allowlist; do not expose it to a network without putting real auth in front and setting `GITCORPUS_ALLOWED_HOSTS` plus proxy headers.
@@ -567,7 +576,7 @@ Two pieces of test furniture deserve a sentence each. The `golden/` suite snapsh
 - **Multi-segment enrichment parallelism**: the executor supports segments, but the runner currently always uses one.
 - **Mid-run checkpointing**: none — resume re-fetches from the start (upserts make that safe, only slower).
 
-Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests/quarantine_manifest.txt) and enforced by tests, so unwired code cannot silently rot. Migrations `0010`–`0011` carry the run progress columns, `0012` adds `app_settings.discovery_concurrency`, and `0013` raises the batch-size cap to 50.
+Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests/quarantine_manifest.txt) and enforced by tests, so unwired code cannot silently rot. Migrations `0010`–`0011` carry the run progress columns, `0012` adds `app_settings.discovery_concurrency`, and `0013` raises the batch-size cap to 50; `0014`–`0018` add audit/adaptive/detection support, and `0019` versions geo resolution.
 
 **Known operational constraints**: migrations `0005`–`0007` take write-blocking locks; a run occupies the single executor for its whole duration; the default caps are small; the console has no auth (see above).
 
@@ -587,7 +596,7 @@ Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests
 - **Run bundle** — the frozen artifact of a search: filters, `ran_at`, counts, item rows, provenance, raw upstream evidence.
 - **Incomplete** — the honest flag on a run that hit a budget, a cap, or an unenforceable filter. Never silently hidden.
 - **Stopped (`cancelled`)** — a run you ended with the Stop button; it keeps its shards and stays resumable.
-- **Geo confidence tiers** — `exact-iso`, `name`, `gazetteer-city`, `geocoder`, `weak`; the ladder behind every owner-country answer.
+- **Geo confidence tiers** — `exact-iso`, `name`, `region`, `gazetteer-city`, `geocoder`, `weak`; the ladder behind every owner-country answer.
 
 ## Documentation map
 
@@ -607,6 +616,7 @@ Intentional dead surfaces are tracked in [`tests/quarantine_manifest.txt`](tests
 | [`docs/development-log.md`](docs/development-log.md) | What was built, when, with which rulings and verification numbers |
 | [`docs/environment.md`](docs/environment.md) | Windows/local environment: services, credentials, commands, troubleshooting, console manual pass |
 | [`docs/legal-gates.md`](docs/legal-gates.md) | Compliance checklist for crawling, storing, and serving |
+| [`docs/geo-validation/README.md`](docs/geo-validation/README.md) | Blinded owner-country annotation, adjudication, statistical evaluation, release gates, and audit artifacts |
 | [`docs/superpowers/`](docs/superpowers/) | Design specs, implementation plans, and execution reports for the hardening phases |
 
 ## License

@@ -182,6 +182,8 @@ PATH_PARAMS = {
     "/detections/new": {},
     "/detections/from/{run_id}": {"run_id": RUN_A},
     "/detections/{run_id}": {"run_id": 952},
+    "/analysis": {},
+    "/analysis/{run_id}": {"run_id": 952},
     "/partials/detections/{run_id}/estimate": {"run_id": RUN_A},
     "/partials/detections/{run_id}/status": {"run_id": 952},
 }

@@ -31,6 +31,7 @@ class Owner(Base):
     location_raw: Mapped[str | None] = mapped_column(Text)
     country_iso: Mapped[str | None] = mapped_column(CHAR(2))
     geo_confidence: Mapped[str | None] = mapped_column(Text)
+    geo_version: Mapped[str | None] = mapped_column(Text)
     company: Mapped[str | None] = mapped_column(Text)
     blog: Mapped[str | None] = mapped_column(Text)
     etag: Mapped[str | None] = mapped_column(Text)
@@ -126,6 +127,9 @@ class GeoCache(Base):
     country_iso: Mapped[str | None] = mapped_column(CHAR(2))
     confidence: Mapped[str] = mapped_column(Text, nullable=False)
     raw_sample: Mapped[str | None] = mapped_column(Text)
+    resolver_version: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'legacy'")
+    )
     hits: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")

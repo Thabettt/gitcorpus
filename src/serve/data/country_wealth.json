@@ -1,0 +1,1521 @@
+{
+  "AF": {
+    "name": "Afghanistan",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 416.87,
+    "gdp_year": 2024
+  },
+  "AL": {
+    "name": "Albania",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 11374.01,
+    "gdp_year": 2024
+  },
+  "DZ": {
+    "name": "Algeria",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5752.99,
+    "gdp_year": 2024
+  },
+  "AS": {
+    "name": "American Samoa",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "AD": {
+    "name": "Andorra",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 49357.44,
+    "gdp_year": 2024
+  },
+  "AO": {
+    "name": "Angola",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2720.82,
+    "gdp_year": 2024
+  },
+  "AG": {
+    "name": "Antigua and Barbuda",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 23059.83,
+    "gdp_year": 2024
+  },
+  "AR": {
+    "name": "Argentina",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13969.78,
+    "gdp_year": 2024
+  },
+  "AM": {
+    "name": "Armenia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 8556.21,
+    "gdp_year": 2024
+  },
+  "AW": {
+    "name": "Aruba",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 38590.57,
+    "gdp_year": 2024
+  },
+  "AU": {
+    "name": "Australia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 64609.99,
+    "gdp_year": 2024
+  },
+  "AT": {
+    "name": "Austria",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 58268.88,
+    "gdp_year": 2024
+  },
+  "AZ": {
+    "name": "Azerbaijan",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7294.64,
+    "gdp_year": 2024
+  },
+  "BS": {
+    "name": "Bahamas, The",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 39455.45,
+    "gdp_year": 2024
+  },
+  "BH": {
+    "name": "Bahrain",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 29717.14,
+    "gdp_year": 2024
+  },
+  "BD": {
+    "name": "Bangladesh",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2593.42,
+    "gdp_year": 2024
+  },
+  "BB": {
+    "name": "Barbados",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 26897.2,
+    "gdp_year": 2024
+  },
+  "BY": {
+    "name": "Belarus",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 8605.61,
+    "gdp_year": 2024
+  },
+  "BE": {
+    "name": "Belgium",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 56581.94,
+    "gdp_year": 2024
+  },
+  "BZ": {
+    "name": "Belize",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7681.24,
+    "gdp_year": 2024
+  },
+  "BJ": {
+    "name": "Benin",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1485.38,
+    "gdp_year": 2024
+  },
+  "BM": {
+    "name": "Bermuda",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 142250.43,
+    "gdp_year": 2024
+  },
+  "BT": {
+    "name": "Bhutan",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4228.05,
+    "gdp_year": 2024
+  },
+  "BO": {
+    "name": "Bolivia",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4421.17,
+    "gdp_year": 2024
+  },
+  "BA": {
+    "name": "Bosnia and Herzegovina",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 9397.91,
+    "gdp_year": 2024
+  },
+  "BW": {
+    "name": "Botswana",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7649.82,
+    "gdp_year": 2024
+  },
+  "BR": {
+    "name": "Brazil",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 10310.55,
+    "gdp_year": 2024
+  },
+  "VG": {
+    "name": "British Virgin Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "BN": {
+    "name": "Brunei Darussalam",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 33153.47,
+    "gdp_year": 2024
+  },
+  "BG": {
+    "name": "Bulgaria",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 17596.92,
+    "gdp_year": 2024
+  },
+  "BF": {
+    "name": "Burkina Faso",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 982.49,
+    "gdp_year": 2024
+  },
+  "BI": {
+    "name": "Burundi",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 216.23,
+    "gdp_year": 2024
+  },
+  "CV": {
+    "name": "Cabo Verde",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5170.21,
+    "gdp_year": 2024
+  },
+  "KH": {
+    "name": "Cambodia",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2627.88,
+    "gdp_year": 2024
+  },
+  "CM": {
+    "name": "Cameroon",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1830.01,
+    "gdp_year": 2024
+  },
+  "CA": {
+    "name": "Canada",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 55015.71,
+    "gdp_year": 2024
+  },
+  "KY": {
+    "name": "Cayman Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 104292.9,
+    "gdp_year": 2024
+  },
+  "CF": {
+    "name": "Central African Republic",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 516.16,
+    "gdp_year": 2024
+  },
+  "TD": {
+    "name": "Chad",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 980.67,
+    "gdp_year": 2024
+  },
+  "JG": {
+    "name": "Channel Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 74585.52,
+    "gdp_year": 2023
+  },
+  "CL": {
+    "name": "Chile",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 16658.97,
+    "gdp_year": 2024
+  },
+  "CN": {
+    "name": "China",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13293.12,
+    "gdp_year": 2024
+  },
+  "CO": {
+    "name": "Colombia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7951.09,
+    "gdp_year": 2024
+  },
+  "KM": {
+    "name": "Comoros",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1857.87,
+    "gdp_year": 2024
+  },
+  "CD": {
+    "name": "Congo, Dem. Rep.",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 692.89,
+    "gdp_year": 2024
+  },
+  "CG": {
+    "name": "Congo, Rep.",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2482.25,
+    "gdp_year": 2024
+  },
+  "CR": {
+    "name": "Costa Rica",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 18853.28,
+    "gdp_year": 2024
+  },
+  "CI": {
+    "name": "Cote d'Ivoire",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2727.89,
+    "gdp_year": 2024
+  },
+  "HR": {
+    "name": "Croatia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 24049.94,
+    "gdp_year": 2024
+  },
+  "CU": {
+    "name": "Cuba",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "CW": {
+    "name": "Curacao",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 22832.9,
+    "gdp_year": 2024
+  },
+  "CY": {
+    "name": "Cyprus",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 38674.31,
+    "gdp_year": 2024
+  },
+  "CZ": {
+    "name": "Czechia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 31827.76,
+    "gdp_year": 2024
+  },
+  "DK": {
+    "name": "Denmark",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 71026.48,
+    "gdp_year": 2024
+  },
+  "DJ": {
+    "name": "Djibouti",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3552.72,
+    "gdp_year": 2024
+  },
+  "DM": {
+    "name": "Dominica",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 10405.28,
+    "gdp_year": 2024
+  },
+  "DO": {
+    "name": "Dominican Republic",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 10875.66,
+    "gdp_year": 2024
+  },
+  "EC": {
+    "name": "Ecuador",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6826.53,
+    "gdp_year": 2024
+  },
+  "EG": {
+    "name": "Egypt, Arab Rep.",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3338.47,
+    "gdp_year": 2024
+  },
+  "SV": {
+    "name": "El Salvador",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5503.1,
+    "gdp_year": 2024
+  },
+  "GQ": {
+    "name": "Equatorial Guinea",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7003.58,
+    "gdp_year": 2024
+  },
+  "ER": {
+    "name": "Eritrea",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "EE": {
+    "name": "Estonia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 31428.35,
+    "gdp_year": 2024
+  },
+  "SZ": {
+    "name": "Eswatini",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3909.56,
+    "gdp_year": 2024
+  },
+  "ET": {
+    "name": "Ethiopia",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 1133.88,
+    "gdp_year": 2024
+  },
+  "FO": {
+    "name": "Faroe Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 74175.28,
+    "gdp_year": 2024
+  },
+  "FJ": {
+    "name": "Fiji",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6425.74,
+    "gdp_year": 2024
+  },
+  "FI": {
+    "name": "Finland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 53155.55,
+    "gdp_year": 2024
+  },
+  "FR": {
+    "name": "France",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 46103.08,
+    "gdp_year": 2024
+  },
+  "PF": {
+    "name": "French Polynesia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 22439.88,
+    "gdp_year": 2024
+  },
+  "GA": {
+    "name": "Gabon",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 8230.04,
+    "gdp_year": 2024
+  },
+  "GM": {
+    "name": "Gambia, The",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 871.34,
+    "gdp_year": 2024
+  },
+  "GE": {
+    "name": "Georgia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 8967.68,
+    "gdp_year": 2024
+  },
+  "DE": {
+    "name": "Germany",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 56103.73,
+    "gdp_year": 2024
+  },
+  "GH": {
+    "name": "Ghana",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2419.25,
+    "gdp_year": 2024
+  },
+  "GI": {
+    "name": "Gibraltar",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "GR": {
+    "name": "Greece",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 24626.15,
+    "gdp_year": 2024
+  },
+  "GL": {
+    "name": "Greenland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 58498.97,
+    "gdp_year": 2023
+  },
+  "GD": {
+    "name": "Grenada",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 11528.92,
+    "gdp_year": 2024
+  },
+  "GU": {
+    "name": "Guam",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "GT": {
+    "name": "Guatemala",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6150.89,
+    "gdp_year": 2024
+  },
+  "GN": {
+    "name": "Guinea",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1694.95,
+    "gdp_year": 2024
+  },
+  "GW": {
+    "name": "Guinea-Bissau",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 998.38,
+    "gdp_year": 2024
+  },
+  "GY": {
+    "name": "Guyana",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 29675.25,
+    "gdp_year": 2024
+  },
+  "HT": {
+    "name": "Haiti",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2060.36,
+    "gdp_year": 2024
+  },
+  "HN": {
+    "name": "Honduras",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3415.96,
+    "gdp_year": 2024
+  },
+  "HK": {
+    "name": "Hong Kong SAR, China",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 54274.75,
+    "gdp_year": 2024
+  },
+  "HU": {
+    "name": "Hungary",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 23305.45,
+    "gdp_year": 2024
+  },
+  "IS": {
+    "name": "Iceland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 85863.15,
+    "gdp_year": 2024
+  },
+  "IN": {
+    "name": "India",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2591.99,
+    "gdp_year": 2024
+  },
+  "ID": {
+    "name": "Indonesia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 4925.44,
+    "gdp_year": 2024
+  },
+  "IR": {
+    "name": "Iran, Islamic Rep.",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5190.17,
+    "gdp_year": 2024
+  },
+  "IQ": {
+    "name": "Iraq",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6073.61,
+    "gdp_year": 2024
+  },
+  "IE": {
+    "name": "Ireland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 112894.95,
+    "gdp_year": 2024
+  },
+  "IM": {
+    "name": "Isle of Man",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 90015.21,
+    "gdp_year": 2023
+  },
+  "IL": {
+    "name": "Israel",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 54216.52,
+    "gdp_year": 2024
+  },
+  "IT": {
+    "name": "Italy",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 40429.62,
+    "gdp_year": 2024
+  },
+  "JM": {
+    "name": "Jamaica",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7753.81,
+    "gdp_year": 2024
+  },
+  "JP": {
+    "name": "Japan",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 33797.1,
+    "gdp_year": 2024
+  },
+  "JO": {
+    "name": "Jordan",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5073.92,
+    "gdp_year": 2024
+  },
+  "KZ": {
+    "name": "Kazakhstan",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 14154.63,
+    "gdp_year": 2024
+  },
+  "KE": {
+    "name": "Kenya",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2133.46,
+    "gdp_year": 2024
+  },
+  "KI": {
+    "name": "Kiribati",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2550.98,
+    "gdp_year": 2024
+  },
+  "KP": {
+    "name": "Korea, Dem. People's Rep.",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "KR": {
+    "name": "Korea, Rep.",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 36238.64,
+    "gdp_year": 2024
+  },
+  "XK": {
+    "name": "Kosovo",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7026.7,
+    "gdp_year": 2024
+  },
+  "KW": {
+    "name": "Kuwait",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 32855.72,
+    "gdp_year": 2024
+  },
+  "KG": {
+    "name": "Kyrgyz Republic",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2514.81,
+    "gdp_year": 2024
+  },
+  "LA": {
+    "name": "Lao PDR",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2123.98,
+    "gdp_year": 2024
+  },
+  "LV": {
+    "name": "Latvia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 23578.97,
+    "gdp_year": 2024
+  },
+  "LB": {
+    "name": "Lebanon",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4473.27,
+    "gdp_year": 2024
+  },
+  "LS": {
+    "name": "Lesotho",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1023.04,
+    "gdp_year": 2024
+  },
+  "LR": {
+    "name": "Liberia",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 851.5,
+    "gdp_year": 2024
+  },
+  "LY": {
+    "name": "Libya",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6569.16,
+    "gdp_year": 2024
+  },
+  "LI": {
+    "name": "Liechtenstein",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 220167.23,
+    "gdp_year": 2024
+  },
+  "LT": {
+    "name": "Lithuania",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 29603.78,
+    "gdp_year": 2024
+  },
+  "LU": {
+    "name": "Luxembourg",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 137781.68,
+    "gdp_year": 2024
+  },
+  "MO": {
+    "name": "Macao SAR, China",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 72004.74,
+    "gdp_year": 2024
+  },
+  "MG": {
+    "name": "Madagascar",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 550.38,
+    "gdp_year": 2024
+  },
+  "MW": {
+    "name": "Malawi",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 522.37,
+    "gdp_year": 2024
+  },
+  "MY": {
+    "name": "Malaysia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 11874.43,
+    "gdp_year": 2024
+  },
+  "MV": {
+    "name": "Maldives",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13379.35,
+    "gdp_year": 2024
+  },
+  "ML": {
+    "name": "Mali",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 1093.25,
+    "gdp_year": 2024
+  },
+  "MT": {
+    "name": "Malta",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 44023.63,
+    "gdp_year": 2024
+  },
+  "MH": {
+    "name": "Marshall Islands",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7590.28,
+    "gdp_year": 2024
+  },
+  "MR": {
+    "name": "Mauritania",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2104.54,
+    "gdp_year": 2024
+  },
+  "MU": {
+    "name": "Mauritius",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 11990.94,
+    "gdp_year": 2024
+  },
+  "MX": {
+    "name": "Mexico",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13988.04,
+    "gdp_year": 2024
+  },
+  "FM": {
+    "name": "Micronesia, Fed. Sts.",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 4251.69,
+    "gdp_year": 2024
+  },
+  "MD": {
+    "name": "Moldova",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7578.9,
+    "gdp_year": 2024
+  },
+  "MC": {
+    "name": "Monaco",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 288001.57,
+    "gdp_year": 2024
+  },
+  "MN": {
+    "name": "Mongolia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6750.63,
+    "gdp_year": 2024
+  },
+  "ME": {
+    "name": "Montenegro",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13270.18,
+    "gdp_year": 2024
+  },
+  "MA": {
+    "name": "Morocco",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4153.19,
+    "gdp_year": 2024
+  },
+  "MZ": {
+    "name": "Mozambique",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 656.98,
+    "gdp_year": 2024
+  },
+  "MM": {
+    "name": "Myanmar",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1359.05,
+    "gdp_year": 2024
+  },
+  "NA": {
+    "name": "Namibia",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4501.85,
+    "gdp_year": 2024
+  },
+  "NR": {
+    "name": "Naoero",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 14048.16,
+    "gdp_year": 2024
+  },
+  "NP": {
+    "name": "Nepal",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1460.28,
+    "gdp_year": 2024
+  },
+  "NL": {
+    "name": "Netherlands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 67465.32,
+    "gdp_year": 2024
+  },
+  "NC": {
+    "name": "New Caledonia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 29213.19,
+    "gdp_year": 2024
+  },
+  "NZ": {
+    "name": "New Zealand",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 49432.36,
+    "gdp_year": 2024
+  },
+  "NI": {
+    "name": "Nicaragua",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2847.88,
+    "gdp_year": 2024
+  },
+  "NE": {
+    "name": "Niger",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 729.86,
+    "gdp_year": 2024
+  },
+  "NG": {
+    "name": "Nigeria",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1084.16,
+    "gdp_year": 2024
+  },
+  "MK": {
+    "name": "North Macedonia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 9291.86,
+    "gdp_year": 2024
+  },
+  "MP": {
+    "name": "Northern Mariana Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "NO": {
+    "name": "Norway",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 89888.95,
+    "gdp_year": 2024
+  },
+  "OM": {
+    "name": "Oman",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 20285.23,
+    "gdp_year": 2024
+  },
+  "PK": {
+    "name": "Pakistan",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1479.48,
+    "gdp_year": 2024
+  },
+  "PW": {
+    "name": "Palau",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 18169.08,
+    "gdp_year": 2024
+  },
+  "PA": {
+    "name": "Panama",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 19161.22,
+    "gdp_year": 2024
+  },
+  "PG": {
+    "name": "Papua New Guinea",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2912.49,
+    "gdp_year": 2024
+  },
+  "PY": {
+    "name": "Paraguay",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6456.61,
+    "gdp_year": 2024
+  },
+  "PE": {
+    "name": "Peru",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 8526.3,
+    "gdp_year": 2024
+  },
+  "PH": {
+    "name": "Philippines",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 3985.29,
+    "gdp_year": 2024
+  },
+  "PL": {
+    "name": "Poland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 25103.57,
+    "gdp_year": 2024
+  },
+  "PT": {
+    "name": "Portugal",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 29328.31,
+    "gdp_year": 2024
+  },
+  "PR": {
+    "name": "Puerto Rico (US)",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 39353.22,
+    "gdp_year": 2024
+  },
+  "QA": {
+    "name": "Qatar",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 75685.09,
+    "gdp_year": 2024
+  },
+  "RO": {
+    "name": "Romania",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 20080.21,
+    "gdp_year": 2024
+  },
+  "RU": {
+    "name": "Russian Federation",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 14961.9,
+    "gdp_year": 2024
+  },
+  "RW": {
+    "name": "Rwanda",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 1059.94,
+    "gdp_year": 2024
+  },
+  "WS": {
+    "name": "Samoa",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5392.88,
+    "gdp_year": 2024
+  },
+  "SM": {
+    "name": "San Marino",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 59871.33,
+    "gdp_year": 2023
+  },
+  "ST": {
+    "name": "Sao Tome and Principe",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3502.62,
+    "gdp_year": 2024
+  },
+  "SA": {
+    "name": "Saudi Arabia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 35527.79,
+    "gdp_year": 2024
+  },
+  "SN": {
+    "name": "Senegal",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1738.73,
+    "gdp_year": 2024
+  },
+  "RS": {
+    "name": "Serbia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 13677.78,
+    "gdp_year": 2024
+  },
+  "SC": {
+    "name": "Seychelles",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 18364.53,
+    "gdp_year": 2024
+  },
+  "SL": {
+    "name": "Sierra Leone",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 806.65,
+    "gdp_year": 2024
+  },
+  "SG": {
+    "name": "Singapore",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 94896.56,
+    "gdp_year": 2024
+  },
+  "SX": {
+    "name": "Sint Maarten (Dutch part)",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 41472.59,
+    "gdp_year": 2024
+  },
+  "SK": {
+    "name": "Slovak Republic",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 25992.67,
+    "gdp_year": 2024
+  },
+  "SI": {
+    "name": "Slovenia",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 34301.03,
+    "gdp_year": 2024
+  },
+  "SB": {
+    "name": "Solomon Islands",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1933.56,
+    "gdp_year": 2024
+  },
+  "SO": {
+    "name": "Somalia, Fed. Rep.",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 629.54,
+    "gdp_year": 2024
+  },
+  "ZA": {
+    "name": "South Africa",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6267.19,
+    "gdp_year": 2024
+  },
+  "SS": {
+    "name": "South Sudan",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "ES": {
+    "name": "Spain",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 35326.77,
+    "gdp_year": 2024
+  },
+  "LK": {
+    "name": "Sri Lanka",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 4545.36,
+    "gdp_year": 2024
+  },
+  "KN": {
+    "name": "St. Kitts and Nevis",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 23960.65,
+    "gdp_year": 2024
+  },
+  "LC": {
+    "name": "St. Lucia",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 14493.66,
+    "gdp_year": 2024
+  },
+  "MF": {
+    "name": "St. Martin (French part)",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "VC": {
+    "name": "St. Vincent and the Grenadines",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 11501.23,
+    "gdp_year": 2024
+  },
+  "SD": {
+    "name": "Sudan",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 984.61,
+    "gdp_year": 2024
+  },
+  "SR": {
+    "name": "Suriname",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6961.79,
+    "gdp_year": 2024
+  },
+  "SE": {
+    "name": "Sweden",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 57222.71,
+    "gdp_year": 2024
+  },
+  "CH": {
+    "name": "Switzerland",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 107702.07,
+    "gdp_year": 2024
+  },
+  "SY": {
+    "name": "Syrian Arab Republic",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "TJ": {
+    "name": "Tajikistan",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1362.03,
+    "gdp_year": 2024
+  },
+  "TZ": {
+    "name": "Tanzania",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1192.61,
+    "gdp_year": 2024
+  },
+  "TH": {
+    "name": "Thailand",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 7386.64,
+    "gdp_year": 2024
+  },
+  "TL": {
+    "name": "Timor-Leste",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1331.97,
+    "gdp_year": 2024
+  },
+  "TG": {
+    "name": "Togo",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1266.09,
+    "gdp_year": 2024
+  },
+  "TO": {
+    "name": "Tonga",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 6215.39,
+    "gdp_year": 2024
+  },
+  "TT": {
+    "name": "Trinidad and Tobago",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 18733.41,
+    "gdp_year": 2024
+  },
+  "TN": {
+    "name": "Tunisia",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4187.64,
+    "gdp_year": 2024
+  },
+  "TR": {
+    "name": "Turkiye",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 15892.72,
+    "gdp_year": 2024
+  },
+  "TM": {
+    "name": "Turkmenistan",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5904.26,
+    "gdp_year": 2024
+  },
+  "TC": {
+    "name": "Turks and Caicos Islands",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 37506.78,
+    "gdp_year": 2024
+  },
+  "TV": {
+    "name": "Tuvalu",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5883.5,
+    "gdp_year": 2024
+  },
+  "UG": {
+    "name": "Uganda",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": 1077.91,
+    "gdp_year": 2024
+  },
+  "UA": {
+    "name": "Ukraine",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 5391.62,
+    "gdp_year": 2024
+  },
+  "AE": {
+    "name": "United Arab Emirates",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 50273.51,
+    "gdp_year": 2024
+  },
+  "GB": {
+    "name": "United Kingdom",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 53341.31,
+    "gdp_year": 2024
+  },
+  "US": {
+    "name": "United States",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 86169.66,
+    "gdp_year": 2024
+  },
+  "UY": {
+    "name": "Uruguay",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": 24308.5,
+    "gdp_year": 2024
+  },
+  "UZ": {
+    "name": "Uzbekistan",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3337.45,
+    "gdp_year": 2024
+  },
+  "VU": {
+    "name": "Vanuatu",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3959.88,
+    "gdp_year": 2024
+  },
+  "VE": {
+    "name": "Venezuela, RB",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 4244.46,
+    "gdp_year": 2024
+  },
+  "VN": {
+    "name": "Viet Nam",
+    "income_group": "Upper middle income",
+    "income_id": "UMC",
+    "gdp_pc": 4716.66,
+    "gdp_year": 2024
+  },
+  "VI": {
+    "name": "Virgin Islands (U.S.)",
+    "income_group": "High income",
+    "income_id": "HIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "PS": {
+    "name": "West Bank and Gaza",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 3028.25,
+    "gdp_year": 2024
+  },
+  "YE": {
+    "name": "Yemen, Rep.",
+    "income_group": "Low income",
+    "income_id": "LIC",
+    "gdp_pc": null,
+    "gdp_year": null
+  },
+  "ZM": {
+    "name": "Zambia",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 1187.11,
+    "gdp_year": 2024
+  },
+  "ZW": {
+    "name": "Zimbabwe",
+    "income_group": "Lower middle income",
+    "income_id": "LMC",
+    "gdp_pc": 2496.16,
+    "gdp_year": 2024
+  }
+}

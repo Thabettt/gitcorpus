@@ -768,15 +768,70 @@ def test_run_filter_owner_country_filters_and_bounds_owner_fetches(clean: Engine
     assert not any(path_of(request).startswith("/users/") for request in requests)
     with clean.connect() as connection:
         stored = {
-            row["login"]: (row["country_iso"], row["geo_confidence"])
+            row["login"]: (
+                row["country_iso"],
+                row["geo_confidence"],
+                row["geo_version"],
+            )
             for row in connection.execute(
-                text("SELECT login, country_iso, geo_confidence FROM owners")
+                text("SELECT login, country_iso, geo_confidence, geo_version FROM owners")
             ).mappings()
         }
     assert stored == {
-        "alice": ("DE", "name"),
-        "bob": ("DE", "gazetteer-city"),
-        "carol": (None, None),
+        "alice": ("DE", "name", runner_module.GEO_RESOLVER_VERSION),
+        "bob": ("DE", "gazetteer-city", runner_module.GEO_RESOLVER_VERSION),
+        "carol": (None, None, None),
+    }
+
+
+def test_run_filter_can_use_profile_website_as_explicitly_weak_geo_signal(clean: Engine):
+    item = repo_item(1, login="alice")
+
+    def handler(request: httpx.Request):
+        if is_search_request(request):
+            if is_count(request):
+                return count_response(request, 1)
+            return page_response([item])
+        if path_of(request) == "/graphql":
+            if is_owner_query(request):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "n0": {
+                                "location": None,
+                                "websiteUrl": "https://example.de",
+                            }
+                        }
+                    },
+                )
+            return graphql_batch_response(request, {item["full_name"]: item})
+        if path_of(request).startswith("/repos/"):
+            return httpx.Response(200, json=item)
+        return httpx.Response(404)
+
+    client, _ = scripted(handler)
+    payload = run_filter(
+        make_deps(clean, client),
+        spec_for(
+            q="language:python",
+            virtual={"owner_country": "DE", "min_geo_confidence": "weak"},
+        ),
+        config=RunnerConfig(max_shards=1),
+    )
+    assert [(row.country_iso, row.geo_confidence) for row in payload.items] == [("DE", "weak")]
+    with clean.connect() as connection:
+        stored = (
+            connection.execute(
+                text("SELECT blog, country_iso, geo_confidence FROM owners WHERE login = 'alice'")
+            )
+            .mappings()
+            .one()
+        )
+    assert stored == {
+        "blog": "https://example.de",
+        "country_iso": "DE",
+        "geo_confidence": "weak",
     }
 
 
@@ -1079,7 +1134,7 @@ def test_run_filter_persists_confirmed_no_location_owners_as_unmatched(clean: En
         stored = (
             connection.execute(
                 text(
-                    "SELECT location_raw, country_iso, geo_confidence FROM owners "
+                    "SELECT location_raw, country_iso, geo_confidence, geo_version FROM owners "
                     "WHERE login = 'alice'"
                 )
             )
@@ -1089,6 +1144,7 @@ def test_run_filter_persists_confirmed_no_location_owners_as_unmatched(clean: En
     assert stored["location_raw"] is None
     assert stored["country_iso"] is None
     assert stored["geo_confidence"] == "unmatched"
+    assert stored["geo_version"] == runner_module.GEO_RESOLVER_VERSION
 
     def cached_handler(request: httpx.Request) -> httpx.Response:
         path = path_of(request)
@@ -1245,6 +1301,7 @@ def test_run_filter_uses_cost_plan_order_and_reports_field_stats(clean: Engine, 
     field_stats = dict(payload.field_stats)
     field_stats.pop("graphql")
     field_stats.pop("points")
+    assert field_stats.pop("geo_resolver_version") == runner_module.GEO_RESOLVER_VERSION
     assert field_stats == {
         "per_field_sources": {"owner_country": 1, "has_dockerfile": 1},
         "calls_spent": {"owner_country": 2, "has_dockerfile": 1},
@@ -1281,6 +1338,7 @@ def test_run_filter_field_stats_flow_into_the_bundle(clean: Engine, tmp_path):
     field_stats = dict(payload.field_stats)
     field_stats.pop("graphql")
     field_stats.pop("points")
+    assert field_stats.pop("geo_resolver_version") == runner_module.GEO_RESOLVER_VERSION
     assert field_stats == {
         "per_field_sources": {"min_stars": 1, "team_topic": 1},
         "calls_spent": {"min_stars": 0, "team_topic": 0},

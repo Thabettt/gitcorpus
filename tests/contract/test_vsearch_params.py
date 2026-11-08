@@ -100,6 +100,7 @@ def test_geo_confidence_order_is_strongest_to_weakest():
     assert GEO_CONFIDENCE_ORDER == (
         "exact-iso",
         "name",
+        "region",
         "gazetteer-city",
         "geocoder",
         "weak",
@@ -108,7 +109,8 @@ def test_geo_confidence_order_is_strongest_to_weakest():
 
 def test_geo_confidence_order_supports_threshold_comparisons():
     assert GEO_CONFIDENCE_ORDER.index("exact-iso") < GEO_CONFIDENCE_ORDER.index("name")
-    assert GEO_CONFIDENCE_ORDER.index("name") < GEO_CONFIDENCE_ORDER.index("gazetteer-city")
+    assert GEO_CONFIDENCE_ORDER.index("name") < GEO_CONFIDENCE_ORDER.index("region")
+    assert GEO_CONFIDENCE_ORDER.index("region") < GEO_CONFIDENCE_ORDER.index("gazetteer-city")
     assert GEO_CONFIDENCE_ORDER.index("gazetteer-city") < GEO_CONFIDENCE_ORDER.index("geocoder")
     assert GEO_CONFIDENCE_ORDER.index("geocoder") < GEO_CONFIDENCE_ORDER.index("weak")
 

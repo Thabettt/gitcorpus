@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import httpx
 
-from enrich.graphql_owner_location import OwnerLocationAdapter
+from enrich.graphql_owner_location import (
+    OwnerGeoProfile,
+    OwnerGeoProfileAdapter,
+    OwnerLocationAdapter,
+)
 from lib.graphql_batch import fetch_batch
 
 
@@ -72,3 +76,23 @@ def test_end_to_end_with_batch_core():
     adapter = OwnerLocationAdapter({"alice": "User"})
     outcome = fetch_batch(adapter, ["alice"], client=client)
     assert outcome.values == {"alice": "Lagos"}
+
+
+def test_geo_profile_adapter_fetches_location_and_website_without_another_request():
+    adapter = OwnerGeoProfileAdapter({"alice": "User", "acme": "Organization"})
+    query = adapter.build_query({"n0": "alice", "n1": "acme"})
+    assert 'n0: user(login: "alice") { location websiteUrl }' in query
+    assert 'n1: organization(login: "acme") { location websiteUrl }' in query
+    parsed = adapter.parse(
+        {
+            "data": {
+                "n0": {"location": "Berlin", "websiteUrl": "https://example.de"},
+                "n1": {"location": None, "websiteUrl": ""},
+            }
+        },
+        {"n0": "alice", "n1": "acme"},
+    )
+    assert parsed.values == {
+        "alice": OwnerGeoProfile("Berlin", "https://example.de"),
+        "acme": OwnerGeoProfile(None, None),
+    }

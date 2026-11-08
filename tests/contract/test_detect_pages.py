@@ -872,6 +872,8 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
         "channel",
         "detected_at",
         "evidence",
+        "country_iso",
+        "country",
     }
     assert first["repo_id"] == 1
     assert first["full_name"] == "octo/one"

@@ -10,6 +10,7 @@ from enrich.geo_resolver import KNOWN_ISO_CODES
 GEO_CONFIDENCE_ORDER: tuple[str, ...] = (
     "exact-iso",
     "name",
+    "region",
     "gazetteer-city",
     "geocoder",
     "weak",

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Analysis · gitcorpus{% endblock %}
+{% block body %}
+<section class="panel analysis-intro" id="analysis-header">
+  <div class="panel-head">
+    <div>
+      <h1>Analysis</h1>
+      <p class="muted">Pick a finished detection run, then choose what to measure. Everything is computed locally from stored detection evidence, repository metadata, and owner countries.</p>
+    </div>
+  </div>
+
+  {% if detections %}
+  <form id="analysis-picker" class="analysis-picker" method="get" action="/analysis">
+    <input type="hidden" name="metrics_present" value="1">
+    <div class="analysis-picker-row">
+      <label class="field" for="analysis-run">
+        <span class="field-label">Detection run</span>
+        <select class="field-input" id="analysis-run" name="run" required>
+          {% for item in detections %}
+          <option value="{{ item.id }}">#{{ item.number }} · search #{{ item.source_run_id }} · {{ item.status }} · {{ item.repos }} repos · {{ item.started }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <fieldset id="analysis-metrics" class="metric-picker">
+      <legend class="field-label">What to analyze</legend>
+      <div class="metric-grid">
+        {% for metric in metrics %}
+        <label class="metric-option" for="analysis-metric-{{ metric.key }}">
+          <input type="checkbox" id="analysis-metric-{{ metric.key }}" name="metric" value="{{ metric.key }}"{{ ' checked' if metric.key in selected }}>
+          <span class="metric-option-copy">
+            <span class="metric-option-title">{{ metric.label }}</span>
+            <span class="metric-option-desc">{{ metric.description }}</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <div class="analysis-picker-actions">
+      <button class="button primary" type="submit" id="analysis-open">Open analysis</button>
+      <span class="muted">Nothing selected opens the report with no sections; you can change the selection inside the report.</span>
+    </div>
+  </form>
+  {% endif %}
+
+  {% if detections %}
+  <div class="analysis-recent">
+    <div class="panel-head">
+      <h2>Finished detections</h2>
+      <p class="muted">{{ detections|length }} run{{ '' if detections|length == 1 else 's' }}</p>
+    </div>
+    <div class="table-scroll sticky-head analysis-detect-list">
+      <table id="analysis-detections" class="data-table">
+        <thead>
+          <tr><th scope="col">Detection</th><th scope="col">From search</th><th scope="col">Status</th><th scope="col" class="num">Repos</th><th scope="col">Started</th><th scope="col">Duration</th></tr>
+        </thead>
+        <tbody>
+        {% for item in detections %}
+          <tr id="analysis-detection-{{ item.id }}">
+            <td><a href="/analysis/{{ item.id }}">#{{ item.number }}</a></td>
+            <td><a href="/runs/{{ item.source_run_id }}">#{{ item.source_run_id }}</a></td>
+            <td><span class="pill {{ item.status }}">{{ status_label(item.status) }}</span></td>
+            <td class="num">{{ item.repos }}</td>
+            <td>{{ item.started }}</td>
+            <td>{{ item.duration }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not detections %}
+  <div id="analysis-empty" class="empty-state">
+    <p>No finished detections yet</p>
+    <p class="muted">Analysis reads a finished detection run (done or partial). Run a detection first, then come back.</p>
+    <p class="empty-actions">
+      <a class="button primary" href="/detections/new">New detection</a>
+      <a class="button ghost" href="/detections">Browse detections</a>
+    </p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

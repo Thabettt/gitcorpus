@@ -1,0 +1,30 @@
+{"challenge_id":"country-name","raw_location":"Berlin, Germany","website_tld":null,"expected_country":"DE","expected_confidence":"name","rationale":"Explicit city and country agree."}
+{"challenge_id":"us-state-code","raw_location":"Atlanta, GA","website_tld":null,"expected_country":"US","expected_confidence":"region","rationale":"City disambiguates GA from Gabon."}
+{"challenge_id":"country-vs-state-code","raw_location":"Toronto, CA","website_tld":null,"expected_country":"CA","expected_confidence":"exact-iso","rationale":"Toronto supports Canada rather than California."}
+{"challenge_id":"brazil-state-code","raw_location":"Belo Horizonte - MG","website_tld":null,"expected_country":"BR","expected_confidence":"region","rationale":"MG is Minas Gerais in consistent Brazilian context."}
+{"challenge_id":"indonesia-vs-idaho","raw_location":"Yogyakarta, ID","website_tld":null,"expected_country":"ID","expected_confidence":"exact-iso","rationale":"City supports Indonesia."}
+{"challenge_id":"georgia-country-context","raw_location":"Tbilisi, Georgia","website_tld":null,"expected_country":"GE","expected_confidence":"gazetteer-city","rationale":"Tbilisi disambiguates country from US state."}
+{"challenge_id":"bare-san-jose","raw_location":"San José","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Costa Rica and United States are both plausible."}
+{"challenge_id":"bare-georgia","raw_location":"Georgia","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Country and US state are both plausible."}
+{"challenge_id":"multi-country-cities","raw_location":"Berlin / NYC","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Conflicting countries must not select the first city."}
+{"challenge_id":"island-not-iceland","raw_location":"Vancouver Island","website_tld":null,"expected_country":"CA","expected_confidence":"gazetteer-city","rationale":"The ordinary word island is not Iceland evidence."}
+{"challenge_id":"ordinary-word-city","raw_location":"preferably somewhere nice","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Nice is adjectival here, not reliable French city evidence."}
+{"challenge_id":"email-not-region","raw_location":"john@example.pa","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Email suffix is not Pennsylvania or Panama location evidence."}
+{"challenge_id":"arabic-oman-diacritic","raw_location":"عُمان","website_tld":null,"expected_country":"OM","expected_confidence":"name","rationale":"Arabic diacritic distinguishes Oman."}
+{"challenge_id":"arabic-amman-diacritic","raw_location":"عمّان","website_tld":null,"expected_country":"JO","expected_confidence":"gazetteer-city","rationale":"Arabic diacritic distinguishes Amman."}
+{"challenge_id":"arabic-undiacritized-ambiguous","raw_location":"عمان","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Without diacritics Oman and Amman are ambiguous."}
+{"challenge_id":"native-country-name","raw_location":"中国","website_tld":null,"expected_country":"CN","expected_confidence":"name","rationale":"Native-script country name."}
+{"challenge_id":"native-city-name","raw_location":"Москва","website_tld":null,"expected_country":"RU","expected_confidence":"gazetteer-city","rationale":"Native-script city name."}
+{"challenge_id":"invalid-eu-flag-fallthrough","raw_location":"🇪🇺 Berlin","website_tld":null,"expected_country":"DE","expected_confidence":"gazetteer-city","rationale":"EU is not ISO country evidence; Berlin remains valid."}
+{"challenge_id":"conflicting-flags","raw_location":"🇩🇪 Berlin / 🇫🇷 Paris","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Conflicting flags and cities must abstain."}
+{"challenge_id":"remote-explicit-country","raw_location":"Remote (US)","website_tld":null,"expected_country":"US","expected_confidence":"exact-iso","rationale":"Explicit parenthetical country survives non-location text."}
+{"challenge_id":"weak-geographic-tld","raw_location":"Atlantis","website_tld":"de","expected_country":"DE","expected_confidence":"weak","rationale":"A geographic ccTLD is an explicitly weak fallback."}
+{"challenge_id":"genericized-tld","raw_location":"Atlantis","website_tld":"io","expected_country":null,"expected_confidence":"unmatched","rationale":"Genericized ccTLD must not imply territory location."}
+{"challenge_id":"disputed-city-bare","raw_location":"Jerusalem","website_tld":null,"expected_country":null,"expected_confidence":"unmatched","rationale":"Bare disputed city remains ambiguous."}
+{"challenge_id":"disputed-city-explicit-country","raw_location":"Jerusalem, Israel","website_tld":null,"expected_country":"IL","expected_confidence":"name","rationale":"Explicit ISO country context resolves the city."}
+{"challenge_id":"india-state-context","raw_location":"Durg, Chhattisgarh, IN","website_tld":null,"expected_country":"IN","expected_confidence":"exact-iso","rationale":"State and ISO code agree on India."}
+{"challenge_id":"china-province-code","raw_location":"Chengdu SC","website_tld":null,"expected_country":"CN","expected_confidence":"region","rationale":"Sichuan abbreviation is supported by Chengdu."}
+{"challenge_id":"germany-state-code","raw_location":"Landshut, BY, Germany","website_tld":null,"expected_country":"DE","expected_confidence":"name","rationale":"Bavaria code and explicit country agree."}
+{"challenge_id":"korea-island","raw_location":"Jeju Island","website_tld":null,"expected_country":"KR","expected_confidence":"gazetteer-city","rationale":"Known Korean place must not become Iceland."}
+{"challenge_id":"ireland-mapping","raw_location":"Republic of Ireland","website_tld":null,"expected_country":"IE","expected_confidence":"name","rationale":"Republic of Ireland is not the United Kingdom."}
+{"challenge_id":"reversed-virgin-islands","raw_location":"Virgin Islands, British","website_tld":null,"expected_country":"VG","expected_confidence":"name","rationale":"Reversed official phrase still identifies British Virgin Islands."}

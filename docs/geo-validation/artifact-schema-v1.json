@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitcorpus.local/schema/geo-validation-v1.json",
+  "title": "gitcorpus owner-geolocation validation artifacts",
+  "$defs": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "iso2": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "status": {
+      "enum": [
+        "country",
+        "multi-country",
+        "ambiguous",
+        "non-location",
+        "insufficient"
+      ]
+    },
+    "certainty": {
+      "enum": [
+        "certain",
+        "probable",
+        "uncertain"
+      ]
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "case_id",
+        "annotator_id",
+        "label_status",
+        "country_isos",
+        "certainty",
+        "policy_tags",
+        "rationale"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "case_id": {
+          "$ref": "#/$defs/case_id"
+        },
+        "annotator_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label_status": {
+          "$ref": "#/$defs/status"
+        },
+        "country_isos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/iso2"
+          }
+        },
+        "certainty": {
+          "$ref": "#/$defs/certainty"
+        },
+        "policy_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "case_id",
+        "label_status",
+        "country_isos",
+        "certainty",
+        "policy_tags",
+        "rationale",
+        "gold_source"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "case_id": {
+          "$ref": "#/$defs/case_id"
+        },
+        "label_status": {
+          "$ref": "#/$defs/status"
+        },
+        "country_isos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/iso2"
+          }
+        },
+        "certainty": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "gold_source": {
+          "enum": [
+            "agreement",
+            "adjudication"
+          ]
+        }
+      }
+    }
+  }
+}

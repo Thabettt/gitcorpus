@@ -30,6 +30,7 @@ from enrich.cloner import (
     free_disk_mb,
 )
 from lib.deadlines import clone_timeout_seconds
+from serve.countries import country_name
 from serve.executor import _CSV_HEADER, EVIDENCE_CSV_HEADER, _csv_cell, evidence_csv_row
 from store.models import Owner, Repo, RunItem, Runs
 
@@ -51,6 +52,7 @@ DETECT_REPO_CSV_HEADER = [
     "license_spdx",
     "country_iso",
     "geo_confidence",
+    "country",
     "has_signal",
     "unavailable",
     "failure_class",
@@ -180,6 +182,7 @@ def _snapshot(row: Mapping[str, object], *, include_detection: bool = False) -> 
         "license_spdx": row["license_spdx"],
         "country_iso": row["country_iso"],
         "geo_confidence": row["geo_confidence"],
+        "country": country_name(row["country_iso"]),
         "virtuals": dict(row["virtuals"] or {}),
     }
     if include_detection:
@@ -242,15 +245,19 @@ def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
                 _csv_cell(row["license_spdx"]),
                 _csv_cell(row["country_iso"]),
                 _csv_cell(row["geo_confidence"]),
+                _csv_cell(country_name(row["country_iso"])),
             ]
         )
         yield buffer.getvalue().encode("utf-8")
 
 
 _EVIDENCE_STREAM_SQL = text(
-    "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.detected_at"
+    "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.detected_at,"
+    " COALESCE(i.country_iso, o.country_iso)"
     " FROM detection_evidence e"
     " LEFT JOIN run_items i ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
+    " LEFT JOIN repos r ON r.id = e.repo_id"
+    " LEFT JOIN owners o ON o.id = r.owner_id"
     " WHERE e.run_id = :run"
     " ORDER BY e.repo_id, e.agent, e.channel, e.id"
 )
@@ -342,6 +349,7 @@ def _detections_chunks(
                             "channel": row[3],
                             "evidence": row[4],
                             "detected_at": row[5],
+                            "country_iso": row[6],
                         }
                     )
                 )
@@ -356,6 +364,8 @@ def _detection_json_object(row, repo_id: object) -> dict:
         "channel": row[3],
         "detected_at": _iso(row[5]),
         "evidence": row[4],
+        "country_iso": row[6],
+        "country": country_name(row[6]),
     }
 
 
@@ -398,6 +408,7 @@ def _detect_repo_cells(row, resolved_ids: Mapping[str, int]) -> list[str]:
         _csv_cell(row[6]),
         _csv_cell(row[7]),
         _csv_cell(row[8]),
+        _csv_cell(country_name(row[7])),
         _csv_cell(bool(agents)),
         _csv_cell(bool(document.get("unavailable", False))),
         _csv_cell(document.get("failure_class")),

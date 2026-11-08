@@ -37,6 +37,7 @@ CSV_HEADER = [
     "license_spdx",
     "country_iso",
     "geo_confidence",
+    "country",
 ]
 
 RUN_STATUS_KEYS = {
@@ -124,6 +125,7 @@ def _expected_snapshot() -> dict[str, object]:
         "license_spdx": "MIT",
         "country_iso": "DE",
         "geo_confidence": "name",
+        "country": "Germany",
         "virtuals": {"has_dockerfile": True},
         "detection": None,
     }
@@ -286,6 +288,7 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "license_spdx": None,
             "country_iso": None,
             "geo_confidence": None,
+            "country": None,
             "virtuals": {},
             "detection": None,
         },
@@ -306,9 +309,10 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "MIT",
             "DE",
             "name",
+            "Germany",
         ],
-        ["2", "octo/world", "", "", "", "", "", "", ""],
-        ["3", "octo/extra", "", "", "", "", "", "", ""],
+        ["2", "octo/world", "", "", "", "", "", "", "", ""],
+        ["3", "octo/extra", "", "", "", "", "", "", "", ""],
     ]
 
 

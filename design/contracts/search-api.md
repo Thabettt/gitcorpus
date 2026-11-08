@@ -24,7 +24,7 @@ GET /vsearch/repos?q={query}&sort={sort}&order={order}&per_page={n}&page={n}
 | `team_topic` | topic slug, optional | Virtual → appends `topic:{value}` upstream + post-filter |
 | `has_dockerfile` | bool, optional | Virtual → post-filter via stored trees/metafiles (`true` = Dockerfile present at default branch) |
 | `owner_country` | ISO-3166-1 alpha-2, optional | Virtual → post-filter on stored `owners.country_iso`; implies `min_geo_confidence` default (gazetteer and above) |
-| `min_geo_confidence` | enum: `exact-iso` \| `name` \| `gazetteer-city` \| `geocoder` \| `weak`, optional (default `gazetteer-city`) | Confidence floor for `owner_country` |
+| `min_geo_confidence` | enum: `exact-iso` \| `name` \| `region` \| `gazetteer-city` \| `geocoder` \| `weak`, optional (default `gazetteer-city`) | Confidence floor for `owner_country` |
 | `min_commits` / `max_commits` | int ≥ 0, optional | Virtual → post-filter on hydrated default-branch commit count |
 | `min_language_bytes` / `max_language_bytes` | int ≥ 0, optional | Virtual → post-filter on the primary language's byte size captured during hydration (GraphQL `languages(first: 10)`; no extra call per repo) |
 | `min_loc` / `max_loc` | int ≥ 0, optional | **Accepted and recorded, not yet enforced** — using them flags the run incomplete (R44). A no-clone estimate tier is designed in `../loc-dilemma.md`; until it ships, the UI renders these fields disabled |

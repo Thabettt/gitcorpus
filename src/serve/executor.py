@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from lib import cancellation, progress
 from lib.batching import chunked
 from lib.cancellation import RunCancelled
+from serve.countries import country_name
 from store.models import RunItem, Runs
 
 
@@ -68,6 +69,7 @@ _CSV_HEADER = [
     "license_spdx",
     "country_iso",
     "geo_confidence",
+    "country",
 ]
 
 
@@ -101,6 +103,7 @@ def _snapshot_item(item: RunPayloadItem) -> dict:
         "license_spdx": item.license_spdx,
         "country_iso": item.country_iso,
         "geo_confidence": item.geo_confidence,
+        "country": country_name(item.country_iso),
         "virtuals": item.virtuals,
         "detection": item.detection,
     }
@@ -227,6 +230,7 @@ def _write_corpus(path: Path, items: list[RunPayloadItem]) -> None:
                     _csv_cell(item.license_spdx),
                     _csv_cell(item.country_iso),
                     _csv_cell(item.geo_confidence),
+                    _csv_cell(country_name(item.country_iso)),
                 ]
             )
 
@@ -254,6 +258,8 @@ EVIDENCE_CSV_HEADER = [
     "identity_field",
     "snippet",
     "propagated",
+    "country_iso",
+    "country",
     "evidence_json",
 ]
 
@@ -289,11 +295,14 @@ def _evidence_moment(value: object) -> str:
 def evidence_csv_row(row: Mapping[str, object]) -> list[str]:
     raw = row.get("evidence")
     evidence: Mapping[str, object] = raw if isinstance(raw, Mapping) else {}
+    country_iso = row.get("country_iso")
     flat: dict[str, object] = {
         "repo_id": row.get("repo_id"),
         "full_name": row.get("full_name"),
         "agent": row.get("agent"),
         "channel": row.get("channel"),
+        "country_iso": country_iso,
+        "country": country_name(country_iso if isinstance(country_iso, str) else None),
     }
     for key, name in _FLAT_EVIDENCE_KEYS:
         if key in evidence:

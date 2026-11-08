@@ -17,9 +17,14 @@ from sqlalchemy.engine import Engine
 from discover import pipeline
 from discover.pipeline import Deps
 from enrich.cost_planner import plan_enrichment
-from enrich.geo_resolver import GeoCache, _cache_key, resolve_many
+from enrich.geo_resolver import (
+    GEO_RESOLVER_VERSION,
+    GeoCache,
+    _owner_cache_key,
+    resolve_many,
+)
 from enrich.graphql_file_presence import FilePresenceAdapter
-from enrich.graphql_owner_location import OwnerLocationAdapter
+from enrich.graphql_owner_location import OwnerGeoProfile, OwnerGeoProfileAdapter
 from enrich.segment_executor import execute_segments
 from enrich.trees_first import fetch_tree
 from hydrate.tail import RefreshStats, refresh_repos_batched
@@ -316,17 +321,19 @@ def _load_owners(engine: Engine, owner_ids: list[int]) -> dict[int, dict]:
                     Owner.location_raw,
                     Owner.country_iso,
                     Owner.geo_confidence,
+                    Owner.geo_version,
+                    Owner.blog,
                 ).where(Owner.id.in_(batch))
             ).mappings()
             result.update({row["id"]: dict(row) for row in rows})
     return result
 
 
-def _fetch_owner_location(
+def _fetch_owner_profile(
     deps: Deps,
     login: str,
     hook: Callable[[httpx.Response, float], None],
-) -> tuple[bool, str | None]:
+) -> tuple[bool, OwnerGeoProfile | None]:
     try:
         response = request_with_retry(
             deps.client,
@@ -345,11 +352,23 @@ def _fetch_owner_location(
     except ValueError:
         return False, None
     if not isinstance(payload, dict):
-        return True, None
+        return True, OwnerGeoProfile(None, None)
     location = payload.get("location")
-    if isinstance(location, str) and location.strip():
-        return True, location
-    return True, None
+    blog = payload.get("blog")
+    return True, OwnerGeoProfile(
+        location if isinstance(location, str) and location.strip() else None,
+        blog if isinstance(blog, str) and blog.strip() else None,
+    )
+
+
+def _fetch_owner_location(
+    deps: Deps,
+    login: str,
+    hook: Callable[[httpx.Response, float], None],
+) -> tuple[bool, str | None]:
+    """Compatibility wrapper for callers that only need the location."""
+    ok, profile = _fetch_owner_profile(deps, login, hook)
+    return ok, profile.location if profile is not None else None
 
 
 def _fetch_language_bytes(
@@ -401,7 +420,9 @@ def _apply_geo(
         owner = owners.get(owner_id)
         if owner is None:
             continue
-        if owner["country_iso"] is not None or owner["geo_confidence"] == "unmatched":
+        if owner["geo_version"] == GEO_RESOLVER_VERSION and (
+            owner["country_iso"] is not None or owner["geo_confidence"] == "unmatched"
+        ):
             continue
         pending_owners.append((owner_id, owner["login"]))
         if owner["location_raw"] is None:
@@ -414,18 +435,20 @@ def _apply_geo(
     answered: set[int] = set()
 
     def fallback(login: str) -> object | None:
-        ok, location = _fetch_owner_location(deps, login, hook)
-        if not ok or location is None:
+        ok, profile = _fetch_owner_profile(deps, login, hook)
+        if not ok or profile is None or profile.location is None:
             with used_lock:
                 used["n"] += 1
         if not ok:
             return None
         answered.add(rows_by_login[login])
-        owners[rows_by_login[login]]["location_raw"] = location
-        return location
+        if profile is not None:
+            owners[rows_by_login[login]]["location_raw"] = profile.location
+            owners[rows_by_login[login]]["blog"] = profile.blog
+        return profile
 
     outcome = fetch_batch(
-        OwnerLocationAdapter(owner_types, batch_size=cfg.graphql_batch_size),
+        OwnerGeoProfileAdapter(owner_types, batch_size=cfg.graphql_batch_size),
         list(rows_by_login),
         client=deps.client,
         limiter=deps.limiter,
@@ -443,38 +466,54 @@ def _apply_geo(
             continue
         used["n"] += 1
         answered.add(owner_id)
-        owners[owner_id]["location_raw"] = outcome.values[login]
+        profile = outcome.values[login]
+        if not isinstance(profile, OwnerGeoProfile):
+            continue
+        owners[owner_id]["location_raw"] = profile.location
+        owners[owner_id]["blog"] = profile.blog
     used_count = used["n"]
     pending = [
-        (owner_id, owners[owner_id]["location_raw"])
+        (owner_id, owners[owner_id]["location_raw"], owners[owner_id]["blog"])
         for owner_id, _login in pending_owners
-        if owners[owner_id]["location_raw"] is not None or owner_id in answered
+        if owners[owner_id]["location_raw"] is not None
+        or owners[owner_id]["blog"] is not None
+        or owner_id in answered
     ]
-    resolved = resolve_many(deps.engine, [raw for _, raw in pending], cache=cache)
+    resolved = resolve_many(
+        deps.engine,
+        [raw for _, raw, _blog in pending],
+        blogs=[blog for _, _raw, blog in pending],
+        cache=cache,
+    )
     updates: list[dict] = []
-    for owner_id, raw in pending:
-        result = resolved.get(_cache_key(raw))
+    for owner_id, raw, blog in pending:
+        result = resolved.get(_owner_cache_key(raw, blog, None))
         confidence = result.confidence if result is not None else "unmatched"
         country_iso = result.country_iso if result is not None else None
         updates.append(
             {
                 "owner_id": owner_id,
                 "location_raw": raw,
+                "blog": blog,
                 "country_iso": country_iso,
                 "geo_confidence": confidence,
+                "geo_version": GEO_RESOLVER_VERSION,
             }
         )
         owner = owners[owner_id]
         owner["country_iso"] = country_iso
         owner["geo_confidence"] = confidence
+        owner["geo_version"] = GEO_RESOLVER_VERSION
     if updates:
         statement = (
             update(Owner)
             .where(Owner.id == bindparam("owner_id"))
             .values(
                 location_raw=bindparam("location_raw"),
+                blog=bindparam("blog"),
                 country_iso=bindparam("country_iso"),
                 geo_confidence=bindparam("geo_confidence"),
+                geo_version=bindparam("geo_version"),
             )
         )
         with deps.engine.begin() as connection:
@@ -1003,6 +1042,7 @@ def _run_filter(
     items = [_payload_item(row, virtual) for row in rows]
     timings["sort_payload"] = time.perf_counter() - started
     field_stats = asdict(segment_stats)
+    field_stats["geo_resolver_version"] = GEO_RESOLVER_VERSION
     field_stats["points"] = ledger.as_dict()
     field_stats["graphql"] = graphql_report
     return RunPayload(

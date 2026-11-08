@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "name": "owner-geolocation-release-gates-v1",
+  "accepted_confidences": [
+    "exact-iso",
+    "name",
+    "region",
+    "gazetteer-city"
+  ],
+  "gates": [
+    {
+      "name": "untouched holdout only",
+      "path": "evaluation.evaluation_split",
+      "field": "value",
+      "operator": "==",
+      "threshold": "holdout"
+    },
+    {
+      "name": "minimum gold sample",
+      "path": "evaluation.cases",
+      "field": "value",
+      "operator": ">=",
+      "threshold": 2000
+    },
+    {
+      "name": "challenge corpus size",
+      "path": "evaluation.challenge.cases",
+      "field": "value",
+      "operator": ">=",
+      "threshold": 30
+    },
+    {
+      "name": "challenge corpus conformance",
+      "path": "evaluation.challenge.pass_rate",
+      "field": "value",
+      "operator": "==",
+      "threshold": 1.0
+    },
+    {
+      "name": "independent exact agreement",
+      "path": "agreement.exact_agreement_rate",
+      "field": "value",
+      "operator": ">=",
+      "threshold": 0.85
+    },
+    {
+      "name": "independent Cohen kappa",
+      "path": "agreement.cohen_kappa",
+      "field": "value",
+      "operator": ">=",
+      "threshold": 0.8
+    },
+    {
+      "name": "unique-evidence production precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.production_threshold.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.98
+    },
+    {
+      "name": "owner-weighted production precision lower bound",
+      "path": "evaluation.metrics.owner_weighted.production_threshold.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.98
+    },
+    {
+      "name": "unique-evidence wrong-assignment upper bound",
+      "path": "evaluation.metrics.unique_evidence.production_threshold.wrong_assignment_rate",
+      "field": "ci95_upper",
+      "operator": "<=",
+      "threshold": 0.02
+    },
+    {
+      "name": "owner-weighted wrong-assignment upper bound",
+      "path": "evaluation.metrics.owner_weighted.production_threshold.wrong_assignment_rate",
+      "field": "ci95_upper",
+      "operator": "<=",
+      "threshold": 0.02
+    },
+    {
+      "name": "exact ISO tier sample",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.exact-iso.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 100
+    },
+    {
+      "name": "name tier sample",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.name.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 250
+    },
+    {
+      "name": "region tier sample",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.region.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 150
+    },
+    {
+      "name": "city tier sample",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.gazetteer-city.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 250
+    },
+    {
+      "name": "exact ISO precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.exact-iso.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.96
+    },
+    {
+      "name": "country name precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.name.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.98
+    },
+    {
+      "name": "region precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.region.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.97
+    },
+    {
+      "name": "city precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.by_confidence.gazetteer-city.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.97
+    },
+    {
+      "name": "non-Latin assigned sample",
+      "path": "evaluation.metrics.unique_evidence.non_latin_production.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 20
+    },
+    {
+      "name": "non-Latin precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.non_latin_production.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.84
+    },
+    {
+      "name": "organization assigned sample",
+      "path": "evaluation.metrics.unique_evidence.by_owner_type_production.Organization.precision",
+      "field": "denominator_cases",
+      "operator": ">=",
+      "threshold": 100
+    },
+    {
+      "name": "organization precision lower bound",
+      "path": "evaluation.metrics.unique_evidence.by_owner_type_production.Organization.precision",
+      "field": "ci95_lower",
+      "operator": ">=",
+      "threshold": 0.95
+    }
+  ]
+}

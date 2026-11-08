@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from enrich.geo_resolver import (
+    GEO_RESOLVER_VERSION,
     KNOWN_ISO_CODES,
     GeoCache,
     GeoResult,
@@ -36,6 +37,39 @@ def test_known_iso_codes_exports_all_official_alpha2_codes():
     assert "XX" not in KNOWN_ISO_CODES
 
 
+def test_every_official_flag_decodes_to_its_country():
+    for code in KNOWN_ISO_CODES:
+        flag = "".join(chr(ord(letter) - 0x41 + 0x1F1E6) for letter in code)
+        assert resolve_location(flag).country_iso == code
+
+
+def test_every_unambiguous_country_alias_round_trips():
+    from enrich import geo_resolver
+
+    for alias, code in geo_resolver._COUNTRY_ALIASES.items():
+        if alias in geo_resolver._AMBIGUOUS_ALIAS_COUNTRIES:
+            continue
+        result = resolve_location(alias)
+        assert result.country_iso == code, (alias, code, result)
+        assert result.confidence == ("exact-iso" if alias == "us" else "name")
+
+
+def test_all_static_geo_tables_only_contain_official_country_codes():
+    from enrich import geo_resolver
+
+    table_codes = set(geo_resolver._COUNTRY_ALIASES.values())
+    table_codes.update(
+        code for countries in geo_resolver._CITY_COUNTRIES.values() for code in countries
+    )
+    table_codes.update(
+        code for countries in geo_resolver._REGION_CODES.values() for code in countries
+    )
+    table_codes.update(
+        code for countries in geo_resolver._REGION_NAMES.values() for code in countries
+    )
+    assert table_codes <= KNOWN_ISO_CODES
+
+
 def test_flag_emoji_decodes_to_exact_iso():
     raw = "🇩🇪 Berlin"
     assert resolve_location(raw) == GeoResult("DE", "exact-iso", raw)
@@ -50,10 +84,21 @@ def test_flag_appended_to_candidate_decodes():
     assert resolve_location(raw) == GeoResult("DE", "exact-iso", raw)
 
 
-def test_multiple_flags_first_flag_wins():
-    first = resolve_location("🇩🇪 Berlin / 🇫🇷 Paris")
-    assert first == GeoResult("DE", "exact-iso", "🇩🇪 Berlin / 🇫🇷 Paris")
-    assert resolve_location("🇫🇷 Paris / 🇩🇪 Berlin").country_iso == "FR"
+def test_multiple_conflicting_flags_are_unmatched():
+    assert resolve_location("🇩🇪 Berlin / 🇫🇷 Paris") == GeoResult(
+        None, "unmatched", "🇩🇪 Berlin / 🇫🇷 Paris"
+    )
+    assert resolve_location("🇫🇷 Paris / 🇩🇪 Berlin").country_iso is None
+
+
+def test_invalid_supranational_flag_falls_through_to_text():
+    assert resolve_location("🇪🇺 Berlin") == GeoResult("DE", "gazetteer-city", "🇪🇺 Berlin")
+    assert resolve_location("🇪🇺 Europe") == GeoResult(None, "unmatched", "🇪🇺 Europe")
+
+
+def test_subdivision_tag_flag_maps_to_parent_country():
+    raw = "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"
+    assert resolve_location(raw) == GeoResult("GB", "exact-iso", raw)
 
 
 def test_gazetteer_city_resolves():
@@ -69,15 +114,118 @@ def test_remote_emoji_is_unmatched():
     assert resolve_location("🌍 remote") == GeoResult(None, "unmatched", "🌍 remote")
 
 
-def test_multi_candidate_returns_first_confident_hit():
-    assert resolve_location("Berlin / NYC").country_iso == "DE"
-    assert resolve_location("NYC / Berlin").country_iso == "DE"
+def test_multi_candidate_requires_country_consistency():
+    assert resolve_location("Berlin / NYC").country_iso is None
+    assert resolve_location("NYC / Berlin").country_iso is None
     assert resolve_location("Nowhereville, Lagos").country_iso == "NG"
 
 
 def test_multiword_candidate_prefix_matches():
     assert resolve_location("New York City").country_iso == "US"
     assert resolve_location("Berlin Germany").country_iso == "DE"
+
+
+@pytest.mark.parametrize(
+    ("raw", "iso", "confidence"),
+    [
+        ("Atlanta, GA", "US", "region"),
+        ("Alameda, CA", "US", "region"),
+        ("Alexandria, VA", "US", "region"),
+        ("Cambridge, MA", "US", "region"),
+        ("Chengdu SC", "CN", "region"),
+        ("Toronto, CA", "CA", "exact-iso"),
+        ("San Jose, CA", "US", "region"),
+        ("Paris, Texas", "US", "region"),
+        ("Melbourne, Victoria", "AU", "region"),
+        ("Adelaide, SA", "AU", "region"),
+        ("Riyadh, SA", "SA", "exact-iso"),
+        ("Saint-Vincent (AO) Italy", "IT", "name"),
+        ("Belo Horizonte - MG", "BR", "region"),
+        ("Uberlândia - MG", "BR", "region"),
+        ("São Luis - MA", "BR", "region"),
+        ("Durg, Chhattisgarh, IN", "IN", "exact-iso"),
+        ("Yogyakarta, ID", "ID", "exact-iso"),
+        ("Xi'an,SN", "CN", "region"),
+        ("Turnhout, BE", "BE", "exact-iso"),
+        ("Long Island, New York", "US", "region"),
+        ("Ithaca NY", "US", "region"),
+        ("Landshut, BY, Germany", "DE", "name"),
+        ("MK, United Kingdom", "GB", "name"),
+        ("Bali", "ID", "gazetteer-city"),
+        ("Jeju Island", "KR", "gazetteer-city"),
+        ("Nara", "JP", "gazetteer-city"),
+        ("North Wales, PA", "US", "region"),
+        ("Sorø", "DK", "gazetteer-city"),
+        ("Vancouver Island", "CA", "gazetteer-city"),
+        ("Virgin Islands, British", "VG", "name"),
+    ],
+)
+def test_country_region_and_city_consistency(raw, iso, confidence):
+    assert resolve_location(raw) == GeoResult(iso, confidence, raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Georgia",
+        "Korea",
+        "Jerusalem",
+        "Victoria",
+        "San José",
+        "Athens / Barcelona",
+        "Asia, Earth",
+        "NYC / Berlin",
+        "Distributed LB",
+        "Bay",
+        "Paradise",
+        "Solana, Ethereum, BNB",
+        "Tawi-Tawi Anchorage",
+        "The Town Inside Me",
+        "preferably somewhere nice",
+        "john@example.pa",
+        "https://example.ir",
+    ],
+)
+def test_ambiguous_non_location_and_contact_text_never_guess(raw):
+    assert resolve_location(raw) == GeoResult(None, "unmatched", raw)
+
+
+def test_contact_details_are_ignored_without_discarding_a_real_location():
+    raw = "Berlin | me@example.com"
+    assert resolve_location(raw) == GeoResult("DE", "gazetteer-city", raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "iso", "confidence"),
+    [
+        ("Atlanta, Georgia", "US", "region"),
+        ("Tbilisi, Georgia", "GE", "gazetteer-city"),
+        ("Seoul, Korea", "KR", "gazetteer-city"),
+        ("Pyongyang, Korea", "KP", "gazetteer-city"),
+        ("San José, Costa Rica", "CR", "name"),
+        ("Jerusalem, Israel", "IL", "name"),
+    ],
+)
+def test_ambiguous_names_resolve_only_with_consistent_context(raw, iso, confidence):
+    assert resolve_location(raw) == GeoResult(iso, confidence, raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "iso", "confidence"),
+    [
+        ("Москва", "RU", "gazetteer-city"),
+        ("中国", "CN", "name"),
+        ("北京", "CN", "gazetteer-city"),
+        ("عُمان", "OM", "name"),
+        ("عمّان", "JO", "gazetteer-city"),
+    ],
+)
+def test_native_script_country_and_city_names(raw, iso, confidence):
+    assert resolve_location(raw) == GeoResult(iso, confidence, raw)
+
+
+def test_undiacritized_arabic_oman_or_amman_is_ambiguous():
+    assert resolve_location("عمان") == GeoResult(None, "unmatched", "عمان")
 
 
 @pytest.mark.parametrize(
@@ -98,6 +246,7 @@ def test_multiword_candidate_prefix_matches():
         ("Brasil", "BR"),
         ("Japanese", "JP"),
         ("España", "ES"),
+        ("P.R.China", "CN"),
     ],
 )
 def test_country_aliases_use_name_tier(raw, iso):
@@ -112,7 +261,7 @@ def test_case_punctuation_and_emoji_noise():
     assert resolve_location(raw) == GeoResult("DE", "gazetteer-city", raw)
     assert resolve_location("  🇩🇪  bErLiN!!!  ").country_iso == "DE"
     assert resolve_location("Deutschland!!").confidence == "name"
-    assert resolve_location("Berlin • NYC").country_iso == "DE"
+    assert resolve_location("Berlin • NYC").country_iso is None
     assert resolve_location("Berlin, Germany").country_iso == "DE"
 
 
@@ -144,6 +293,10 @@ def test_injectable_gazetteer_can_override_embedded():
     assert resolve_location("Lagos", gazetteer={"lagos": "GH"}).country_iso == "GH"
 
 
+def test_injectable_gazetteer_rejects_invalid_country_codes():
+    assert resolve_location("Gotham", gazetteer={"gotham": "BAD"}).country_iso is None
+
+
 def test_weak_blog_tld():
     result = resolve_location("Atlantis", blog="https://atlantis.example.de/about")
     assert result == GeoResult("DE", "weak", "Atlantis")
@@ -152,6 +305,7 @@ def test_weak_blog_tld():
 
 def test_weak_blog_unmapped_tld_is_unmatched():
     assert resolve_location("Atlantis", blog="https://example.com").confidence == "unmatched"
+    assert resolve_location("Atlantis", blog="https://example.io").confidence == "unmatched"
     assert resolve_location("Atlantis", blog=None).confidence == "unmatched"
 
 
@@ -186,7 +340,7 @@ def test_huge_finite_timezone_never_raises():
 
 
 def test_nfd_input_matches_nfc_gazetteer_and_aliases():
-    assert normalize_location("Zu\u0308rich") == "zürich"
+    assert normalize_location("Zu\u0308rich") == "zurich"
     assert resolve_location("Zu\u0308rich") == GeoResult("CH", "gazetteer-city", "Zu\u0308rich")
     assert resolve_location("Tu\u0308rkiye") == GeoResult("TR", "name", "Tu\u0308rkiye")
 
@@ -195,6 +349,22 @@ def test_weak_never_overrides_stronger_tiers():
     strong = resolve_location("Lagos", blog="https://example.de", tz_offset=-8.0)
     assert strong == GeoResult("NG", "gazetteer-city", "Lagos")
     assert resolve_location("USA", blog="https://example.fr").country_iso == "US"
+    assert resolve_location("🇩🇪", blog="https://example.fr") == GeoResult("DE", "exact-iso", "🇩🇪")
+
+
+def test_disagreeing_weak_signals_are_unmatched():
+    assert resolve_location("Atlantis", blog="https://example.de", tz_offset=5.75) == GeoResult(
+        None, "unmatched", "Atlantis"
+    )
+
+
+def test_weak_signal_can_narrow_but_not_override_ambiguous_city_options():
+    assert resolve_location("San José", blog="https://example.cr") == GeoResult(
+        "CR", "weak", "San José"
+    )
+    assert resolve_location("San José", blog="https://example.de") == GeoResult(
+        None, "unmatched", "San José"
+    )
 
 
 def test_none_raw_keeps_none():
@@ -205,6 +375,11 @@ def test_empty_and_weird_raw_never_raise():
     assert resolve_location("   ") == GeoResult(None, "unmatched", "   ")
     assert resolve_location("!!!").confidence == "unmatched"
     assert resolve_location(42) == GeoResult(None, "unmatched", "42")
+
+
+def test_pathologically_long_untrusted_location_is_bounded():
+    raw = "unknown " * 1000 + "Germany"
+    assert resolve_location(raw) == GeoResult(None, "unmatched", raw)
 
 
 def test_geo_cache_round_trip_and_hit_counter(clean: Engine):
@@ -222,6 +397,11 @@ def test_geo_cache_round_trip_and_hit_counter(clean: Engine):
             sa.text("SELECT hits FROM geo_cache WHERE normalized = 'lagos'")
         ).scalar_one()
     assert hits == 2
+    with clean.connect() as connection:
+        version = connection.scalar(
+            sa.text("SELECT resolver_version FROM geo_cache WHERE normalized = 'lagos'")
+        )
+    assert version == GEO_RESOLVER_VERSION
 
 
 def test_geo_cache_round_trips_none_raw_location(clean: Engine):
@@ -233,6 +413,21 @@ def test_geo_cache_round_trips_none_raw_location(clean: Engine):
             sa.text("SELECT raw_sample FROM geo_cache WHERE normalized = ''")
         ).scalar_one()
     assert raw is None
+
+
+def test_geo_cache_ignores_answers_from_an_older_resolver(clean: Engine):
+    with clean.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO geo_cache "
+                "(normalized, country_iso, confidence, raw_sample, resolver_version) "
+                "VALUES ('berlin', 'FR', 'gazetteer-city', 'Berlin', 'legacy')"
+            )
+        )
+    cache = GeoCache(clean)
+    assert cache.get("berlin") is None
+    cache.put("berlin", GeoResult("DE", "gazetteer-city", "Berlin"))
+    assert cache.get("berlin") == GeoResult("DE", "gazetteer-city", "Berlin")
 
 
 def test_resolve_owner_round_trips_none_raw_location(clean: Engine):
@@ -309,6 +504,14 @@ def test_resolve_many_keys_by_normalized_location(clean: Engine, fresh_memo):
             .all()
         )
     assert stored == ["", "lagos"]
+
+
+def test_resolve_many_uses_blog_as_a_versioned_weak_profile_signal(clean: Engine, fresh_memo):
+    from enrich.geo_resolver import _owner_cache_key, resolve_many
+
+    results = resolve_many(clean, [None], blogs=["https://example.de"])
+    key = _owner_cache_key(None, "https://example.de", None)
+    assert results[key] == GeoResult("DE", "weak", None)
 
 
 def test_resolve_many_memoizes_and_bounds_the_process_cache(clean: Engine, monkeypatch, fresh_memo):

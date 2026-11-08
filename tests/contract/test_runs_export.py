@@ -88,6 +88,7 @@ def expected_snapshot() -> dict:
         "license_spdx": "MIT",
         "country_iso": "DE",
         "geo_confidence": "name",
+        "country": "Germany",
         "virtuals": {"has_dockerfile": True},
     }
 
@@ -311,6 +312,7 @@ def test_export_regenerates_json_and_csv_when_bundle_files_are_absent(clean: Eng
             "license_spdx",
             "country_iso",
             "geo_confidence",
+            "country",
         ],
         [
             "1296269",
@@ -322,6 +324,7 @@ def test_export_regenerates_json_and_csv_when_bundle_files_are_absent(clean: Eng
             "MIT",
             "DE",
             "name",
+            "Germany",
         ],
     ]
 
@@ -439,6 +442,7 @@ def test_export_bundle_streams_regenerated_content(clean: Engine, tmp_path):
             "license_spdx",
             "country_iso",
             "geo_confidence",
+            "country",
         ],
         [
             "1296269",
@@ -450,6 +454,7 @@ def test_export_bundle_streams_regenerated_content(clean: Engine, tmp_path):
             "MIT",
             "DE",
             "name",
+            "Germany",
         ],
     ]
 
