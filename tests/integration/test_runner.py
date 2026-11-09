@@ -116,6 +116,8 @@ def rest_item_to_graphql_node(item: dict, *, commit_count: int | None = None) ->
             "databaseId": owner.get("id"),
             "login": owner.get("login"),
             "__typename": owner.get("type") or "User",
+            "location": owner.get("location_raw"),
+            "websiteUrl": owner.get("blog"),
         },
     }
 
@@ -1243,6 +1245,41 @@ def test_make_runner_parses_filter_spec_dicts(clean: Engine):
     assert payload.items == []
     assert len(requests) == 1
     assert all(is_count(request) for request in requests)
+
+
+def test_run_filter_always_attaches_country_without_a_geo_filter(clean: Engine):
+    page = [
+        repo_item(
+            1,
+            login="alice",
+            owner={
+                "id": 10,
+                "login": "alice",
+                "type": "User",
+                "location_raw": "Germany",
+            },
+        )
+    ]
+
+    def handler(request: httpx.Request):
+        if is_search_request(request):
+            if is_count(request):
+                return count_response(request, 1)
+            return page_response(page)
+        if path_of(request) == "/graphql":
+            return graphql_batch_response(request, {item["full_name"]: item for item in page})
+        return httpx.Response(404)
+
+    client, requests = scripted(handler)
+    payload = run_filter(
+        make_deps(clean, client),
+        spec_for(q="language:python"),
+        config=RunnerConfig(max_shards=1),
+    )
+
+    assert [(item.repo_id, item.country_iso) for item in payload.items] == [(1, "DE")]
+    assert payload.items[0].geo_confidence is not None
+    assert not any(path_of(request).startswith("/users/") for request in requests)
 
 
 def test_run_filter_uses_cost_plan_order_and_reports_field_stats(clean: Engine, monkeypatch):

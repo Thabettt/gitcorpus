@@ -82,7 +82,13 @@ def page_payload(nodes, *, count=1, has_next=False, cursor=None, errors=None):
 def test_node_to_item_maps_rest_shape():
     item = node_to_item(node())
     assert item["id"] == 1 and item["node_id"] == "R_1" and item["full_name"] == "o/r"
-    assert item["owner"] == {"id": 9, "login": "o", "type": "User"}
+    assert item["owner"] == {
+        "id": 9,
+        "login": "o",
+        "type": "User",
+        "location_raw": None,
+        "blog": None,
+    }
     assert item["license"] == {"spdx_id": "MIT"}
     assert item["topics"] == ["cli"]
     assert item["stargazers_count"] == 7 and item["forks_count"] == 1

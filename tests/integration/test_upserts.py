@@ -149,7 +149,12 @@ def test_normalize_repo_maps_a_full_object():
         source={"full_name": "src/origin"},
     )
     row = normalize_repo(item)
-    assert set(row) == set(REPO_FIELDS) | {"owner_login", "owner_type"}
+    assert set(row) == set(REPO_FIELDS) | {
+        "owner_login",
+        "owner_type",
+        "owner_location_raw",
+        "owner_blog",
+    }
     assert row["id"] == 7
     assert row["node_id"] == "R_7"
     assert row["full_name"] == "octo/proj"

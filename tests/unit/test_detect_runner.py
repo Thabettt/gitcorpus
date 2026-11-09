@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from sqlalchemy import text
+
 from detect.orchestrator import DetectOptions
 from detect.packs import Pack, Pattern, freeze_pack
 from serve.detect import build_detect_runner
 from serve.detect_spec import detect_spec_to_dict
-from serve.executor import RunPayload
+from serve.executor import RunPayload, RunPayloadItem
 from store.settings import update_run_settings
 
 PACK = Pack(
@@ -104,6 +106,47 @@ def test_api_runner_bounds_detect_concurrency_by_the_request_limit(clean_db, mon
     assert runner(1, detect_spec_to_dict(spec)) is sentinel
     assert captured["max_concurrent"] == 18
     assert captured["concurrency"] == 18
+
+
+def test_runner_annotates_detected_repos_with_stored_owner_countries(clean_db, monkeypatch):
+    engine = clean_db(
+        owners=[{"id": 1, "login": "octo", "type": "User", "location_raw": "Germany"}],
+        repos=[
+            {
+                "id": 1,
+                "node_id": "n1",
+                "full_name": "octo/one",
+                "owner_id": 1,
+                "name": "one",
+                "visibility": "public",
+            }
+        ],
+    )
+    freeze_pack(engine, PACK)
+    sentinel = RunPayload(
+        total_count=1,
+        items=[RunPayloadItem(repo_id=1, full_name="octo/one")],
+    )
+
+    monkeypatch.setattr("serve.detect.run_git_detection", lambda *args, **kwargs: sentinel)
+
+    spec = DetectOptions(
+        source_run_id=1,
+        pack_version="v1",
+        agents=None,
+        channels=frozenset({"file"}),
+        source="git",
+    )
+    runner = build_detect_runner(engine)
+    result = runner(1, detect_spec_to_dict(spec))
+
+    assert result.items[0].country_iso == "DE"
+    assert result.items[0].geo_confidence == "name"
+    with engine.connect() as connection:
+        row = connection.execute(
+            text("SELECT country_iso, geo_confidence FROM owners WHERE id = 1")
+        ).one()
+    assert tuple(row) == ("DE", "name")
 
 
 def test_detect_clone_root_env_override(monkeypatch):

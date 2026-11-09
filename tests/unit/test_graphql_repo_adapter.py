@@ -139,8 +139,8 @@ def test_parse_empty_repository_reports_zero_commits():
 def test_build_query_uses_valid_owner_inline_fragments():
     adapter = RepoDetailsAdapter({"911": "octo/alpha"})
     query = adapter.build_query({"n0": "911"})
-    assert "... on User { databaseId }" in query
-    assert "... on Organization { databaseId }" in query
+    assert "... on User { databaseId location websiteUrl }" in query
+    assert "... on Organization { databaseId location websiteUrl }" in query
     assert "owner { databaseId" not in query
 
 
