@@ -30,8 +30,8 @@ _NODE_FIELDS = """      databaseId
       owner {
         login
         __typename
-        ... on User { databaseId }
-        ... on Organization { databaseId }
+        ... on User { databaseId location websiteUrl }
+        ... on Organization { databaseId location websiteUrl }
       }
       stargazerCount
       forkCount
@@ -84,10 +84,14 @@ def _owner(node: Mapping[str, object]) -> dict | None:
     if owner_id is None or not login:
         return None
     kind = raw.get("__typename")
+    location = _as_str(raw.get("location"))
+    blog = _as_str(raw.get("websiteUrl"))
     return {
         "id": owner_id,
         "login": login,
         "type": "Organization" if kind == "Organization" else "User",
+        "location_raw": location.strip() if location and location.strip() else None,
+        "blog": blog.strip() if blog and blog.strip() else None,
     }
 
 

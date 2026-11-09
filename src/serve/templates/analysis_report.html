@@ -51,13 +51,16 @@
     <details id="analysis-country-tools" class="analysis-tool">
       <summary>Country coverage and backfill</summary>
       <p class="muted">
-        Country comes from the repository owner’s GitHub location. {{ country.known }} of {{ country.repos }} repos have a known country; {{ country.missing_owners }} of {{ country.owners }} owners are still unresolved.
-        A backfill fetches missing owner locations through the GitHub API, resolves them with the local geo resolver, and freezes the result into this detection run’s rows.
+        Country comes from the repository owner’s GitHub location. {{ country.known }} of {{ country.repos }} repos have a known country; {{ country.missing_owners }} of {{ country.owners }} owners are still unresolved ({{ country.pending_owners }} can still be checked).
+        Owners with a stored location or website resolve automatically at no API cost. A backfill only fetches GitHub profiles for owners with no stored signal, then freezes every known country into this detection run’s rows.
       </p>
       <form method="post" action="/analysis/{{ run.id }}/country-backfill" class="inline-form">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <button class="button" type="submit" id="analysis-country-backfill"{% if not country.missing_owners %} disabled{% endif %}>Resolve missing countries</button>
-        <span class="muted">Up to 500 owners per click; API calls are audited against this run.</span>
+        {% for key in selected %}
+        <input type="hidden" name="metric" value="{{ key }}">
+        {% endfor %}
+        <button class="button" type="submit" id="analysis-country-backfill"{% if not country.pending_owners %} disabled{% endif %}>Resolve missing countries</button>
+        <span class="muted">One click drains every remaining owner in batches; stored locations resolve instantly and GitHub profile fetches are audited against this run. It can take a while when many owners have no stored location.</span>
       </form>
     </details>
     <details id="analysis-metric-picker" class="analysis-tool">

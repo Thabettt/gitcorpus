@@ -398,20 +398,25 @@ def _fetch_language_bytes(
     return True, payload
 
 
-def _apply_geo(
+def _resolve_owner_geo(
     deps: Deps,
     rows: list[dict],
-    virtual: dict,
+    *,
+    fetch_missing: bool,
     budget: int,
     hook: Callable[[httpx.Response, float], None],
     report: dict,
     cfg: RunnerConfig,
-) -> tuple[list[dict], int, int]:
-    country = virtual.get("owner_country")
-    threshold = virtual.get("min_geo_confidence")
-    if country is None and threshold is None:
-        return rows, 0, 0
+) -> int:
+    """Resolve owner country for every row and annotate it in place.
+
+    Locations captured during discovery/hydration resolve locally at no request
+    cost. When ``fetch_missing`` is true (a geo filter needs a country), owners
+    with no stored location are fetched from GitHub within ``budget``.
+    """
     owner_ids = list(dict.fromkeys(row["owner_id"] for row in rows))
+    if not owner_ids:
+        return 0
     owners = _load_owners(deps.engine, owner_ids)
     cache = GeoCache(deps.engine)
     pending_owners: list[tuple[int, str]] = []
@@ -424,60 +429,68 @@ def _apply_geo(
             owner["country_iso"] is not None or owner["geo_confidence"] == "unmatched"
         ):
             continue
+        has_signal = owner["location_raw"] is not None or owner["blog"] is not None
+        if not fetch_missing and not has_signal:
+            # Leave owners we cannot resolve locally stale, so a later
+            # country-filtered run can still fetch their profile.
+            continue
         pending_owners.append((owner_id, owner["login"]))
-        if owner["location_raw"] is None:
+        if fetch_missing and owner["location_raw"] is None:
             fetch_targets.append((owner_id, owner["login"]))
     lookups = fetch_targets[: max(0, budget)]
-    rows_by_login = {login: owner_id for owner_id, login in lookups}
-    owner_types = {login: owners[owner_id]["type"] for owner_id, login in lookups}
-    used = {"n": 0}
-    used_lock = threading.Lock()
-    answered: set[int] = set()
+    if lookups:
+        rows_by_login = {login: owner_id for owner_id, login in lookups}
+        owner_types = {login: owners[owner_id]["type"] for owner_id, login in lookups}
+        used = {"n": 0}
+        used_lock = threading.Lock()
+        answered: set[int] = set()
 
-    def fallback(login: str) -> object | None:
-        ok, profile = _fetch_owner_profile(deps, login, hook)
-        if not ok or profile is None or profile.location is None:
-            with used_lock:
-                used["n"] += 1
-        if not ok:
-            return None
-        answered.add(rows_by_login[login])
-        if profile is not None:
-            owners[rows_by_login[login]]["location_raw"] = profile.location
-            owners[rows_by_login[login]]["blog"] = profile.blog
-        return profile
+        def fallback(login: str) -> object | None:
+            ok, profile = _fetch_owner_profile(deps, login, hook)
+            if not ok or profile is None or profile.location is None:
+                with used_lock:
+                    used["n"] += 1
+            if not ok:
+                return None
+            answered.add(rows_by_login[login])
+            if profile is not None:
+                owners[rows_by_login[login]]["location_raw"] = profile.location
+                owners[rows_by_login[login]]["blog"] = profile.blog
+            return profile
 
-    outcome = fetch_batch(
-        OwnerGeoProfileAdapter(owner_types, batch_size=cfg.graphql_batch_size),
-        list(rows_by_login),
-        client=deps.client,
-        limiter=deps.limiter,
-        token_id=deps.token_fp,
-        fallback=fallback,
-        on_response=hook,
-        deadline=deps.limiter.deadline if deps.limiter is not None else None,
-        allow_requests=cfg.graphql_batch,
-        concurrency=cfg.concurrency,
-        jitter=random.random,
-    )
-    report["owners"] = outcome.stats.as_dict()
-    for login, owner_id in rows_by_login.items():
-        if login not in outcome.values:
-            continue
-        used["n"] += 1
-        answered.add(owner_id)
-        profile = outcome.values[login]
-        if not isinstance(profile, OwnerGeoProfile):
-            continue
-        owners[owner_id]["location_raw"] = profile.location
-        owners[owner_id]["blog"] = profile.blog
-    used_count = used["n"]
+        outcome = fetch_batch(
+            OwnerGeoProfileAdapter(owner_types, batch_size=cfg.graphql_batch_size),
+            list(rows_by_login),
+            client=deps.client,
+            limiter=deps.limiter,
+            token_id=deps.token_fp,
+            fallback=fallback,
+            on_response=hook,
+            deadline=deps.limiter.deadline if deps.limiter is not None else None,
+            allow_requests=cfg.graphql_batch,
+            concurrency=cfg.concurrency,
+            jitter=random.random,
+        )
+        report["owners"] = outcome.stats.as_dict()
+        for login, owner_id in rows_by_login.items():
+            if login not in outcome.values:
+                continue
+            used["n"] += 1
+            answered.add(owner_id)
+            profile = outcome.values[login]
+            if not isinstance(profile, OwnerGeoProfile):
+                continue
+            owners[owner_id]["location_raw"] = profile.location
+            owners[owner_id]["blog"] = profile.blog
+        used_count = used["n"]
+    else:
+        used_count = 0
     pending = [
         (owner_id, owners[owner_id]["location_raw"], owners[owner_id]["blog"])
         for owner_id, _login in pending_owners
         if owners[owner_id]["location_raw"] is not None
         or owners[owner_id]["blog"] is not None
-        or owner_id in answered
+        or owner_id in (answered if lookups else set())
     ]
     resolved = resolve_many(
         deps.engine,
@@ -518,32 +531,60 @@ def _apply_geo(
         )
         with deps.engine.begin() as connection:
             connection.execute(statement, updates)
+    for row in rows:
+        owner = owners.get(row["owner_id"])
+        if owner is None:
+            continue
+        row["country_iso"] = owner["country_iso"]
+        row["geo_confidence"] = owner["geo_confidence"]
+    return used_count
+
+
+def _filter_geo(rows: list[dict], virtual: Mapping[str, object]) -> tuple[list[dict], int]:
+    country = virtual.get("owner_country")
+    threshold = virtual.get("min_geo_confidence")
     threshold_index = None
     if isinstance(threshold, str) and threshold in GEO_CONFIDENCE_ORDER:
         threshold_index = GEO_CONFIDENCE_ORDER.index(threshold)
     kept: list[dict] = []
     skipped = 0
     for row in rows:
-        owner = owners.get(row["owner_id"])
-        if owner is None:
+        if country is not None and row.get("country_iso") is None:
             skipped += 1
             continue
-        if country is not None and owner["country_iso"] is None:
-            skipped += 1
-            continue
-        if country is not None and owner["country_iso"] != country:
+        if country is not None and row["country_iso"] != country:
             continue
         if threshold_index is not None:
-            confidence = owner["geo_confidence"]
+            confidence = row.get("geo_confidence")
             if confidence not in GEO_CONFIDENCE_ORDER:
                 skipped += 1
                 continue
             if GEO_CONFIDENCE_ORDER.index(confidence) > threshold_index:
                 continue
-        row["country_iso"] = owner["country_iso"]
-        row["geo_confidence"] = owner["geo_confidence"]
         kept.append(row)
-    return kept, used_count, skipped
+    return kept, skipped
+
+
+def _apply_geo(
+    deps: Deps,
+    rows: list[dict],
+    virtual: dict,
+    budget: int,
+    hook: Callable[[httpx.Response, float], None],
+    report: dict,
+    cfg: RunnerConfig,
+) -> tuple[list[dict], int, int]:
+    used = _resolve_owner_geo(
+        deps,
+        rows,
+        fetch_missing=True,
+        budget=budget,
+        hook=hook,
+        report=report,
+        cfg=cfg,
+    )
+    kept, skipped = _filter_geo(rows, virtual)
+    return kept, used, skipped
 
 
 def _apply_dockerfile(
@@ -988,6 +1029,16 @@ def _run_filter(
     skipped = {"geo": 0, "dockerfile": 0, "commits": 0, "language_bytes": 0}
     started = time.perf_counter()
     enrich_hook = _audit_hook(deps, run_id=run_id, phase="enrich", ledger=ledger)
+    geo_used = _resolve_owner_geo(
+        deps,
+        rows,
+        fetch_missing=False,
+        budget=budget["remaining"],
+        hook=enrich_hook,
+        report=graphql_report,
+        cfg=cfg,
+    )
+    budget["remaining"] = max(0, budget["remaining"] - geo_used)
     handlers, unsupported = _enrich_handlers(
         deps,
         rows,

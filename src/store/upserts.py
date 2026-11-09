@@ -7,7 +7,7 @@ from typing import TypeGuard
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 
@@ -203,6 +203,8 @@ def normalize_repo(item: dict) -> dict | None:
         "updated_at": _parse_timestamp(item.get("updated_at")),
         "owner_login": owner_login,
         "owner_type": owner.get("type") or "User",
+        "owner_location_raw": _optional_str(owner.get("location_raw")),
+        "owner_blog": _optional_str(owner.get("blog")),
     }
 
 
@@ -245,15 +247,18 @@ def _chunks(items: Iterable[dict], size: int) -> Iterator[list[dict]]:
         yield chunk
 
 
+OwnerSeed = tuple[str, str, str | None, str | None]
+
+
 def _upsert_owners(
-    connection: Connection, owners: dict[int, tuple[str, str]], stats: UpsertStats
+    connection: Connection, owners: dict[int, OwnerSeed], stats: UpsertStats
 ) -> None:
     if not owners:
         return
-    desired = {login.casefold(): (owner_id, login) for owner_id, (login, _) in owners.items()}
+    desired = {login.casefold(): (owner_id, login) for owner_id, (login, *_) in owners.items()}
     holders = connection.execute(
         select(Owner.id, Owner.login).where(
-            Owner.login.in_([login for login, _ in owners.values()])
+            Owner.login.in_([login for login, *_ in owners.values()])
         )
     ).all()
     taken: set[str] = set()
@@ -269,36 +274,68 @@ def _upsert_owners(
     existing = {
         row["id"]: dict(row)
         for row in connection.execute(
-            select(Owner.id, Owner.login, Owner.type).where(Owner.id.in_(owners))
+            select(
+                Owner.id,
+                Owner.login,
+                Owner.type,
+                Owner.location_raw,
+                Owner.blog,
+            ).where(Owner.id.in_(owners))
         ).mappings()
     }
     rows_to_insert = []
     rows_to_update = []
     for owner_id in sorted(owners):
-        login, owner_type = owners[owner_id]
+        login, owner_type, location_raw, blog = owners[owner_id]
         current = existing.get(owner_id)
         if current is None:
             candidate = login
             if candidate.casefold() in taken:
                 candidate = f"{login}~{owner_id}"
             taken.add(candidate.casefold())
-            rows_to_insert.append({"id": owner_id, "login": candidate, "type": owner_type})
+            rows_to_insert.append(
+                {
+                    "id": owner_id,
+                    "login": candidate,
+                    "type": owner_type,
+                    "location_raw": location_raw,
+                    "blog": blog,
+                }
+            )
         else:
             taken.add(str(current["login"]).casefold())
-            if current["login"] != login or current["type"] != owner_type:
-                rows_to_update.append({"id": owner_id, "login": login, "type": owner_type})
+            changes: dict[str, object] = {}
+            if current["login"] != login:
+                changes["login"] = login
+            if current["type"] != owner_type:
+                changes["type"] = owner_type
+            if location_raw is not None and location_raw != current["location_raw"]:
+                changes["location_raw"] = location_raw
+                changes["country_iso"] = None
+                changes["geo_confidence"] = None
+                changes["geo_version"] = None
+            if blog is not None and blog != current["blog"]:
+                changes["blog"] = blog
+            if changes:
+                rows_to_update.append({"id": owner_id, **changes})
     if rows_to_insert:
         statement = pg_insert(Owner).values(rows_to_insert)
         connection.execute(
             statement.on_conflict_do_update(
                 index_elements=["id"],
-                set_={"login": statement.excluded.login, "type": statement.excluded.type},
+                set_={
+                    "login": statement.excluded.login,
+                    "type": statement.excluded.type,
+                    "location_raw": func.coalesce(
+                        statement.excluded.location_raw, Owner.location_raw
+                    ),
+                    "blog": func.coalesce(statement.excluded.blog, Owner.blog),
+                },
             )
         )
     for row in rows_to_update:
-        connection.execute(
-            update(Owner).where(Owner.id == row["id"]).values(login=row["login"], type=row["type"])
-        )
+        values = {key: value for key, value in row.items() if key != "id"}
+        connection.execute(update(Owner).where(Owner.id == row["id"]).values(**values))
 
 
 def _rename_stale_full_names(
@@ -363,7 +400,7 @@ def upsert_repos(
     stats = UpsertStats()
     for chunk in _chunks(items, batch_size):
         normalized: list[dict] = []
-        owners: dict[int, tuple[str, str]] = {}
+        owners: dict[int, OwnerSeed] = {}
         for item in chunk:
             row = normalize_repo(item)
             if row is None:
@@ -374,7 +411,12 @@ def upsert_repos(
                 if etag is not None:
                     row = dict(row, etag=etag)
             normalized.append(row)
-            owners[row["owner_id"]] = (row["owner_login"], row["owner_type"])
+            owners[row["owner_id"]] = (
+                row["owner_login"],
+                row["owner_type"],
+                row["owner_location_raw"],
+                row["owner_blog"],
+            )
         if not normalized:
             continue
         with engine.begin() as connection:
@@ -474,7 +516,7 @@ def _merge_staging(connection: Connection, table_name: str) -> tuple[int, int]:
 def _bootstrap_chunk(
     engine: Engine,
     normalized: list[dict],
-    owners: dict[int, tuple[str, str]],
+    owners: dict[int, OwnerSeed],
     stats: UpsertStats,
     table_name: str,
 ) -> int:
@@ -515,13 +557,18 @@ def bootstrap_copy(
         for chunk in _chunks(items, copy_batch):
             total += len(chunk)
             normalized: list[dict] = []
-            owners: dict[int, tuple[str, str]] = {}
+            owners: dict[int, OwnerSeed] = {}
             for item in chunk:
                 row = normalize_repo(item)
                 if row is None:
                     continue
                 normalized.append(row)
-                owners[row["owner_id"]] = (row["owner_login"], row["owner_type"])
+                owners[row["owner_id"]] = (
+                row["owner_login"],
+                row["owner_type"],
+                row["owner_location_raw"],
+                row["owner_blog"],
+            )
             if not normalized:
                 continue
             staged_total += _bootstrap_chunk(engine, normalized, owners, stats, table_name)

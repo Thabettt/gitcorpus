@@ -42,8 +42,8 @@ _FIELDS = """    databaseId
     owner {
       login
       __typename
-      ... on User { databaseId }
-      ... on Organization { databaseId }
+      ... on User { databaseId location websiteUrl }
+      ... on Organization { databaseId location websiteUrl }
     }"""
 
 
@@ -78,10 +78,15 @@ def _owner(node: dict) -> dict | None:
     if owner_id is None or not isinstance(login, str) or not login:
         return None
     kind = raw.get("__typename")
+    location = raw.get("location")
+    location_raw = location.strip() if isinstance(location, str) else None
+    blog = raw.get("websiteUrl")
     return {
         "id": owner_id,
         "login": login,
         "type": "Organization" if kind == "Organization" else "User",
+        "location_raw": location_raw or None,
+        "blog": blog.strip() if isinstance(blog, str) and blog.strip() else None,
     }
 
 

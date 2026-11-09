@@ -22,12 +22,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=500,
-        help="maximum owners to inspect in one pass (default: 500)",
+        help=(
+            "batch size for owners without a stored location when fetching from GitHub"
+            " (default: 500; 0 fetches every one in a single pass); stored locations"
+            " always resolve in full"
+        ),
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="stop after one batch instead of draining every remaining owner",
     )
     parser.add_argument(
         "--repeat",
         action="store_true",
-        help="keep running until no unresolved owners remain or progress stops",
+        help="deprecated: draining every remaining owner is now the default",
     )
     parser.add_argument(
         "--retry-unmatched",
@@ -63,7 +72,7 @@ def main() -> int:
         for key in totals:
             totals[key] += result[key]
         print(json.dumps(result, sort_keys=True), flush=True)
-        if not args.repeat or result["remaining"] == 0 or result["owners"] == 0:
+        if args.once or result["remaining"] == 0 or result["owners"] == 0:
             break
         if result["fetched"] == 0 and result["updated"] == 0:
             print("no progress; stopping", flush=True)

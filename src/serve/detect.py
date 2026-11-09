@@ -108,13 +108,32 @@ def _flush_leftovers(clone_root: str, active: set[int], state: dict[str, object]
     state["current"] = ""
 
 
+def _annotate_payload_countries(engine: Engine, payload: RunPayload) -> None:
+    """Fill country fields from stored owner signals before rows are frozen.
+
+    Detection snapshots replace ``run_items`` with the payload, so resolving
+    here is what makes a fresh run report countries without a manual backfill.
+    Only stored location/blog signals are used; nothing is guessed.
+    """
+    from serve.analysis import resolve_repo_countries
+
+    repo_ids = [item.repo_id for item in payload.items if item.repo_id is not None]
+    if not repo_ids:
+        return
+    countries = resolve_repo_countries(engine, repo_ids)
+    for item in payload.items:
+        pair = countries.get(item.repo_id)
+        if pair is not None:
+            item.country_iso, item.geo_confidence = pair
+
+
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
         spec = parse_detect_spec(spec_doc)
         settings = load_run_settings(engine)
         pack = load_frozen(engine, spec.pack_version)
         if spec.source == "git":
-            return run_git_detection(
+            payload = run_git_detection(
                 engine,
                 run_id,
                 spec,
@@ -129,22 +148,32 @@ def build_detect_runner(engine: Engine) -> Runner:
                     pr_gate_permits=pr_gate_permits_from_env(),
                 ),
             )
-        from serve.runner import build_deps
+        else:
+            from serve.runner import build_deps
 
-        deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
+            deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
+            try:
+                payload = run_detection(
+                    deps,
+                    run_id,
+                    spec,
+                    pack,
+                    config=DetectConfig(
+                        deadline_seconds=float(settings.request_deadline_seconds),
+                        concurrency=min(
+                            settings.detect_concurrency, settings.limiter_max_concurrent
+                        ),
+                    ),
+                )
+            finally:
+                deps.client.close()
         try:
-            return run_detection(
-                deps,
-                run_id,
-                spec,
-                pack,
-                config=DetectConfig(
-                    deadline_seconds=float(settings.request_deadline_seconds),
-                    concurrency=min(settings.detect_concurrency, settings.limiter_max_concurrent),
-                ),
+            _annotate_payload_countries(engine, payload)
+        except Exception as exc:  # country enrichment must never fail a detection
+            payload.warnings.append(
+                f"country annotation skipped: {type(exc).__name__}: {exc}"[:300]
             )
-        finally:
-            deps.client.close()
+        return payload
 
     return runner
 

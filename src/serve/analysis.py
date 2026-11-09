@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -271,6 +272,7 @@ def _country_totals(engine: Engine, run_id: int) -> dict[str, Any]:
         "coverage": _pct(known, repos),
         "owners": int(owners["owners"] or 0),
         "missing_owners": int(owners["missing"] or 0),
+        "pending_owners": _pending_owner_count(engine, run_id),
     }
 
 
@@ -700,20 +702,179 @@ def analysis_context(
     }
 
 
-def _missing_owner_count(engine: Engine, run_id: int) -> int:
+def _pending_owner_count(engine: Engine, run_id: int, *, retry_unmatched: bool = False) -> int:
+    """Owners a backfill can still act on (excludes final ``unmatched`` rows)."""
     from enrich.geo_resolver import GEO_RESOLVER_VERSION
 
+    retry_filter = (
+        ""
+        if retry_unmatched
+        else " AND (o.geo_confidence IS DISTINCT FROM 'unmatched'"
+        " OR o.geo_version IS DISTINCT FROM :geo_version)"
+    )
     return int(
         _scalar(
             engine,
             "SELECT count(DISTINCT r.owner_id) FROM run_items i"
             " JOIN repos r ON r.id = i.repo_id JOIN owners o ON o.id = r.owner_id"
             " WHERE i.run_id = :run"
-            " AND (o.country_iso IS NULL OR o.geo_version IS DISTINCT FROM :geo_version)",
+            " AND (o.country_iso IS NULL OR o.geo_version IS DISTINCT FROM :geo_version)"
+            + retry_filter,
             {"run": run_id, "geo_version": GEO_RESOLVER_VERSION},
         )
         or 0
     )
+
+
+def _sync_run_item_countries(engine: Engine, *run_ids: int) -> int:
+    """Copy resolved owner countries onto frozen run rows, always."""
+    total = 0
+    with engine.begin() as connection:
+        for run_id in dict.fromkeys(run_ids):
+            updated = connection.execute(
+                text(
+                    "UPDATE run_items i"
+                    " SET country_iso = o.country_iso, geo_confidence = o.geo_confidence"
+                    " FROM repos r JOIN owners o ON o.id = r.owner_id"
+                    " WHERE i.run_id = :run AND i.repo_id = r.id"
+                    "   AND (i.country_iso IS DISTINCT FROM o.country_iso"
+                    "        OR i.geo_confidence IS DISTINCT FROM o.geo_confidence)"
+                ),
+                {"run": run_id},
+            ).rowcount
+            total += int(updated or 0)
+    return total
+
+
+def _needs_geo_resolution(owner: dict[str, Any], *, retry_unmatched: bool = False) -> bool:
+    """Whether an owner still needs a resolver pass at the current version."""
+    from enrich.geo_resolver import GEO_RESOLVER_VERSION
+
+    if owner.get("country_iso") is not None and owner.get("geo_version") == GEO_RESOLVER_VERSION:
+        return False
+    if (
+        not retry_unmatched
+        and owner.get("geo_confidence") == "unmatched"
+        and owner.get("geo_version") == GEO_RESOLVER_VERSION
+    ):
+        return False
+    return True
+
+
+def _resolve_owner_rows_local(
+    engine: Engine,
+    owners: dict[int, dict[str, Any]],
+    *,
+    retry_unmatched: bool = False,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Resolve stored location/blog signals and mutate the owner dicts in place.
+
+    No GitHub requests are made: this only replays signals already captured
+    during discovery/hydration. Returns ``(updates, resolved, unmatched)``.
+    """
+    from enrich.geo_resolver import (
+        GEO_RESOLVER_VERSION,
+        GeoCache,
+        _owner_cache_key,
+        resolve_many,
+    )
+
+    targets = [
+        (owner_id, owner)
+        for owner_id, owner in owners.items()
+        if _needs_geo_resolution(owner, retry_unmatched=retry_unmatched)
+        and (owner.get("location_raw") is not None or owner.get("blog") is not None)
+    ]
+    if not targets:
+        return [], 0, 0
+    resolved = resolve_many(
+        engine,
+        [owner["location_raw"] for _, owner in targets],
+        blogs=[owner["blog"] for _, owner in targets],
+        cache=GeoCache(engine),
+    )
+    updates: list[dict[str, Any]] = []
+    matched = 0
+    unmatched = 0
+    for owner_id, owner in targets:
+        raw = owner.get("location_raw")
+        blog = owner.get("blog")
+        result = resolved.get(_owner_cache_key(raw, blog, None))
+        country_iso = result.country_iso if result is not None else None
+        confidence = result.confidence if result is not None else "unmatched"
+        owner["country_iso"] = country_iso
+        owner["geo_confidence"] = confidence
+        owner["geo_version"] = GEO_RESOLVER_VERSION
+        updates.append(
+            {
+                "owner_id": owner_id,
+                "location_raw": raw,
+                "blog": blog,
+                "country_iso": country_iso,
+                "geo_confidence": confidence,
+                "geo_version": GEO_RESOLVER_VERSION,
+            }
+        )
+        if country_iso is not None:
+            matched += 1
+        else:
+            unmatched += 1
+    return updates, matched, unmatched
+
+
+def _write_owner_geo_updates(engine: Engine, updates: Sequence[dict[str, Any]]) -> None:
+    from store.models import Owner
+
+    if not updates:
+        return
+    statement = (
+        update(Owner)
+        .where(Owner.id == bindparam("owner_id"))
+        .values(
+            location_raw=bindparam("location_raw"),
+            blog=bindparam("blog"),
+            country_iso=bindparam("country_iso"),
+            geo_confidence=bindparam("geo_confidence"),
+            geo_version=bindparam("geo_version"),
+        )
+    )
+    with engine.begin() as connection:
+        connection.execute(statement, list(updates))
+
+
+def resolve_repo_countries(
+    engine: Engine, repo_ids: Sequence[int]
+) -> dict[int, tuple[str | None, str | None]]:
+    """Resolve owner countries for repositories using stored signals only.
+
+    Returns ``repo_id -> (country_iso, geo_confidence)``. Detection runs call
+    this before their payload is snapshotted so new runs carry countries
+    without a manual backfill. Owners with no stored location or blog stay
+    unresolved; nothing is guessed and no GitHub request is made.
+    """
+    ids = list(dict.fromkeys(int(repo_id) for repo_id in repo_ids))
+    if not ids:
+        return {}
+    rows = _mappings(
+        engine,
+        "SELECT r.id AS repo_id, o.id, o.login, o.type, o.location_raw, o.blog,"
+        " o.country_iso, o.geo_confidence, o.geo_version"
+        " FROM repos r JOIN owners o ON o.id = r.owner_id"
+        " WHERE r.id = ANY(:ids)",
+        {"ids": ids},
+    )
+    owners: dict[int, dict[str, Any]] = {}
+    repo_owner: dict[int, int] = {}
+    for row in rows:
+        owner_id = int(row["id"])
+        repo_owner[int(row["repo_id"])] = owner_id
+        owners.setdefault(owner_id, dict(row))
+    updates, _resolved, _unmatched = _resolve_owner_rows_local(engine, owners)
+    _write_owner_geo_updates(engine, updates)
+    return {
+        repo_id: (owners[owner_id]["country_iso"], owners[owner_id]["geo_confidence"])
+        for repo_id, owner_id in repo_owner.items()
+    }
 
 
 def backfill_countries(
@@ -725,21 +886,18 @@ def backfill_countries(
     fetch: bool = True,
     force_rest: bool = False,
 ) -> dict[str, int]:
-    """Fetch missing owner locations for a run and freeze known countries into run_items.
+    """Resolve owner countries for a run and freeze them into run_items.
 
-    ``fetch=False`` skips GitHub entirely and only re-resolves stored locations
-    and freezes the known owner countries into the run.
+    Owners with a stored ``location_raw``/``blog`` are always resolved in one
+    local pass: they cost no API request, so ``limit`` must never hide them.
+    ``limit`` only caps how many owners *without* any stored signal are fetched
+    from GitHub in a single call; ``limit <= 0`` fetches every one of them.
+    ``fetch=False`` skips GitHub entirely.
     """
-    from enrich.geo_resolver import (
-        GEO_RESOLVER_VERSION,
-        GeoCache,
-        _owner_cache_key,
-        resolve_many,
-    )
+    from enrich.geo_resolver import GEO_RESOLVER_VERSION
     from enrich.graphql_owner_location import OwnerGeoProfile, OwnerGeoProfileAdapter
-    from lib.graphql_batch import fetch_batch
+    from lib.graphql_batch import fetch_batch, is_transient_error
     from serve.runner import _audit_hook, _fetch_owner_profile, build_deps
-    from store.models import Owner
     from store.settings import load_run_settings
 
     retry_filter = (
@@ -748,44 +906,66 @@ def backfill_countries(
         else " AND (o.geo_confidence IS DISTINCT FROM 'unmatched'"
         " OR o.geo_version IS DISTINCT FROM :geo_version)"
     )
-    pending = _mappings(
-        engine,
+    base_query = (
         "SELECT DISTINCT o.id, o.login, o.type, o.location_raw, o.country_iso,"
         " o.geo_confidence, o.geo_version, o.blog"
         " FROM run_items i"
         " JOIN repos r ON r.id = i.repo_id"
         " JOIN owners o ON o.id = r.owner_id"
         " WHERE i.run_id = :run"
-        " AND (o.country_iso IS NULL OR o.geo_version IS DISTINCT FROM :geo_version)"
-        + retry_filter
-        + " ORDER BY o.id LIMIT :limit",
-        {"run": run_id, "limit": limit, "geo_version": GEO_RESOLVER_VERSION},
+        " AND (o.country_iso IS NULL OR o.geo_version IS DISTINCT FROM :geo_version)" + retry_filter
     )
-    if not pending:
+    params = {"run": run_id, "geo_version": GEO_RESOLVER_VERSION}
+    local_pending = _mappings(
+        engine,
+        base_query + " AND (o.location_raw IS NOT NULL OR o.blog IS NOT NULL) ORDER BY o.id",
+        params,
+    )
+    missing_query = base_query + " AND o.location_raw IS NULL AND o.blog IS NULL ORDER BY o.id"
+    missing_params = dict(params)
+    if limit > 0:
+        missing_query += " LIMIT :limit"
+        missing_params["limit"] = limit
+    missing_pending = _mappings(engine, missing_query, missing_params) if fetch else []
+
+    run = _run_row(engine, run_id)
+    target_ids = [run_id]
+    if run is not None and run.get("source_run_id") is not None:
+        target_ids.append(int(run["source_run_id"]))
+    if not local_pending and not missing_pending:
+        # Even when every owner is already classified, the saved rows may still
+        # carry an older (or empty) country; always apply what we know.
+        updated = _sync_run_item_countries(engine, *target_ids)
         return {
             "owners": 0,
             "fetched": 0,
             "resolved": 0,
             "unmatched": 0,
-            "updated": 0,
-            "remaining": _missing_owner_count(engine, run_id),
+            "updated": updated,
+            "remaining": _pending_owner_count(engine, run_id, retry_unmatched=retry_unmatched),
         }
 
-    owners: dict[int, dict[str, Any]] = {int(row["id"]): dict(row) for row in pending}
-    need_location = [row for row in pending if row["location_raw"] is None]
+    owners: dict[int, dict[str, Any]] = {
+        int(row["id"]): dict(row) for row in [*local_pending, *missing_pending]
+    }
     handled: set[int] = set()
     fetched = 0
-    if fetch and need_location:
+    if missing_pending:
         settings = load_run_settings(engine)
         deps = build_deps(engine, max_concurrent=min(8, settings.limiter_max_concurrent))
         try:
             hook = _audit_hook(deps, run_id=run_id, phase="analysis:geo")
-            by_login = {str(row["login"]): str(row["type"]) for row in need_location}
-            owner_id_by_login = {str(row["login"]): int(row["id"]) for row in need_location}
+            by_login = {str(row["login"]): str(row["type"]) for row in missing_pending}
+            owner_id_by_login = {str(row["login"]): int(row["id"]) for row in missing_pending}
             adapter = OwnerGeoProfileAdapter(by_login, batch_size=settings.graphql_batch_size)
+
+            attempted: set[str] = set()
 
             def fallback(login: str) -> object | None:
                 ok, profile = _fetch_owner_profile(deps, login, hook)
+                # A definitive answer (even a 404 with no profile) means this
+                # owner was checked; record it so a drain does not stall on it.
+                attempted.add(login)
                 if not ok:
                     return None
                 return profile
@@ -801,100 +981,105 @@ def backfill_countries(
                 allow_requests=settings.graphql_batch and not force_rest,
                 concurrency=min(8, settings.detect_concurrency),
             )
-            for login, _owner_type in by_login.items():
+            for login in by_login:
                 owner_id = owner_id_by_login[login]
                 if login in outcome.values:
-                    profile = outcome.values[login]
-                    if not isinstance(profile, OwnerGeoProfile):
-                        continue
-                    owners[owner_id]["location_raw"] = profile.location
-                    owners[owner_id]["blog"] = profile.blog
-                    owners[owner_id]["fetched"] = True
                     handled.add(owner_id)
                     fetched += 1
+                    profile = outcome.values[login]
+                    if isinstance(profile, OwnerGeoProfile):
+                        owners[owner_id]["location_raw"] = profile.location
+                        owners[owner_id]["blog"] = profile.blog
+                    continue
+                if login in attempted:
+                    # REST fallback answered but produced no profile (for
+                    # example a deleted account); record the miss as final.
+                    handled.add(owner_id)
+                    continue
+                reason = outcome.unresolved.get(login, "")
+                lowered = reason.lower()
+                if (
+                    reason
+                    and not is_transient_error(reason)
+                    and "deadline" not in lowered
+                    and "deferred" not in lowered
+                ):
+                    handled.add(owner_id)
         finally:
             deps.client.close()
 
-    cache = GeoCache(engine)
-    with_profile = [
-        (owner_id, owner["location_raw"], owner["blog"])
-        for owner_id, owner in owners.items()
-        if owner["location_raw"] is not None or owner["blog"] is not None
-    ]
-    resolved = resolve_many(
-        engine,
-        [raw for _, raw, _blog in with_profile],
-        blogs=[blog for _, _raw, blog in with_profile],
-        cache=cache,
+    updates, resolved, unmatched = _resolve_owner_rows_local(
+        engine, owners, retry_unmatched=retry_unmatched
     )
-    updates: list[dict[str, Any]] = []
-    unmatched = 0
-    for owner_id, owner in owners.items():
-        raw = owner.get("location_raw")
-        blog = owner.get("blog")
-        if raw is not None or blog is not None:
-            result = resolved.get(_owner_cache_key(raw, blog, None))
-            owner["country_iso"] = result.country_iso if result is not None else None
-            owner["geo_confidence"] = result.confidence if result is not None else "unmatched"
-            updates.append(
-                {
-                    "owner_id": owner_id,
-                    "location_raw": raw,
-                    "blog": blog,
-                    "country_iso": owner["country_iso"],
-                    "geo_confidence": owner["geo_confidence"],
-                    "geo_version": GEO_RESOLVER_VERSION,
-                }
-            )
-        elif owner_id in handled:
-            owner["country_iso"] = None
-            owner["geo_confidence"] = "unmatched"
-            unmatched += 1
-            updates.append(
-                {
-                    "owner_id": owner_id,
-                    "location_raw": None,
-                    "blog": owner.get("blog"),
-                    "country_iso": None,
-                    "geo_confidence": "unmatched",
-                    "geo_version": GEO_RESOLVER_VERSION,
-                }
-            )
-    if updates:
-        statement = (
-            update(Owner)
-            .where(Owner.id == bindparam("owner_id"))
-            .values(
-                location_raw=bindparam("location_raw"),
-                blog=bindparam("blog"),
-                country_iso=bindparam("country_iso"),
-                geo_confidence=bindparam("geo_confidence"),
-                geo_version=bindparam("geo_version"),
-            )
+    # Owners we asked GitHub about but who returned no usable signal are final:
+    # record the miss so they are not retried on every pass.
+    for owner_id in handled:
+        owner = owners[owner_id]
+        if owner.get("location_raw") is not None or owner.get("blog") is not None:
+            continue
+        if owner.get("country_iso") is not None:
+            continue
+        owner["country_iso"] = None
+        owner["geo_confidence"] = "unmatched"
+        owner["geo_version"] = GEO_RESOLVER_VERSION
+        updates.append(
+            {
+                "owner_id": owner_id,
+                "location_raw": None,
+                "blog": owner.get("blog"),
+                "country_iso": None,
+                "geo_confidence": "unmatched",
+                "geo_version": GEO_RESOLVER_VERSION,
+            }
         )
-        with engine.begin() as connection:
-            connection.execute(statement, updates)
-    with engine.begin() as connection:
-        updated = connection.execute(
-            text(
-                "UPDATE run_items i"
-                " SET country_iso = o.country_iso, geo_confidence = o.geo_confidence"
-                " FROM repos r JOIN owners o ON o.id = r.owner_id"
-                " WHERE i.run_id = :run AND i.repo_id = r.id"
-                "   AND (i.country_iso IS DISTINCT FROM o.country_iso"
-                "        OR i.geo_confidence IS DISTINCT FROM o.geo_confidence)"
-            ),
-            {"run": run_id},
-        ).rowcount
-    remaining = _missing_owner_count(engine, run_id)
+        unmatched += 1
+
+    _write_owner_geo_updates(engine, updates)
+    updated = _sync_run_item_countries(engine, *target_ids)
+    remaining = _pending_owner_count(engine, run_id, retry_unmatched=retry_unmatched)
     return {
-        "owners": len(pending),
+        "owners": len(owners),
         "fetched": fetched,
-        "resolved": len([row for row in updates if row["country_iso"] is not None]),
+        "resolved": resolved,
         "unmatched": unmatched,
-        "updated": int(updated or 0),
+        "updated": updated,
         "remaining": remaining,
     }
+
+
+def backfill_countries_exhaustive(
+    engine: Engine,
+    run_id: int,
+    *,
+    limit: int = 500,
+    retry_unmatched: bool = False,
+    fetch: bool = True,
+    force_rest: bool = False,
+) -> dict[str, int]:
+    """Drain every actionable owner for a run, not just one 500-owner batch.
+
+    Each pass persists its owners and run rows, so a long API drain never loses
+    completed work. Pass ``limit=0`` to fetch every missing profile in a single
+    pass instead of looping in batches.
+    """
+    totals = {"owners": 0, "fetched": 0, "resolved": 0, "unmatched": 0, "updated": 0}
+    result: dict[str, int] = {**totals, "remaining": 0}
+    while True:
+        result = backfill_countries(
+            engine,
+            run_id,
+            limit=limit,
+            retry_unmatched=retry_unmatched,
+            fetch=fetch,
+            force_rest=force_rest,
+        )
+        for key in totals:
+            totals[key] += result[key]
+        if result["remaining"] == 0 or result["owners"] == 0:
+            break
+        if result["fetched"] == 0 and result["updated"] == 0:
+            break
+    return {**totals, "remaining": result["remaining"]}
 
 
 def _backfill_notice(request: Request) -> dict[str, Any] | None:
@@ -966,11 +1151,17 @@ def register_analysis(application: FastAPI, *, engine_factory) -> None:
 
             return errors.csrf_error_page(request)
         engine = engine_factory()
+        form = await request.form()
+        chosen = [key for key in form.getlist("metric") if key in _METRIC_BY_KEY]
+        keep_metrics: dict[str, str] = {"metrics_present": "1"}
+        if chosen:
+            keep_metrics["metrics"] = ",".join(chosen)
         try:
-            result = await run_in_threadpool(backfill_countries, engine, run_id)
+            result = await run_in_threadpool(backfill_countries_exhaustive, engine, run_id)
         except Exception as exc:  # a token/API failure must surface, not vanish
             query = urlencode(
                 {
+                    **keep_metrics,
                     "country_backfill": "error",
                     "message": f"{type(exc).__name__}: {exc}"[:240],
                 }
@@ -978,6 +1169,7 @@ def register_analysis(application: FastAPI, *, engine_factory) -> None:
             return RedirectResponse(f"/analysis/{run_id}?{query}", status_code=303)
         query = urlencode(
             {
+                **keep_metrics,
                 "country_backfill": "ok",
                 **{key: str(value) for key, value in result.items()},
             }
