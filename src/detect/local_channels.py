@@ -17,6 +17,7 @@ from detect.attribution import (
     match_files,
 )
 from detect.channels import ChannelResult
+from detect.content_attribution import CONTENT_CHANNEL, classify_agents_md
 from detect.gitio import (
     CommitRecord,
     GitError,
@@ -97,10 +98,13 @@ def detect_files_local(
         repo_full_name="", paths=frozenset(paths), truncated=False, source="tree"
     )
     hits = list(match_files(pack, presence, agents))
+    generic_paths = sorted(
+        path for path in paths if path.rsplit("/", 1)[-1] in pack.generic_weights
+    )[:CONTENT_PROBE_LIMIT]
     probe_order = sorted(
         {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
     )[:CONTENT_PROBE_LIMIT]
-    requested = [".gitignore", *probe_order]
+    requested = list(dict.fromkeys([".gitignore", *probe_order, *generic_paths]))
     contents: dict[str, str | None] | None = None
     if session is not None:
         contents = _session_blob_contents(session, requested, by_path)
@@ -140,13 +144,36 @@ def detect_files_local(
     probe_paths = sorted(
         {hit.evidence["path"] for hit in hits if hit.evidence.get("source") == "tree"}
     )[:CONTENT_PROBE_LIMIT]
-    for path in probe_paths:
+    for path in [*probe_paths, *generic_paths]:
         text = contents.get(path)
         if text is None:
             continue
         for hit in hits:
             if hit.evidence.get("path") == path:
                 hit.evidence.update({"size": len(text), "empty": not text.strip()})
+    known = frozenset(pack.agents) if agents is None else frozenset(agents)
+    for path in generic_paths:
+        text = contents.get(path)
+        if not text or not text.strip():
+            continue
+        attribution = classify_agents_md(text, known)
+        for signal in attribution.signals:
+            hits.append(
+                Hit(
+                    signal.agent,
+                    CONTENT_CHANNEL,
+                    {
+                        "path": path,
+                        "source": "tree",
+                        "marker": path.rsplit("/", 1)[-1],
+                        "cue": signal.cue,
+                        "snippet": signal.snippet,
+                        "confidence": signal.confidence,
+                        "classifier": attribution.version,
+                    },
+                )
+            )
+    hits = dedupe_hits(hits)
     return ChannelResult(hits=tuple(hits), status="ok", note="local clone; tree + .gitignore")
 
 
@@ -202,13 +229,20 @@ def detect_history_local(
     author_hits = match_author_identities(pack, identities, agents)
     trailer_hits = match_commit_messages(pack, messages, agents)
     bot_hits = match_bots(pack, bot_candidates, agents)
-    ai_oids = {hit.evidence.get("commit") for hit in (*author_hits, *trailer_hits)}
+    author_oids = {hit.evidence.get("commit") for hit in author_hits}
+    trailer_oids = {hit.evidence.get("commit") for hit in trailer_hits}
+    ai_oids = author_oids | trailer_oids
     bot_oids = {hit.evidence.get("commit") for hit in bot_hits}
     commit_oids = {sha for sha, _ in messages} - bot_oids
     ai_oids &= commit_oids
     human_oids = commit_oids - ai_oids
     stats: dict[str, object] = {
         "commits": len(commit_oids),
+        "window_commits": len(records),
+        "total_commits": None,
+        "commit_oids": tuple(sorted(commit_oids)),
+        "author_oids": tuple(sorted(str(oid) for oid in author_oids if oid in commit_oids)),
+        "trailer_oids": tuple(sorted(str(oid) for oid in trailer_oids if oid in commit_oids)),
         "ai_oids": tuple(sorted(str(oid) for oid in ai_oids if oid)),
         "human_oids": tuple(sorted(str(oid) for oid in human_oids if oid)),
         "committed_at": committed_at,

@@ -11,8 +11,8 @@
     <tbody>
       <tr class="{% if selected == 'api' %}estimate-selected{% endif %}">
         <td><strong>GitHub API</strong>{% if selected == 'api' %} — selected{% endif %}</td>
-        <td>{{ api.rest_calls }} REST + {{ api.graphql_calls }} GraphQL calls</td>
-        <td>≈{{ api.hours }} h (quota-bound)</td>
+        <td>{{ api.rest_calls }} REST + {{ api.graphql_calls }} GraphQL calls (≈{{ api.graphql_points }} points)</td>
+        <td>≈{{ api.hours }} h (quota-bound, {{ api.tokens }} token{% if api.tokens != 1 %}s{% endif %})</td>
         <td>none</td>
       </tr>
       <tr class="{% if selected == 'git' %}estimate-selected{% endif %}">
@@ -25,6 +25,9 @@
   </table>
   {% if api.deadline_exceeded %}
   <p class="flag warn">The API estimate exceeds the request deadline; an API run would stop partial. Local clone has no deadline constraint.</p>
+  {% endif %}
+  {% if not api.pool_ready %}
+  <p class="flag warn">{% if api.token_mode == "pool4" %}Four-account API mode needs exactly four configured tokens{% else %}Single-token API mode needs at least one configured token{% endif %}; {{ api.configured_tokens }} are available. Change the mode under System → Limits or update the environment credentials.</p>
   {% endif %}
   {% if git.warnings %}
   <p class="flag warn">Local clone: {{ git.warnings | join("; ") }}</p>

@@ -5,16 +5,19 @@ import json
 import re
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from sqlalchemy import text
 
 from detect import orchestrator as orchestrator_module
-from detect.channels import ChannelResult
+from detect.channels import ChannelResult, FailureKind
 from detect.orchestrator import CHANNELS, DetectConfig, DetectOptions, run_detection
 from detect.packs import Pack, Pattern, freeze_pack
+from detect.token_pool import DetectionTokenPool, TokenPoolExhausted
 from discover.pipeline import Deps
 from lib import cancellation
 from lib.cancellation import RunCancelled
@@ -54,8 +57,12 @@ def seed_source_run(engine) -> int:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers)"
-                " VALUES (:run, 1, 'octo/one', 10), (:run, 2, 'octo/two', 5)"
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers,"
+                " repo_created_at, commit_count, language, country_iso, geo_confidence)"
+                " VALUES (:run, 1, 'octo/one', 10, '2024-01-01T00:00:00Z', 1,"
+                " 'Python', 'DE', 'name'),"
+                " (:run, 2, 'octo/two', 5, '2025-02-01T00:00:00Z', 0,"
+                " 'Rust', NULL, NULL)"
             ),
             {"run": source_id},
         )
@@ -91,6 +98,7 @@ def make_handler(seen: list[str], queries: list[str]):
                             "repository": {
                                 "object": {
                                     "history": {
+                                        "totalCount": 1,
                                         "nodes": [
                                             {
                                                 "oid": "a1",
@@ -107,7 +115,7 @@ def make_handler(seen: list[str], queries: list[str]):
                                                     "user": {"login": "jane"},
                                                 },
                                             }
-                                        ]
+                                        ],
                                     }
                                 }
                             }
@@ -247,10 +255,379 @@ def test_run_detection_writes_evidence_and_never_searches(clean_db):
     assert item_one.detection["agents"] == ["Claude Code", "Codex"]
     assert item_one.detection["adoption_level"] == "pervasive"  # 1 AI of 1 windowed commit -> 100%
     assert item_one.detection["first_signal_at"] == "2026-01-02T00:00:00Z"
+    assert item_one.commit_count == 1
+    assert item_one.language == "Python"
+    assert item_one.country_iso == "DE"
+    assert datetime.fromisoformat(item_one.repo_created_at).astimezone(UTC) == datetime(
+        2024, 1, 1, tzinfo=UTC
+    )
     assert payload.detections == []
     assert len(list(payload.detections_source())) == len(rows)
     assert all("/search" not in path for path in seen)
     assert all("search(" not in query for query in queries)
+
+
+def test_run_detection_leases_distinct_dependencies_from_a_token_pool(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={"data": {"repository": {"object": {"history": {"totalCount": 0, "nodes": []}}}}},
+        )
+
+    first = make_deps(engine, handler)
+    second = make_deps(engine, handler)
+    first = Deps(client=first.client, engine=engine, token_fp="first")
+    second = Deps(client=second.client, engine=engine, token_fp="second")
+    leased: list[str] = []
+
+    class Lease:
+        def __init__(self, deps):
+            self.deps = deps
+
+        def __enter__(self):
+            leased.append(self.deps.token_fp)
+            return self.deps
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    class Pool:
+        def __init__(self):
+            self.dependencies = iter((first, second))
+
+        def lease(self, *, exclude=None):
+            return Lease(next(self.dependencies))
+
+        def observe(self, token_fp, response, phase):
+            return None
+
+        def stats(self):
+            return {"tokens": 4}
+
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    live_stats: list[dict[str, object]] = []
+    payload = run_detection(
+        first,
+        run_id,
+        make_options(source_id, agents=["Claude Code", "Codex"], channels=("author",)),
+        PACK,
+        config=DetectConfig(
+            concurrency=2,
+            pool_stats_reporter=live_stats.append,
+            pool_stats_interval=0,
+        ),
+        token_pool=Pool(),
+    )
+    assert set(leased) == {"first", "second"}
+    assert payload.field_stats["token_pool"] == {"tokens": 4}
+    assert payload.result_summary["token_pool"] == {"tokens": 4}
+    assert live_stats and live_stats[-1] == {"tokens": 4}
+
+
+def test_permanent_unavailable_scan_does_not_retry_another_identity():
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/gone",
+        stargazers=1,
+        hits=[],
+        results={
+            "file": ChannelResult(
+                status="unavailable",
+                note="repo not found",
+                failure_kind=FailureKind.PERMANENT,
+            )
+        },
+        pr_result=None,
+        history_stats={},
+    )
+
+    assert orchestrator_module._retry_on_another_identity(scan) is False
+
+
+def test_pool_scan_leases_only_once_for_a_permanent_not_found(monkeypatch):
+    deps = SimpleNamespace(token_fp="first")
+    leases: list[frozenset[str]] = []
+    permanent = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/gone",
+        stargazers=1,
+        hits=[],
+        results={
+            "file": ChannelResult(
+                status="unavailable",
+                note="repo not found",
+                failure_kind=FailureKind.PERMANENT,
+            )
+        },
+        pr_result=None,
+        history_stats={},
+    )
+
+    class Lease:
+        def __enter__(self):
+            return deps
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    class Pool:
+        def lease(self, *, exclude=None):
+            leases.append(exclude or frozenset())
+            return Lease()
+
+        def observe(self, token_fp, response, phase):
+            return None
+
+        def raise_if_exhausted(self):
+            return None
+
+    monkeypatch.setattr(orchestrator_module, "_scan_repo", lambda *args, **kwargs: permanent)
+
+    result = orchestrator_module._scan_repo_from_pool(Pool(), PACK, make_options(1), 1, None, {})
+
+    assert result is permanent
+    assert leases == [frozenset()]
+
+
+def test_transient_scan_retries_another_identity_without_note_matching():
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={
+            "author": ChannelResult(
+                status="partial",
+                note="opaque upstream failure",
+                failure_kind=FailureKind.RETRYABLE,
+            )
+        },
+        pr_result=None,
+        history_stats={},
+    )
+
+    assert orchestrator_module._retry_on_another_identity(scan) is True
+
+
+def test_pool_scan_releases_a_transient_failure_to_another_identity(monkeypatch):
+    dependencies = iter(
+        (
+            SimpleNamespace(token_fp="first"),
+            SimpleNamespace(token_fp="second"),
+        )
+    )
+    exclusions: list[frozenset[str]] = []
+    transient = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={
+            "file": ChannelResult(
+                status="partial",
+                note="HTTP 502",
+                failure_kind=FailureKind.RETRYABLE,
+            )
+        },
+        pr_result=None,
+        history_stats={},
+    )
+    recovered = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={"file": ChannelResult(status="ok")},
+        pr_result=None,
+        history_stats={},
+    )
+    scans = iter((transient, recovered))
+
+    class Lease:
+        def __init__(self, deps):
+            self.deps = deps
+
+        def __enter__(self):
+            return self.deps
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+    class Pool:
+        def lease(self, *, exclude=None):
+            exclusions.append(exclude or frozenset())
+            return Lease(next(dependencies))
+
+        def observe(self, token_fp, response, phase):
+            return None
+
+        def raise_if_exhausted(self):
+            return None
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_scan_repo",
+        lambda *args, **kwargs: next(scans),
+    )
+
+    result = orchestrator_module._scan_repo_from_pool(Pool(), PACK, make_options(1), 1, None, {})
+
+    assert result is recovered
+    assert exclusions == [frozenset(), frozenset({"first"})]
+
+
+def test_pool_exhaustion_aborts_detection_instead_of_writing_failed_repos(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    deps = make_deps(engine, make_handler([], []))
+
+    class ExhaustedPool:
+        def lease(self, *, exclude=None):
+            raise TokenPoolExhausted("all GitHub identities are disabled")
+
+        def stats(self):
+            return {"tokens": 4}
+
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    with pytest.raises(TokenPoolExhausted, match="all GitHub identities"):
+        run_detection(
+            deps,
+            run_id,
+            make_options(source_id, channels=("file",)),
+            PACK,
+            config=DetectConfig(concurrency=2),
+            token_pool=ExhaustedPool(),
+        )
+
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text("SELECT count(*) FROM run_items WHERE run_id = :run"),
+                {"run": run_id},
+            )
+            == 0
+        )
+
+
+def test_real_four_token_pool_preflights_and_audits_each_leased_identity(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    dependencies = []
+
+    for index in range(4):
+
+        def handler(request: httpx.Request, account=index) -> httpx.Response:
+            if request.url.path == "/user":
+                return httpx.Response(
+                    200,
+                    json={"login": f"account-{account}"},
+                    headers={
+                        "x-ratelimit-resource": "core",
+                        "x-ratelimit-remaining": "4999",
+                        "x-ratelimit-reset": "4102444800",
+                    },
+                )
+            body = json.loads(request.content)
+            if "viewer" in body["query"]:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "viewer": {"login": f"account-{account}"},
+                            "rateLimit": {
+                                "cost": 1,
+                                "limit": 5000,
+                                "used": 1,
+                                "remaining": 4999,
+                                "resetAt": "2100-01-01T00:00:00Z",
+                            },
+                        }
+                    },
+                    headers={
+                        "x-ratelimit-resource": "graphql",
+                        "x-ratelimit-remaining": "4999",
+                        "x-ratelimit-reset": "4102444800",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "repository": {"object": {"history": {"totalCount": 0, "nodes": []}}},
+                        "rateLimit": {
+                            "cost": 1,
+                            "limit": 5000,
+                            "used": 2,
+                            "remaining": 4998,
+                            "resetAt": "2100-01-01T00:00:00Z",
+                        },
+                    }
+                },
+                headers={
+                    "x-ratelimit-resource": "graphql",
+                    "x-ratelimit-remaining": "4998",
+                    "x-ratelimit-reset": "4102444800",
+                },
+            )
+
+        dependencies.append(
+            Deps(
+                client=httpx.Client(
+                    transport=httpx.MockTransport(handler), base_url="https://api.github.com"
+                ),
+                engine=engine,
+                token_fp=f"pool-{index}",
+            )
+        )
+
+    token_pool = DetectionTokenPool(dependencies, ("author",))
+    run_id = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source_id},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    try:
+        token_pool.preflight()
+        payload = run_detection(
+            token_pool.primary,
+            run_id,
+            make_options(source_id, channels=("author",)),
+            PACK,
+            config=DetectConfig(concurrency=4),
+            token_pool=token_pool,
+        )
+    finally:
+        token_pool.close()
+
+    assert payload.result_summary["repos_scanned"] == 2
+    with engine.connect() as connection:
+        fingerprints = set(
+            connection.scalars(
+                text("SELECT DISTINCT token_fp FROM audit_log WHERE run_id = :run"),
+                {"run": run_id},
+            )
+        )
+    assert fingerprints == {"pool-0", "pool-1"}
 
 
 def test_first_signal_at_uses_the_earliest_parsed_instant_for_mixed_offsets():
@@ -301,6 +678,126 @@ def test_first_signal_at_ignores_bot_channel_hits():
     assert orchestrator_module._first_signal_at(scan) == "2026-01-02T00:00:00Z"
 
 
+def test_repo_document_records_commit_window_coverage():
+    from detect.attribution import Hit
+    from detect.channels import ChannelResult
+
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[
+            Hit("Claude Code", "file", {"path": ".claude/x.json", "source": "tree"}),
+            Hit(
+                "Codex",
+                "file",
+                {"path": "CLAUDE.md", "source": "gitignore"},
+            ),
+            Hit("Claude Code", "commit_trailer", {"commit": "a1"}),
+        ],
+        results={
+            "file": ChannelResult(status="ok"),
+            "commit_trailer": ChannelResult(status="ok"),
+        },
+        pr_result=None,
+        history_stats={
+            "total_commits": 250,
+            "window_commits": 100,
+            "commits": 4,
+            "ai_oids": ("a1",),
+            "human_oids": ("h1", "h2", "h3"),
+            "committed_at": {
+                "h1": "2025-01-01T00:00:00Z",
+                "a1": "2025-01-03T00:00:00Z",
+                "h2": "2025-01-04T00:00:00Z",
+                "h3": "2025-01-05T00:00:00Z",
+            },
+        },
+    )
+
+    document = orchestrator_module._repo_document(scan)
+
+    assert document["oldest_scanned_commit_at"] == "2025-01-01T00:00:00Z"
+    assert document["total_commits"] == 250
+    assert document["history_window_commits"] == 100
+    assert document["history_eligible_commits"] == 4
+    assert document["history_coverage"] == 0.4
+    assert document["history_complete"] is False
+    assert scan.commit_count == 250
+
+
+def test_commit_ratio_uses_only_selected_attribution_channels():
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={"author": ChannelResult(status="ok")},
+        pr_result=None,
+        history_stats={
+            "commit_oids": ("author", "trailer", "human"),
+            "author_oids": ("author",),
+            "trailer_oids": ("trailer",),
+            "window_commits": 3,
+            "commits": 3,
+            "total_commits": 3,
+        },
+    )
+
+    document = orchestrator_module._repo_document(scan)
+
+    assert document["commit_ratio"] == 0.3333
+    assert document["history_complete"] is True
+
+
+def test_partial_history_never_becomes_a_zero_or_partial_ratio():
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={"author": ChannelResult(status="partial")},
+        pr_result=None,
+        history_stats={
+            "commit_oids": ("a", "h"),
+            "author_oids": ("a",),
+            "window_commits": 2,
+            "commits": 2,
+            "total_commits": 2,
+        },
+    )
+
+    document = orchestrator_module._repo_document(scan)
+
+    assert document["commit_ratio"] is None
+    assert document["history_coverage"] is None
+    assert document["history_complete"] is None
+
+
+def test_stale_total_never_reports_impossible_history_coverage():
+    scan = orchestrator_module._RepoScan(
+        repo_id=1,
+        full_name="octo/one",
+        stargazers=1,
+        hits=[],
+        results={"author": ChannelResult(status="ok")},
+        pr_result=None,
+        history_stats={
+            "commit_oids": ("a", "h", "new"),
+            "author_oids": ("a",),
+            "window_commits": 3,
+            "commits": 3,
+            "total_commits": 2,
+        },
+    )
+
+    document = orchestrator_module._repo_document(scan)
+
+    assert document["history_coverage"] is None
+    assert document["history_complete"] is None
+    assert any("coverage unknown" in note for note in document["notes"])
+
+
 def test_fold_summary_uses_the_earliest_parsed_instant_for_mixed_offsets():
     from detect.orchestrator import _fold_summary, _SummaryContribution
 
@@ -343,7 +840,8 @@ def test_run_detection_checkpoints_run_items_per_repo(clean_db):
         rows = (
             connection.execute(
                 text(
-                    "SELECT repo_id, full_name, detection FROM run_items"
+                    "SELECT repo_id, full_name, repo_created_at, commit_count, language,"
+                    " country_iso, detection FROM run_items"
                     " WHERE run_id = :run ORDER BY repo_id"
                 ),
                 {"run": run_id},
@@ -353,6 +851,10 @@ def test_run_detection_checkpoints_run_items_per_repo(clean_db):
         )
     assert [row["repo_id"] for row in rows] == [1, 2]
     assert rows[0]["full_name"] == "octo/one"
+    assert rows[0]["commit_count"] == 1
+    assert rows[0]["language"] == "Python"
+    assert rows[0]["country_iso"] == "DE"
+    assert rows[0]["repo_created_at"] is not None
     assert rows[0]["detection"]["agents"] == ["Claude Code", "Codex"]
 
 
@@ -376,8 +878,7 @@ def test_run_detection_records_compact_repo_filter_facets(clean_db):
         facets = set(
             connection.execute(
                 text(
-                    "SELECT repo_id, agent, channel FROM detection_repo_filters"
-                    " WHERE run_id = :run"
+                    "SELECT repo_id, agent, channel FROM detection_repo_filters WHERE run_id = :run"
                 ),
                 {"run": run_id},
             ).all()
@@ -411,6 +912,15 @@ def test_reset_run_artifacts_clears_evidence_and_facets(clean_db):
     )
     options = make_options(source_id, agents=["Claude Code"])
     run_detection(deps, run_id, options, PACK, config=DetectConfig(concurrency=2))
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO analysis_snapshots"
+                " (run_id, schema_version, build_seconds, payload)"
+                " VALUES (:run, 'test', 0, '{}'::jsonb)"
+            ),
+            {"run": run_id},
+        )
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"), {"run": run_id}
@@ -419,11 +929,22 @@ def test_reset_run_artifacts_clears_evidence_and_facets(clean_db):
             text("SELECT count(*) FROM detection_repo_filters WHERE run_id = :run"),
             {"run": run_id},
         ).scalar_one()
+        assert connection.execute(
+            text("SELECT count(*) FROM analysis_snapshots WHERE run_id = :run"),
+            {"run": run_id},
+        ).scalar_one()
     reset_run_artifacts(engine, run_id)
     with engine.connect() as connection:
         assert (
             connection.execute(
                 text("SELECT count(*) FROM detection_evidence WHERE run_id = :run"),
+                {"run": run_id},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM analysis_snapshots WHERE run_id = :run"),
                 {"run": run_id},
             ).scalar_one()
             == 0
@@ -706,9 +1227,14 @@ def test_execute_run_writes_result_summary_and_detections_csv(clean_db, tmp_path
             text("SELECT detection FROM run_items WHERE run_id = :run AND repo_id = 1"),
             {"run": run_id},
         ).scalar_one()
+        analysis_snapshots = connection.execute(
+            text("SELECT count(*) FROM analysis_snapshots WHERE run_id = :run"),
+            {"run": run_id},
+        ).scalar_one()
     assert row["status"] in ("done", "partial")
     assert row["result_summary"]["agents"] == {"Claude Code": 1, "Codex": 2}
     assert detections["agents"] == ["Claude Code", "Codex"]
+    assert analysis_snapshots == 1
     evidence_csv = list(Path(tmp_path).glob(f"*/{run_id}/detections.csv"))
     assert len(evidence_csv) == 1
     with evidence_csv[0].open(newline="", encoding="utf-8-sig") as handle:
@@ -767,7 +1293,8 @@ def test_summary_contributions_reproduce_batch_summary():
             pr_result=None,
             history_stats={"ai_oids": ("a1", "a2"), "human_oids": ("h1", "h2", "a2")},
             document={
-                "agents": ["Claude Code", "Generic"],
+                "agents": ["Claude Code"],
+                "generic_markers": ["AGENTS.md"],
                 "channels": {"file": "ok"},
                 "unavailable": False,
                 "first_signal_at": "2026-01-02T00:00:00Z",

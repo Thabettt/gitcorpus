@@ -214,6 +214,7 @@ def _load_rows(
                     Repo.full_name,
                     Repo.owner_id,
                     Repo.stargazers,
+                    Repo.created_at.label("repo_created_at"),
                     Repo.forks_count,
                     Repo.pushed_at,
                     Repo.archived,
@@ -675,7 +676,9 @@ def _commit_handler(
     def handler(ids):
         kept = []
         for repo_id in ids:
-            count = commit_counts.get(str(repo_id))
+            count = rows_by_id[repo_id].get("commit_count")
+            if not isinstance(count, int) or isinstance(count, bool):
+                count = commit_counts.get(str(repo_id))
             if count is None:
                 skipped["commits"] += 1
                 continue
@@ -845,6 +848,8 @@ def _payload_item(row: dict, virtual: dict) -> RunPayloadItem:
         repo_id=row["id"],
         full_name=row["full_name"],
         stargazers=row["stargazers"],
+        repo_created_at=_iso(row.get("repo_created_at")),
+        commit_count=row.get("commit_count"),
         pushed_at=row["pushed_at"],
         archived=row["archived"],
         language=row["language"],
@@ -1025,6 +1030,12 @@ def _run_filter(
             "results are incomplete"
         )
     rows = _ordered_rows(deps.engine, [row["id"] for row in candidates])
+    # Hydration already obtains default-branch totalCount for every resolved
+    # repository. Preserve it for analysis even when no commit filter was used.
+    for row in rows:
+        count = hydration.commit_counts.get(str(row["id"]))
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            row["commit_count"] = count
     budget = {"remaining": cfg.max_enrich}
     skipped = {"geo": 0, "dockerfile": 0, "commits": 0, "language_bytes": 0}
     started = time.perf_counter()

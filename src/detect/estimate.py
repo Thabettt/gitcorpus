@@ -5,12 +5,13 @@ from collections.abc import Sequence
 CHANNELS = ("file", "author", "branch", "label", "bot", "commit_trailer", "pr_metadata", "issue")
 
 _REST_CALLS_PER_REPO = {"file": 3.0}  # tree + .gitignore + bounded content probes
-_GRAPHQL_GROUPS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("author", "commit_trailer", "bot"), "author"),
-    (("branch", "label", "pr_metadata"), "pr_metadata"),
-    (("issue",), "issue"),
+_GRAPHQL_GROUPS: tuple[tuple[tuple[str, ...], str, float], ...] = (
+    (("author", "commit_trailer", "bot"), "author", 1.0),
+    (("branch", "label", "pr_metadata"), "pr_metadata", 3.0),
+    (("issue",), "issue", 2.0),
 )
 _POINTS_PER_HOUR = 5000.0
+_FOUR_TOKEN_RESERVE = 400.0
 
 
 def estimate(
@@ -35,16 +36,21 @@ def estimate(
         rest_calls = candidates * _REST_CALLS_PER_REPO["file"]
         per_channel["file"] = _REST_CALLS_PER_REPO["file"]
     graphql_calls = 0.0
-    for members, _owner in _GRAPHQL_GROUPS:
+    graphql_points = 0.0
+    for members, _owner, point_cost in _GRAPHQL_GROUPS:
         picked = [channel for channel in members if channel in selected]
         if picked:
             graphql_calls += candidates
+            graphql_points += candidates * point_cost
             per_channel[picked[0]] = per_channel.get(picked[0], 0.0) + 1.0
-    hours = round((rest_calls + graphql_calls) / (_POINTS_PER_HOUR * tokens), 2)
+    hourly_per_token = _POINTS_PER_HOUR - (_FOUR_TOKEN_RESERVE if tokens == 4 else 0.0)
+    hours = round(max(rest_calls, graphql_points) / (hourly_per_token * tokens), 2)
     return {
         "repos": candidates,
+        "tokens": tokens,
         "rest_calls": int(rest_calls),
         "graphql_calls": int(graphql_calls),
+        "graphql_points": int(graphql_points),
         "hours": hours,
         "per_channel": per_channel,
         "concurrency": concurrency,

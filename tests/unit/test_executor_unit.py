@@ -95,6 +95,8 @@ def test_bundle_item_prefers_raw_and_falls_back_to_snapshot():
         "repo_id": 2,
         "full_name": "octo/world",
         "stargazers": 5,
+        "repo_created_at": None,
+        "commit_count": None,
         "pushed_at": "2026-09-30T12:00:00+00:00",
         "archived": True,
         "language": "Go",

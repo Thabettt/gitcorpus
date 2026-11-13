@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -45,6 +46,7 @@ from detect.local_channels import (
 from detect.orchestrator import (
     DetectOptions,
     _candidates,
+    _facets,
     _failed_scan,
     _fold_summary,
     _repo_document,
@@ -242,6 +244,15 @@ def _scan_one(
             results=results,
             pr_result=pr_result,
             history_stats=history_stats,
+            repo_created_at=candidate.get("repo_created_at"),
+            commit_count=candidate.get("commit_count"),
+            pushed_at=candidate.get("pushed_at"),
+            archived=candidate.get("archived"),
+            language=candidate.get("language"),
+            license_spdx=candidate.get("license_spdx"),
+            country_iso=candidate.get("country_iso"),
+            geo_confidence=candidate.get("geo_confidence"),
+            virtuals=candidate.get("virtuals") or {},
         )
         scan.document = _repo_document(scan)
         return scan
@@ -272,7 +283,7 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
         }
         for hit in scan.hits
     ]
-    facets = sorted({(hit.agent, hit.channel) for hit in scan.hits})
+    facets = _facets(scan.hits)
     with engine.begin() as connection:
         if rows:
             connection.execute(insert(DetectionEvidence), rows)
@@ -299,6 +310,15 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
                 repo_id=scan.repo_id,
                 full_name=scan.full_name,
                 stargazers=scan.stargazers,
+                repo_created_at=scan.repo_created_at,
+                commit_count=scan.commit_count,
+                pushed_at=scan.pushed_at,
+                archived=scan.archived,
+                language=scan.language,
+                license_spdx=scan.license_spdx,
+                country_iso=scan.country_iso,
+                geo_confidence=scan.geo_confidence,
+                virtuals=dict(scan.virtuals),
                 detection=scan.document,
             )
             .on_conflict_do_update(
@@ -306,6 +326,15 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
                 set_={
                     "full_name": scan.full_name,
                     "stargazers": scan.stargazers,
+                    "repo_created_at": scan.repo_created_at,
+                    "commit_count": scan.commit_count,
+                    "pushed_at": scan.pushed_at,
+                    "archived": scan.archived,
+                    "language": scan.language,
+                    "license_spdx": scan.license_spdx,
+                    "country_iso": scan.country_iso,
+                    "geo_confidence": scan.geo_confidence,
+                    "virtuals": dict(scan.virtuals),
                     "detection": scan.document,
                 },
             )
@@ -317,6 +346,15 @@ class _RetainedScan:
     repo_id: int
     full_name: str
     stargazers: int | None
+    repo_created_at: datetime | None
+    commit_count: int | None
+    pushed_at: datetime | None
+    archived: bool | None
+    language: str | None
+    license_spdx: str | None
+    country_iso: str | None
+    geo_confidence: str | None
+    virtuals: dict
     document: dict
     contribution: _SummaryContribution
     partial: bool
@@ -328,6 +366,15 @@ def _retain(scan: _RepoScan) -> _RetainedScan:
         repo_id=scan.repo_id,
         full_name=scan.full_name,
         stargazers=scan.stargazers,
+        repo_created_at=scan.repo_created_at,
+        commit_count=scan.commit_count,
+        pushed_at=scan.pushed_at,
+        archived=scan.archived,
+        language=scan.language,
+        license_spdx=scan.license_spdx,
+        country_iso=scan.country_iso,
+        geo_confidence=scan.geo_confidence,
+        virtuals=dict(scan.virtuals),
         document=scan.document,
         contribution=_scan_contribution(scan),
         partial=partial,
@@ -863,6 +910,17 @@ def run_git_detection(
             repo_id=record.repo_id,
             full_name=record.full_name,
             stargazers=record.stargazers,
+            repo_created_at=(
+                record.repo_created_at.isoformat() if record.repo_created_at is not None else None
+            ),
+            commit_count=record.commit_count,
+            pushed_at=record.pushed_at.isoformat() if record.pushed_at is not None else None,
+            archived=record.archived,
+            language=record.language,
+            license_spdx=record.license_spdx,
+            country_iso=record.country_iso,
+            geo_confidence=record.geo_confidence,
+            virtuals=record.virtuals,
             detection=record.document,
         )
         for record in records

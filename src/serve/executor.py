@@ -4,6 +4,7 @@ import csv
 import hashlib
 import itertools
 import json
+import logging
 import queue
 import re
 import threading
@@ -23,12 +24,16 @@ from lib.cancellation import RunCancelled
 from serve.countries import country_name
 from store.models import RunItem, Runs
 
+logger = logging.getLogger("gitcorpus.serve")
+
 
 @dataclass
 class RunPayloadItem:
     repo_id: int
     full_name: str
     stargazers: int | None = None
+    repo_created_at: str | None = None
+    commit_count: int | None = None
     pushed_at: str | None = None
     archived: bool | None = None
     language: str | None = None
@@ -97,6 +102,8 @@ def _snapshot_item(item: RunPayloadItem) -> dict:
         "repo_id": item.repo_id,
         "full_name": item.full_name,
         "stargazers": item.stargazers,
+        "repo_created_at": item.repo_created_at,
+        "commit_count": item.commit_count,
         "pushed_at": item.pushed_at,
         "archived": item.archived,
         "language": item.language,
@@ -480,6 +487,15 @@ def execute_run(
                     progress_started_at=None,
                 )
             )
+        if run["kind"] == "detect":
+            try:
+                from serve.analysis import refresh_analysis_snapshot
+
+                refresh_analysis_snapshot(engine, run_id)
+            except Exception:
+                # This cache is a rebuildable read optimization. Never turn a
+                # valid detection into a failed run when its projection fails.
+                logger.exception("analysis snapshot build failed for detection run %s", run_id)
     except RunCancelled:
         with engine.begin() as connection:
             connection.execute(
@@ -544,6 +560,11 @@ def reset_run_artifacts(engine: Engine, run_id: int) -> None:
         if connection.scalar(text("SELECT to_regclass('detection_repo_filters')")) is not None:
             connection.execute(
                 text("DELETE FROM detection_repo_filters WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+        if connection.scalar(text("SELECT to_regclass('analysis_snapshots')")) is not None:
+            connection.execute(
+                text("DELETE FROM analysis_snapshots WHERE run_id = :run_id"),
                 {"run_id": run_id},
             )
 

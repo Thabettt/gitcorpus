@@ -1,0 +1,99 @@
+﻿repo,path,status,chars,products_named,products,explicit_heuristic,audit_class,detected_agents,content_only,detected_only
+initorigin/io-harness,AGENTS.md,ok,10685,5,Claude Code; Codex; Cursor; Copilot; Gemini,Claude Code,multi-agent,Claude Code,Codex; Copilot; Cursor; Gemini,
+lemma/lemma,AGENTS.md,ok,10262,0,,,,Copilot; Cursor,,Copilot; Cursor
+cote-star/agent-chorus,AGENTS.md,ok,6276,4,Claude Code; Codex; Cursor; Gemini,,,Claude Code; Cursor; Gemini,Codex,
+CharlyCst/spadebox,AGENTS.md,ok,1384,1,Claude Code,,,Claude Code,,
+buck2hub/cargo-buckal,AGENTS.md,ok,3260,0,,,,Claude Code; Copilot,,Claude Code; Copilot
+Industrial/id_effect,.maestro/AGENTS.md,ok,2011,1,Claude Code,,,Claude Code; Codex; Copilot; Cursor; Serena,,Codex; Copilot; Cursor; Serena
+adulari/forge,AGENTS.md,ok,5418,1,Claude Code,,,Claude Code,,
+halidecx/wpd,AGENTS.md,ok,2378,0,,,,Claude Code; Codex,,Claude Code; Codex
+keller-mark/pluot,AGENTS.md,ok,425,0,,,,Claude Code,,Claude Code
+alacritree/alacritree,AGENTS.md,ok,6495,0,,,,Claude Code; Codex,,Claude Code; Codex
+x402agent/NemoClawd,Pump-Fun/packages/plugin.delivery/AGENTS.md,ok,333,0,,,,Claude Code; Copilot; Cursor; Gemini,,Claude Code; Copilot; Cursor; Gemini
+Loctree/loctree,AGENTS.md,ok,5877,0,,,,Claude Code; Codex; Copilot; Cursor; Gemini; Junie,,Claude Code; Codex; Copilot; Cursor; Gemini; Junie
+wrestle-R/multi-codex,next/AGENTS.md,ok,674,0,,,,Claude Code; Codex,,Claude Code; Codex
+delexw/claude-code-trace,AGENTS.md,ok,1105,1,Claude Code,,,Claude Code,,
+tinyhumansai/tinycortex,AGENTS.md,ok,3060,0,,,,Claude Code; Cursor,,Claude Code; Cursor
+orbistry/alder,AGENTS.md,ok,6377,1,Claude Code,Claude Code,genuine-single,Claude Code,,
+gripebomb/ThreatDeck,AGENTS.md,ok,425,0,,,,,,
+Hccake/skill-deck,AGENTS.md,ok,1972,1,Claude Code,,,Claude Code; Copilot,,Copilot
+majiayu000/remem,AGENTS.md,ok,5437,2,Claude Code; Codex,,,Claude Code; Codex; Cursor,,Cursor
+indent-com/blit,AGENTS.md,ok,220,0,,,,Claude Code; Cursor,,Claude Code; Cursor
+dekobon/git-remote-object-store,AGENTS.md,ok,8247,2,Claude Code; Serena,Serena,incidental,Claude Code,Serena,
+0dragosh/cwt,AGENTS.md,ok,2250,1,Claude Code,,,Claude Code; Codex; Serena,,Codex; Serena
+stratoscale-io/zarr-datafusion,AGENTS.md,ok,468,1,Claude Code,,,Claude Code,,
+seedeai/valo,AGENTS.md,ok,12095,0,,,,Claude Code; Cursor,,Claude Code; Cursor
+styler-ai/ProjectAtlas,templates/AGENTS.md,ok,8721,3,Claude Code; Codex; OpenCode,,,Codex; Opencode,Claude Code,
+KonghaYao/peri,AGENTS.md,ok,3950,1,Claude Code,,,Claude Code; Codex; Cursor,,Codex; Cursor
+saltyskip/rift,AGENTS.md,ok,2969,0,,,,Claude Code; Codex,,Claude Code; Codex
+0x0c/unfydqry,docs/ja/AGENTS.md,ok,4179,1,Claude Code,,,Claude Code; Copilot,,Copilot
+Orrin-Team/orrin,AGENTS.md,ok,14484,1,Sweep,,,Claude Code,Sweep,Claude Code
+vincentarelbundock/calepin,AGENTS.md,ok,1398,2,Claude Code; Codex,,,Claude Code; Copilot,Codex,Copilot
+binbandit/snpm,AGENTS.md,ok,16810,0,,,,Claude Code,,Claude Code
+fastcrw/crw,AGENTS.md,ok,7816,0,,,,Claude Code,,Claude Code
+systempromptio/systemprompt-template,demo/AGENTS.md,ok,8321,0,,,,Claude Code; Codex,,Claude Code; Codex
+facetlayer/candle,AGENTS.md,ok,2744,0,,,,Claude Code,,Claude Code
+asterel-rs/asterel,src/onboard/templates/AGENTS.md,ok,2326,0,,,,Claude Code; Codex,,Claude Code; Codex
+iii-experimental/agentos,identity/AGENTS.md,ok,2740,0,,,,Claude Code; Cursor,,Claude Code; Cursor
+john-overton/T.O.R.E-Fighters,AGENTS.md,ok,12570,2,Codex; Cursor,Cursor,incidental,Claude Code,Codex; Cursor,Claude Code
+hongkongkiwi/research-master,AGENTS.md,ok,9177,1,Claude Code,,,Claude Code; Gemini; Qwen Coder; Serena,,Gemini; Qwen Coder; Serena
+receiptful/escpost,AGENTS.md,ok,4541,0,,,,Claude Code,,Claude Code
+Dicklesworthstone/toon_rust,AGENTS.md,ok,35236,7,Claude Code; Codex; Cursor; Gemini; Warp; ChatGPT; Codegen,Claude Code; Warp,genuine-single,Claude Code,ChatGPT; Codegen; Codex; Cursor; Gemini; Warp,
+lch5518/CodexPeek,AGENTS.md,ok,5812,1,Codex,Codex,subject-matter,,Codex,
+wuliLiuyue/wxpilot,AGENTS.md,ok,3692,1,Codex,,,Claude Code; Codex,,Claude Code
+kukuri-app/kukuri,AGENTS.md,ok,5065,1,Cursor,,,Claude Code; Codex; Cursor,,Claude Code; Codex
+vzwjustin/advisor,AGENTS.md,ok,1442,3,Claude Code; Codex; Cursor,Cursor,incidental,Claude Code; Codex; Cursor; Devin; Jules; Kiro,,Devin; Jules; Kiro
+ondeinference/onde,.agents/AGENTS.md,ok,30084,1,Qwen,,,Claude Code; Copilot,Qwen Coder,Claude Code; Copilot
+ticketry-hq/ticketry,AGENTS.md,ok,6597,1,Claude Code,,,Claude Code; Codex,,Codex
+WodenJay/GitScry,src/analysis/AGENTS.md,ok,696,0,,,,Copilot,,Copilot
+Pollux12/gmod-glua-ls,docs/mintlify/AGENTS.md,ok,827,0,,,,Claude Code; Codex; Copilot; Cursor; Opencode; Serena,,Claude Code; Codex; Copilot; Cursor; Opencode; Serena
+alpha-innovation-labs/ratkit,.nexus/templates/AGENTS.md,ok,1055,0,,,,Opencode,,Opencode
+akitaonrails/ai-memory,AGENTS.md,ok,56486,11,Claude Code; Codex; Cursor; Copilot; Gemini; OpenCode; Kiro; Sweep; Zed; ChatGPT; Codegen,Cursor; Copilot; Gemini; OpenCode; Kiro,multi-agent,Claude Code; Codex; Copilot; Cursor,ChatGPT; Codegen; Gemini; Kiro; Opencode; Sweep; Zed,
+subinium/SuperLightTUI,AGENTS.md,ok,21569,2,Claude Code; Cursor,,,Claude Code,Cursor,
+rosy-team/rosy,AGENTS.md,ok,1461,0,,,,Claude Code,,Claude Code
+NVIDIA/yaml-sigil-spec,implementation-kit/AGENTS.md,ok,7278,0,,,,,,
+git-ai-project/git-ai,AGENTS.md,ok,19805,2,Cursor; Devin,,,Claude Code; Codex; Copilot; Cursor; Devin; Factory Droid; Opencode,,Claude Code; Codex; Copilot; Factory Droid; Opencode
+empathic/clash,AGENTS.md,ok,6125,7,Claude Code; Codex; Copilot; Gemini; OpenCode; Zed; Amazon Q,Zed,incidental,Claude Code; Copilot; Gemini,AmazonQ; Codex; Opencode; Zed,
+noogram/cosmon,AGENTS.md,ok,15870,3,Claude Code; Codex; ChatGPT,,,Claude Code; Codex,ChatGPT,
+akitaonrails/nes-to-sms,AGENTS.md,ok,16468,0,,,,Claude Code,,Claude Code
+coollabsio/maxio,AGENTS.md,ok,67,1,Claude Code,,,Claude Code,,
+iebb/termgram,AGENTS.md,ok,6315,1,Codex,,,Amp; Claude Code,Codex,Amp; Claude Code
+CrossCopy/localsend-rs,AGENTS.md,ok,9261,2,Claude Code; Sweep,,,Claude Code; Cursor,Sweep,Cursor
+michaeldhopkins/jjpr,AGENTS.md,ok,12078,0,,,,Claude Code,,Claude Code
+StirlingMarketingGroup/marlin,AGENTS.md,ok,3002,0,,,,Claude Code,,Claude Code
+TheElysium/opencycling,AGENTS.md,ok,11074,0,,,,Claude Code; Opencode,,Claude Code; Opencode
+michaeldhopkins/safe-chains,AGENTS.md,ok,20734,2,Claude Code; Qwen,,,Claude Code,Qwen Coder,
+MrPandaRun/agentclaw,AGENTS.md,ok,5915,3,Claude Code; Codex; OpenCode,,,Claude Code; Codex,Opencode,
+praxis-proxy/ai,AGENTS.md,ok,9076,1,Claude Code,,,Claude Code,,
+yan-h/harmonigraph,AGENTS.md,ok,10417,3,Claude Code; Codex; Gemini,,,Claude Code; Codex; Gemini,,
+Zariel/brrpolice,AGENTS.md,ok,4786,0,,,,Claude Code,,Claude Code
+ansromanov/mantis,AGENTS.md,ok,27687,5,Claude Code; Codex; Cursor; OpenCode; Kilo Code,Claude Code; OpenCode,multi-agent,Claude Code; Copilot,Codex; Cursor; Kilo Code; Opencode,Copilot
+Nimblesite/Deslop,AGENTS.md,ok,10794,1,Claude Code,,,Claude Code; Cline; Codex; Copilot; Cursor; Opencode; Windsurf,,Cline; Codex; Copilot; Cursor; Opencode; Windsurf
+alilee/cranelisp,AGENTS.md,ok,473,2,Claude Code; Codex,Codex,incidental,Claude Code; Codex; Copilot,,Copilot
+LocalRouter/LocalRouter,AGENTS.md,ok,19220,4,Claude Code; Codex; Gemini; ChatGPT,Codex; ChatGPT,incidental,Claude Code,ChatGPT; Codex; Gemini,
+dimitrovakulenko/dwg-mcp-server,AGENTS.md,ok,6958,0,,,,,,
+destructatron/waytray,AGENTS.md,ok,2085,0,,,,Claude Code,,Claude Code
+xsean2020/kcptun-rs,knet-rs/src/sync/AGENTS.md,ok,3125,0,,,,Claude Code,,Claude Code
+runyte/runyte,AGENTS.md,ok,23313,1,Claude Code,,,Claude Code; Codex,,Codex
+screenpipe/whisper-rs,AGENTS.md,ok,604,0,,,,Claude Code,,Claude Code
+zeenix/pixel8,AGENTS.md,ok,9401,0,,,,Claude Code,,Claude Code
+sallowayma-git/IELTS-PDF2Test,AGENTS.md,ok,1599,0,,,,Claude Code; Codex,,Claude Code; Codex
+shadow3aaa/DaatLocus,AGENTS.md,ok,42316,1,Cursor,,,,Cursor,
+SuperLiaohy/MemRW3,AGENTS.md,ok,2837,0,,,,,,
+AstraBert/microagents,microagents-core/AGENTS.md,ok,27,0,,,,Claude Code,,Claude Code
+Greenhat-Security/GreenGateway,AGENTS.md,ok,8506,1,Claude Code,,,Claude Code; Codex,,Codex
+guixu-project/guixu,AGENTS.md,ok,4499,1,Codex,Codex,content-only,Claude Code; Kiro; Opencode,Codex,Claude Code; Kiro; Opencode
+vizier-lab/vizier,AGENTS.md,ok,116634,7,Claude Code; Cursor; Gemini; OpenCode; Sweep; ChatGPT; SpecKit,,,Claude Code; SpecKit,ChatGPT; Cursor; Gemini; Opencode; Sweep,
+tisrop/MergeBeacon,AGENTS.md,ok,9276,1,OpenCode,,,,Opencode,
+LeandroPG19/Memorys,AGENTS.md,ok,5099,4,Claude Code; Cursor; Gemini; Qwen,Claude Code; Cursor,multi-agent,Claude Code; Cursor; Jules,Gemini; Qwen Coder,Jules
+rustic-ai/uniko,AGENTS.md,ok,9765,0,,,,Claude Code; Codex,,Claude Code; Codex
+iagolavor/inertia,AGENTS.md,ok,6412,1,Cursor,Cursor,genuine-single,Cursor,,
+bgreenwell/xleak,AGENTS.md,ok,3141,1,Claude Code,,,Claude Code,,
+erbanku/weixin-cli,AGENTS.md,ok,941,0,,,,Claude Code,,Claude Code
+AkaraChen/luna,crates/asahi/AGENTS.md,ok,2339,0,,,,Claude Code; Copilot; Cursor,,Claude Code; Copilot; Cursor
+ryonakae/zerdr,AGENTS.md,ok,6013,1,Zed,Zed,incidental,Claude Code; Codex,Zed,Claude Code; Codex
+edgee-ai/edgee,AGENTS.md,ok,13439,5,Claude Code; Codex; Cursor; Copilot; OpenCode,Codex; Copilot,incidental,Claude Code; Copilot; Cursor; Serena,Codex; Opencode,Serena
+xyzzylabs/dent8,AGENTS.md,ok,12944,3,Claude Code; Codex; Cursor,Claude Code; Codex; Cursor,incidental,Claude Code; Codex; Cursor,,
+lizc2003/kloop,AGENTS.md,ok,3003,2,Claude Code; Codex,,,Claude Code,Codex,
+Dicklesworthstone/skillranker,AGENTS.md,ok,42488,3,Claude Code; Codex; Cursor,,,Claude Code; Codex,Cursor,
+astraw/tarzan-rs,AGENTS.md,ok,1709,0,,,,Claude Code,,Claude Code

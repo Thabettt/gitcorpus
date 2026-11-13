@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from serve.app import create_app
 from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
+from store.settings import update_run_settings
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -154,6 +155,38 @@ def test_detect_status_partial_shows_stopping_after_cancel_request(clean):
     after = client.get(f"/partials/detections/{run_id}/status")
     assert "Stopping" in after.text
     assert "Stop detection" not in after.text
+
+
+def test_detect_status_partial_shows_live_token_pool_health(clean):
+    client = make_client(clean)
+    run_id = seed_detect_run(clean, status="running")
+    pool = {
+        "tokens": 4,
+        "accounts": [
+            {
+                "fingerprint": f"private-fingerprint-{index}",
+                "core_remaining": 4900 - index,
+                "graphql_remaining": 4800 - index,
+                "active": 1,
+                "active_limit": 3,
+                "disabled": index == 3,
+                "cooldown_seconds": 0,
+            }
+            for index in range(4)
+        ],
+    }
+    with clean.begin() as connection:
+        connection.execute(
+            text("UPDATE runs SET result_summary = CAST(:summary AS jsonb) WHERE id = :run"),
+            {"run": run_id, "summary": json.dumps({"token_pool": pool})},
+        )
+
+    body = client.get(f"/partials/detections/{run_id}/status").text
+
+    assert "API pool:" in body
+    assert "account 1 · core 4900 · GraphQL 4800 · workers 1/3" in body
+    assert "account 4" in body and "disabled" in body
+    assert "private-fingerprint" not in body
 
 
 def test_detections_list_has_a_flush_repos_button(clean):
@@ -340,6 +373,30 @@ def test_start_detection_creates_run_and_submits_runner(clean):
     assert row["filter_spec"]["agents"] == ["Claude Code", "Codex"]
     assert row["filter_spec"]["channels"] == ["file", "pr_metadata"]
     assert row["filter_spec"]["limit"] == 50
+
+
+def test_start_pool4_detection_rejects_two_or_three_configured_tokens(clean, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKENS", "token-one,token-two")
+    monkeypatch.setenv("GITHUB_TOKEN", "single-token-is-ignored")
+    update_run_settings(clean, {"detect_token_mode": "pool4"})
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/detections/from/{source}")
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "channels": ["file"],
+            "source": "api",
+        },
+    )
+    assert response.status_code == 400
+    assert "exactly four" in response.text.lower()
+    assert "found 2" in response.text
+    with clean.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM runs WHERE kind = 'detect'")) == 0
 
 
 def test_start_detection_rejects_empty_source_run(clean):

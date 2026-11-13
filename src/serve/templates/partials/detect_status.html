@@ -13,6 +13,10 @@
   {% if result_summary and result_summary.repos_scanned %}
   <p class="muted">{{ result_summary.repos_scanned }} repos scanned · {{ result_summary.repos_with_signal }} with signals{% if result_summary.repos_unavailable %} · {{ result_summary.repos_unavailable }} unavailable{% endif %}</p>
   {% endif %}
+  {% set token_pool = result_summary.get('token_pool') if result_summary else none %}
+  {% if token_pool and token_pool.accounts %}
+  <p class="muted"><strong>API pool:</strong>{% if token_pool.global_cooldown_seconds %} global cooldown {{ token_pool.global_cooldown_seconds }}s ·{% endif %}{% for account in token_pool.accounts %} account {{ loop.index }} · core {{ account.core_remaining if account.core_remaining is not none else '—' }} · GraphQL {{ account.graphql_remaining if account.graphql_remaining is not none else '—' }} · workers {{ account.active }}/{{ account.active_limit }} · 5xx {{ account.transient_hits|default(0) }} · limits {{ account.secondary_hits|default(0) }}{% if account.disabled %} · disabled{% elif account.cooldown_seconds %} · cooling {{ account.cooldown_seconds }}s{% endif %}{% if not loop.last %};{% endif %}{% endfor %}</p>
+  {% endif %}
   {% if run.status in ('queued', 'running') %}
   {% if cancelling %}
   <p class="muted">Stopping — finishing the current repos…</p>

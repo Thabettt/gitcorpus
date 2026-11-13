@@ -26,6 +26,7 @@ TABLES = {
     "trace_packs",
     "detection_evidence",
     "detection_repo_filters",
+    "analysis_snapshots",
 }
 
 EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
@@ -147,6 +148,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "limiter_max_concurrent": False,
         "discovery_concurrency": False,
         "detect_concurrency": False,
+        "detect_token_mode": False,
         "updated_at": False,
     },
     "corpora": {
@@ -184,6 +186,14 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "agent": False,
         "channel": False,
     },
+    "analysis_snapshots": {
+        "run_id": False,
+        "schema_version": False,
+        "source_finished_at": True,
+        "generated_at": False,
+        "build_seconds": False,
+        "payload": False,
+    },
 }
 
 EXPECTED_INDEXES = {
@@ -196,6 +206,7 @@ EXPECTED_INDEXES = {
     "shards_state_idx": "shards",
     "audit_ts_idx": "audit_log",
     "audit_run_idx": "audit_log",
+    "de_run_committed_file_repo_idx": "detection_evidence",
 }
 
 
@@ -248,6 +259,7 @@ def test_primary_keys(migrated: Engine):
         "shards": ["id"],
         "audit_log": ["id"],
         "corpora": ["id"],
+        "analysis_snapshots": ["run_id"],
     }
     for table, columns in expected.items():
         assert inspector.get_pk_constraint(table)["constrained_columns"] == columns
@@ -334,6 +346,7 @@ def test_server_defaults(migrated: Engine):
         ("corpora", "frozen_at"): "now()",
         ("app_settings", "discovery_concurrency"): "32",
         ("app_settings", "detect_concurrency"): "32",
+        ("app_settings", "detect_token_mode"): "single",
         ("app_settings", "graphql_batch_size"): "29",
         ("app_settings", "adaptive"): "false",
     }
@@ -377,6 +390,22 @@ def test_detect_concurrency_check_constraint(migrated: Engine):
                     text("UPDATE app_settings SET detect_concurrency = :value WHERE id = 1"),
                     {"value": value},
                 )
+
+
+def test_detect_token_mode_check_constraint(migrated: Engine):
+    with migrated.begin() as connection:
+        connection.execute(
+            text("INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        )
+        connection.execute(
+            text("UPDATE app_settings SET detect_token_mode = 'single' WHERE id = 1")
+        )
+        connection.execute(text("UPDATE app_settings SET detect_token_mode = 'pool4' WHERE id = 1"))
+    with pytest.raises(IntegrityError):
+        with migrated.begin() as connection:
+            connection.execute(
+                text("UPDATE app_settings SET detect_token_mode = 'round-robin' WHERE id = 1")
+            )
 
 
 def test_foreign_keys(migrated: Engine):

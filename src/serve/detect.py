@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
@@ -24,9 +24,19 @@ from detect.git_orchestrator import (
 )
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
 from detect.packs import load_frozen
+from detect.token_pool import (
+    FIXED_API_TOKEN_COUNT,
+    TOKEN_MODE_POOL4,
+    TOKEN_MODE_SINGLE,
+    DetectionTokenPool,
+    token_mode_error,
+)
+from discover.pipeline import Deps
 from enrich.cloner import CloneMode, estimate_clone, free_disk_mb
+from lib import audit
 from lib.deadlines import clone_timeout_seconds
-from lib.gh_client import API_VERSION, load_tokens
+from lib.gh_client import API_VERSION, create_client, load_tokens, token_fingerprint
+from limiter.buckets import BucketLimiter
 from serve import errors
 from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
@@ -127,6 +137,60 @@ def _annotate_payload_countries(engine: Engine, payload: RunPayload) -> None:
             item.country_iso, item.geo_confidence = pair
 
 
+def _build_detection_token_pool(
+    engine: Engine,
+    tokens: list[str],
+    channels: frozenset[str],
+    *,
+    max_concurrent: int,
+) -> DetectionTokenPool:
+    if len(tokens) != FIXED_API_TOKEN_COUNT:
+        raise ValueError(
+            f"API detection pooling requires exactly {FIXED_API_TOKEN_COUNT} GitHub tokens"
+        )
+    from serve.runner import _redis_or_fake
+
+    redis_client = _redis_or_fake()
+    per_token_concurrency = max(1, min(max_concurrent, 3))
+    limiter = (
+        BucketLimiter(redis_client, max_concurrent=per_token_concurrency)
+        if redis_client is not None
+        else None
+    )
+    audit_buffer = audit.AuditBuffer(engine)
+    dependencies: list[Deps] = []
+    try:
+        for token in tokens:
+            dependencies.append(
+                Deps(
+                    client=create_client(token),
+                    engine=engine,
+                    redis=redis_client,
+                    limiter=limiter,
+                    token_fp=token_fingerprint(token),
+                    audit_buffer=audit_buffer,
+                )
+            )
+        return DetectionTokenPool(
+            dependencies,
+            channels,
+            max_concurrency=per_token_concurrency,
+        )
+    except Exception:
+        for deps in dependencies:
+            deps.client.close()
+        raise
+
+
+def _persist_detection_pool_stats(engine: Engine, run_id: int, stats: dict[str, object]) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            update(Runs)
+            .where(Runs.id == run_id, Runs.status == "running")
+            .values(result_summary={"token_pool": stats})
+        )
+
+
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
         spec = parse_detect_spec(spec_doc)
@@ -151,22 +215,54 @@ def build_detect_runner(engine: Engine) -> Runner:
         else:
             from serve.runner import build_deps
 
-            deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
-            try:
-                payload = run_detection(
-                    deps,
-                    run_id,
-                    spec,
-                    pack,
-                    config=DetectConfig(
-                        deadline_seconds=float(settings.request_deadline_seconds),
-                        concurrency=min(
-                            settings.detect_concurrency, settings.limiter_max_concurrent
+            tokens = load_tokens()
+            token_error = token_mode_error(settings.detect_token_mode, len(tokens))
+            if token_error is not None:
+                raise ValueError(token_error)
+            if settings.detect_token_mode == TOKEN_MODE_SINGLE:
+                deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
+                try:
+                    payload = run_detection(
+                        deps,
+                        run_id,
+                        spec,
+                        pack,
+                        config=DetectConfig(
+                            deadline_seconds=float(settings.request_deadline_seconds),
+                            concurrency=min(
+                                settings.detect_concurrency, settings.limiter_max_concurrent
+                            ),
                         ),
-                    ),
+                    )
+                finally:
+                    deps.client.close()
+            elif settings.detect_token_mode == TOKEN_MODE_POOL4:
+                token_pool = _build_detection_token_pool(
+                    engine,
+                    tokens,
+                    spec.channels,
+                    max_concurrent=settings.limiter_max_concurrent,
                 )
-            finally:
-                deps.client.close()
+                try:
+                    token_pool.preflight()
+                    payload = run_detection(
+                        token_pool.primary,
+                        run_id,
+                        spec,
+                        pack,
+                        config=DetectConfig(
+                            deadline_seconds=float(settings.request_deadline_seconds),
+                            concurrency=min(settings.detect_concurrency, token_pool.worker_limit),
+                            pool_stats_reporter=lambda stats: _persist_detection_pool_stats(
+                                engine, run_id, stats
+                            ),
+                        ),
+                        token_pool=token_pool,
+                    )
+                finally:
+                    token_pool.close()
+            else:  # pragma: no cover - persisted and environment values are constrained
+                raise ValueError(f"unknown API detection token mode {settings.detect_token_mode!r}")
         try:
             _annotate_payload_countries(engine, payload)
         except Exception as exc:  # country enrichment must never fail a detection
@@ -816,6 +912,27 @@ def register_detect(
                 },
                 status_code=400,
             )
+        settings = load_run_settings(engine)
+        configured_tokens = len(load_tokens())
+        configured_error = token_mode_error(settings.detect_token_mode, configured_tokens)
+        if spec.source == "api" and configured_error is not None:
+            return templates.TemplateResponse(
+                request,
+                "detect_options.html",
+                {
+                    **_options_context(
+                        engine,
+                        run_id,
+                        errors_=[configured_error],
+                        hints=[
+                            "Choose the matching API token mode under System → Limits, then "
+                            "configure the required environment credentials."
+                        ],
+                    ),
+                    "csrf_token": request.state.csrf_token,
+                },
+                status_code=400,
+            )
         row = await run_in_threadpool(_run_row, engine, run_id)
         if row is None or row["kind"] != "find" or row["status"] not in ("done", "partial"):
             return templates.TemplateResponse(
@@ -934,12 +1051,28 @@ def register_detect(
         limit_value = int(raw_limit) if raw_limit.isdigit() and int(raw_limit) > 0 else None
         repos = min(candidates, limit_value) if limit_value is not None else candidates
         settings = load_run_settings(engine)
+        configured_tokens = len(load_tokens())
+        pooled_mode = settings.detect_token_mode == TOKEN_MODE_POOL4
+        estimate_tokens = FIXED_API_TOKEN_COUNT if pooled_mode else 1
+        estimate_concurrency = (
+            min(
+                settings.detect_concurrency,
+                FIXED_API_TOKEN_COUNT * min(settings.limiter_max_concurrent, 3),
+            )
+            if pooled_mode
+            else min(settings.detect_concurrency, settings.limiter_max_concurrent)
+        )
         api_estimate = estimate(
             repos,
             channels,
-            tokens=max(1, len(load_tokens())),
-            concurrency=min(settings.detect_concurrency, settings.limiter_max_concurrent),
+            tokens=estimate_tokens,
+            concurrency=estimate_concurrency,
             deadline_seconds=float(settings.request_deadline_seconds),
+        )
+        api_estimate["configured_tokens"] = configured_tokens
+        api_estimate["token_mode"] = settings.detect_token_mode
+        api_estimate["pool_ready"] = (
+            token_mode_error(settings.detect_token_mode, configured_tokens) is None
         )
         free_mb = (
             clone_disk_free("clones") if clone_disk_free is not None else free_disk_mb("clones")

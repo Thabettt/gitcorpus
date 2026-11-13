@@ -353,6 +353,8 @@ def create_app(
     clock: Callable[[], float] = time.time,
     redis_ping: Callable[[], object] | None = None,
     token_present: Callable[[], bool] | None = None,
+    token_count: Callable[[], int] | None = None,
+    token_source_name: Callable[[], str] | None = None,
     metrics_redis: Callable[[], object] | None = None,
     find_count_factory: Callable[[], Callable[[str], int]] | None = None,
     clone_disk_free: Callable[[str], float] | None = None,
@@ -1089,6 +1091,8 @@ def create_app(
         application,
         engine_factory=engine_for,
         token_present=token_present,
+        token_count=token_count,
+        token_source_name=token_source_name,
     )
 
     register_pages(

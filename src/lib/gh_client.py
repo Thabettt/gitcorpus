@@ -2,7 +2,7 @@ import hashlib
 import os
 import time
 from collections.abc import Callable, Mapping
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -32,6 +32,15 @@ def load_tokens() -> list[str]:
     if single:
         return [single]
     return []
+
+
+def token_source() -> str:
+    """Name of the variable supplying credentials, for operator diagnostics."""
+    if os.environ.get("GITHUB_TOKENS", "").strip():
+        return "GITHUB_TOKENS"
+    if os.environ.get("GITHUB_TOKEN", "").strip():
+        return "GITHUB_TOKEN"
+    return ""
 
 
 def token_fingerprint(token: str) -> str:
@@ -73,6 +82,9 @@ _CANCEL_SLEEP_CHUNK = 1.0
 _SECONDARY_PAUSE_CAP = 480.0
 _SECONDARY_PAUSE_JITTER = 30.0
 _DENIAL_JITTER = 1.0
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_MAX_SAME_HOST_REDIRECTS = 3
+_REDIRECT_SCOPED_HEADERS = frozenset({"if-none-match", "if-modified-since"})
 
 
 def _sleep_with_cancellation(seconds: float, sleep: Callable[[float], None]) -> None:
@@ -195,7 +207,6 @@ def request_with_retry(
     on_response: Callable[[httpx.Response, float], None] | None = None,
     retry_5xx: bool = True,
 ) -> httpx.Response:
-    resource = resource_for_url(url)
     if auth and not is_api_host(url):
         raise ValueError(f"refusing to send credentials to non-GitHub host: {url}")
     request_kwargs: dict = {}
@@ -208,7 +219,10 @@ def request_with_retry(
     limiter_key = token_id or ""
     denials = 0
     attempt = 0
+    redirects = 0
+    current_url = url
     while True:
+        resource = resource_for_url(current_url)
         if limiter is not None:
             acquired = limiter.acquire(resource, limiter_key, now=now())
             if not acquired.allowed:
@@ -227,9 +241,9 @@ def request_with_retry(
             started = now()
             try:
                 if auth:
-                    response = client.request(method, url, **request_kwargs)
+                    response = client.request(method, current_url, **request_kwargs)
                 else:
-                    request = client.build_request(method, url, **request_kwargs)
+                    request = client.build_request(method, current_url, **request_kwargs)
                     request.headers.pop("Authorization", None)
                     response = client.send(request)
             finally:
@@ -251,6 +265,31 @@ def request_with_retry(
             on_response(response, latency_ms)
         if limiter is not None:
             limiter.update_from_headers(resource, limiter_key, response.headers, now=now())
+        if method.upper() in {"GET", "HEAD"} and response.status_code in _REDIRECT_STATUSES:
+            location = response.headers.get("location")
+            if not location:
+                return response
+            if redirects >= _MAX_SAME_HOST_REDIRECTS:
+                raise RequestFailed(response.status_code, "too many GitHub API redirects")
+            redirected_url = urljoin(str(response.request.url), location)
+            if auth and not is_api_host(redirected_url):
+                raise RequestFailed(
+                    response.status_code,
+                    "refusing to send credentials across a non-GitHub API redirect",
+                )
+            headers = request_kwargs.get("headers")
+            if isinstance(headers, Mapping):
+                # Validators belong to the original resource. A rename redirect
+                # targets a different URL whose representation has a different
+                # ETag/Last-Modified contract.
+                request_kwargs["headers"] = {
+                    key: value
+                    for key, value in headers.items()
+                    if str(key).casefold() not in _REDIRECT_SCOPED_HEADERS
+                }
+            current_url = redirected_url
+            redirects += 1
+            continue
         if not retry_5xx and response.status_code in _TIMEOUT_STATUSES:
             return response
         if _sso_partial_results(response.headers):

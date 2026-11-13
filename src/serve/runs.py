@@ -140,11 +140,15 @@ _SNAPSHOT_COLUMNS = (
 def _item_rows(
     engine: Engine, run_id: int, *, backfill_metadata: bool = False
 ) -> list[Mapping[str, object]]:
-    # Detection runs only snapshot repo_id/full_name/stargazers in run_items;
-    # join the repos (and owners) tables so their exported corpus carries the
-    # full metadata. Find-run exports keep their run-time snapshot untouched:
-    # the stored columns are authoritative even where they are null.
-    columns = [RunItem.repo_id, RunItem.full_name, RunItem.stargazers]
+    # New detection runs carry complete source snapshots. The live fallback is
+    # retained only for legacy runs created before those fields were copied.
+    columns = [
+        RunItem.repo_id,
+        RunItem.full_name,
+        RunItem.stargazers,
+        RunItem.repo_created_at,
+        RunItem.commit_count,
+    ]
     for name, item_column, live_column in _SNAPSHOT_COLUMNS:
         column = func.coalesce(item_column, live_column) if backfill_metadata else item_column
         columns.append(column.label(name))
@@ -176,6 +180,8 @@ def _snapshot(row: Mapping[str, object], *, include_detection: bool = False) -> 
         "repo_id": row["repo_id"],
         "full_name": row["full_name"],
         "stargazers": row["stargazers"],
+        "repo_created_at": _iso(row["repo_created_at"]),
+        "commit_count": row["commit_count"],
         "pushed_at": _iso(row["pushed_at"]),
         "archived": row["archived"],
         "language": row["language"],
