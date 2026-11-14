@@ -335,56 +335,67 @@ def test_run_detection_leases_distinct_dependencies_from_a_token_pool(clean_db):
     assert live_stats and live_stats[-1] == {"tokens": 4}
 
 
-def test_permanent_unavailable_scan_does_not_retry_another_identity():
-    scan = orchestrator_module._RepoScan(
+def _scan_with(result: ChannelResult, *, full_name: str = "octo/one"):
+    return orchestrator_module._RepoScan(
         repo_id=1,
-        full_name="octo/gone",
+        full_name=full_name,
         stargazers=1,
         hits=[],
-        results={
-            "file": ChannelResult(
-                status="unavailable",
-                note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
-            )
-        },
+        results={"file": result},
         pr_result=None,
         history_stats={},
+    )
+
+
+def test_permanent_failure_does_not_retry_another_identity():
+    scan = _scan_with(
+        ChannelResult(status="partial", note="graphql errors", failure_kind=FailureKind.PERMANENT)
     )
 
     assert orchestrator_module._retry_on_another_identity(scan) is False
 
 
-def test_pool_scan_leases_only_once_for_a_permanent_not_found(monkeypatch):
-    deps = SimpleNamespace(token_fp="first")
-    leases: list[frozenset[str]] = []
-    permanent = orchestrator_module._RepoScan(
-        repo_id=1,
+def test_not_found_scan_retries_another_identity():
+    scan = _scan_with(
+        ChannelResult(
+            status="unavailable", note="repo not found", failure_kind=FailureKind.NOT_FOUND
+        ),
+        full_name="octo/private",
+    )
+
+    assert orchestrator_module._retry_on_another_identity(scan) is True
+
+
+def test_pool_scan_tries_every_identity_before_reporting_not_found(monkeypatch):
+    from detect.token_pool import TokenPoolRetryExhausted
+
+    accounts = ("first", "second", "third", "fourth")
+    exclusions: list[frozenset[str]] = []
+    not_found = _scan_with(
+        ChannelResult(
+            status="unavailable", note="repo not found", failure_kind=FailureKind.NOT_FOUND
+        ),
         full_name="octo/gone",
-        stargazers=1,
-        hits=[],
-        results={
-            "file": ChannelResult(
-                status="unavailable",
-                note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
-            )
-        },
-        pr_result=None,
-        history_stats={},
     )
 
     class Lease:
+        def __init__(self, deps):
+            self.deps = deps
+
         def __enter__(self):
-            return deps
+            return self.deps
 
         def __exit__(self, exc_type, exc, traceback):
             return None
 
     class Pool:
         def lease(self, *, exclude=None):
-            leases.append(exclude or frozenset())
-            return Lease()
+            excluded = exclude or frozenset()
+            exclusions.append(excluded)
+            remaining = [fp for fp in accounts if fp not in excluded]
+            if not remaining:
+                raise TokenPoolRetryExhausted("no untried identity")
+            return Lease(SimpleNamespace(token_fp=remaining[0]))
 
         def observe(self, token_fp, response, phase):
             return None
@@ -392,12 +403,17 @@ def test_pool_scan_leases_only_once_for_a_permanent_not_found(monkeypatch):
         def raise_if_exhausted(self):
             return None
 
-    monkeypatch.setattr(orchestrator_module, "_scan_repo", lambda *args, **kwargs: permanent)
+    monkeypatch.setattr(orchestrator_module, "_scan_repo", lambda *args, **kwargs: not_found)
 
     result = orchestrator_module._scan_repo_from_pool(Pool(), PACK, make_options(1), 1, None, {})
 
-    assert result is permanent
-    assert leases == [frozenset()]
+    assert result is not_found
+    assert exclusions == [
+        frozenset(),
+        frozenset({"first"}),
+        frozenset({"first", "second"}),
+        frozenset({"first", "second", "third"}),
+    ]
 
 
 def test_transient_scan_retries_another_identity_without_note_matching():
@@ -527,77 +543,79 @@ def test_pool_exhaustion_aborts_detection_instead_of_writing_failed_repos(clean_
         )
 
 
-def test_real_four_token_pool_preflights_and_audits_each_leased_identity(clean_db):
-    engine = clean_db()
-    source_id = seed_source_run(engine)
-    dependencies = []
+_GRAPHQL_HEADERS = {
+    "x-ratelimit-resource": "graphql",
+    "x-ratelimit-remaining": "4998",
+    "x-ratelimit-reset": "4102444800",
+}
+_RATE_LIMIT = {
+    "cost": 1,
+    "limit": 5000,
+    "used": 2,
+    "remaining": 4998,
+    "resetAt": "2100-01-01T00:00:00Z",
+}
 
-    for index in range(4):
 
-        def handler(request: httpx.Request, account=index) -> httpx.Response:
-            if request.url.path == "/user":
-                return httpx.Response(
-                    200,
-                    json={"login": f"account-{account}"},
-                    headers={
-                        "x-ratelimit-resource": "core",
-                        "x-ratelimit-remaining": "4999",
-                        "x-ratelimit-reset": "4102444800",
-                    },
-                )
-            body = json.loads(request.content)
-            if "viewer" in body["query"]:
-                return httpx.Response(
-                    200,
-                    json={
-                        "data": {
-                            "viewer": {"login": f"account-{account}"},
-                            "rateLimit": {
-                                "cost": 1,
-                                "limit": 5000,
-                                "used": 1,
-                                "remaining": 4999,
-                                "resetAt": "2100-01-01T00:00:00Z",
-                            },
-                        }
-                    },
-                    headers={
-                        "x-ratelimit-resource": "graphql",
-                        "x-ratelimit-remaining": "4999",
-                        "x-ratelimit-reset": "4102444800",
-                    },
-                )
+def _pool_account_deps(engine, account: int, can_see=lambda name: True) -> Deps:
+    """One pooled GitHub account; ``can_see(repo_name)`` decides 200 versus NOT_FOUND."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user":
             return httpx.Response(
                 200,
-                json={
-                    "data": {
-                        "repository": {"object": {"history": {"totalCount": 0, "nodes": []}}},
-                        "rateLimit": {
-                            "cost": 1,
-                            "limit": 5000,
-                            "used": 2,
-                            "remaining": 4998,
-                            "resetAt": "2100-01-01T00:00:00Z",
-                        },
-                    }
-                },
+                json={"login": f"account-{account}"},
                 headers={
-                    "x-ratelimit-resource": "graphql",
-                    "x-ratelimit-remaining": "4998",
+                    "x-ratelimit-resource": "core",
+                    "x-ratelimit-remaining": "4999",
                     "x-ratelimit-reset": "4102444800",
                 },
             )
-
-        dependencies.append(
-            Deps(
-                client=httpx.Client(
-                    transport=httpx.MockTransport(handler), base_url="https://api.github.com"
-                ),
-                engine=engine,
-                token_fp=f"pool-{index}",
+        body = json.loads(request.content)
+        if "viewer" in body["query"]:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"viewer": {"login": f"account-{account}"}, "rateLimit": _RATE_LIMIT}
+                },
+                headers=_GRAPHQL_HEADERS,
             )
+        name = body["variables"]["name"]
+        if not can_see(name):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"repository": None, "rateLimit": _RATE_LIMIT},
+                    "errors": [
+                        {
+                            "type": "NOT_FOUND",
+                            "message": f"Could not resolve to a Repository with the name '{name}'.",
+                        }
+                    ],
+                },
+                headers=_GRAPHQL_HEADERS,
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {"object": {"history": {"totalCount": 0, "nodes": []}}},
+                    "rateLimit": _RATE_LIMIT,
+                }
+            },
+            headers=_GRAPHQL_HEADERS,
         )
 
+    return Deps(
+        client=httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://api.github.com"
+        ),
+        engine=engine,
+        token_fp=f"pool-{account}",
+    )
+
+
+def _detect_with_pool(engine, source_id: int, dependencies: list[Deps]) -> tuple[int, object]:
     token_pool = DetectionTokenPool(dependencies, ("author",))
     run_id = create_run(
         engine,
@@ -618,6 +636,15 @@ def test_real_four_token_pool_preflights_and_audits_each_leased_identity(clean_d
         )
     finally:
         token_pool.close()
+    return run_id, payload
+
+
+def test_real_four_token_pool_preflights_and_audits_each_leased_identity(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    dependencies = [_pool_account_deps(engine, index) for index in range(4)]
+
+    run_id, payload = _detect_with_pool(engine, source_id, dependencies)
 
     assert payload.result_summary["repos_scanned"] == 2
     with engine.connect() as connection:
@@ -628,6 +655,90 @@ def test_real_four_token_pool_preflights_and_audits_each_leased_identity(clean_d
             )
         )
     assert fingerprints == {"pool-0", "pool-1"}
+
+
+def _author_channel(engine, run_id: int, repo_id: int) -> dict:
+    with engine.connect() as connection:
+        detection = connection.scalar(
+            text("SELECT detection FROM run_items WHERE run_id = :run AND repo_id = :repo"),
+            {"run": run_id, "repo": repo_id},
+        )
+    return {"unavailable": detection["unavailable"], "status": detection["channels"]["author"]}
+
+
+def test_pool_reads_a_repo_only_one_account_can_see_on_every_run(clean_db):
+    """404 from the leased account, 200 from another: availability is lease-independent."""
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    owner = 3  # the only pooled account that can see octo/one
+
+    outcomes = []
+    for _ in range(3):
+        dependencies = [
+            _pool_account_deps(
+                engine,
+                index,
+                can_see=lambda name, account=index: name != "one" or account == owner,
+            )
+            for index in range(4)
+        ]
+        run_id, payload = _detect_with_pool(engine, source_id, dependencies)
+        assert payload.result_summary["repos_unavailable"] == 0
+        outcomes.append(_author_channel(engine, run_id, 1))
+
+    assert all(outcome["unavailable"] is False for outcome in outcomes)
+    assert all(outcome["status"] == "ok" for outcome in outcomes)
+
+
+def test_pool_marks_a_repo_unavailable_only_after_every_account_misses(clean_db):
+    engine = clean_db()
+    source_id = seed_source_run(engine)
+    dependencies = [
+        _pool_account_deps(engine, index, can_see=lambda name: name != "one") for index in range(4)
+    ]
+
+    run_id, payload = _detect_with_pool(engine, source_id, dependencies)
+
+    assert payload.result_summary["repos_unavailable"] == 1
+    outcome = _author_channel(engine, run_id, 1)
+    assert outcome["unavailable"] is True
+    assert outcome["status"] == "unavailable"
+    with engine.connect() as connection:
+        tried = set(
+            connection.scalars(
+                text("SELECT DISTINCT token_fp FROM audit_log WHERE run_id = :run"),
+                {"run": run_id},
+            )
+        )
+    assert tried == {"pool-0", "pool-1", "pool-2", "pool-3"}
+
+
+def test_candidates_exclude_private_and_internal_repos(clean_db):
+    engine = clean_db()
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO owners (id, login, type) VALUES (1, 'octo', 'User')"))
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES (1, 'n1', 'octo/open', 1, 'open', 'public'),"
+                " (2, 'n2', 'octo/mine', 1, 'mine', 'private'),"
+                " (3, 'n3', 'octo/corp', 1, 'corp', 'internal')"
+            )
+        )
+    source_id = create_run(engine, {"q": "language:rust"}, api_version="2022-11-28")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers)"
+                " VALUES (:run, 1, 'octo/open', 1), (:run, 2, 'octo/mine', 100),"
+                " (:run, 3, 'octo/corp', 50)"
+            ),
+            {"run": source_id},
+        )
+
+    candidates = orchestrator_module._candidates(engine, source_id, None)
+
+    assert [row["full_name"] for row in candidates] == ["octo/open"]
 
 
 def test_first_signal_at_uses_the_earliest_parsed_instant_for_mixed_offsets():

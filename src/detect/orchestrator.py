@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
@@ -132,6 +132,10 @@ def _candidates(engine: Engine, source_run_id: int, limit: int | None) -> list[M
         )
         .join(Repo, Repo.id == RunItem.repo_id, isouter=True)
         .where(RunItem.run_id == source_run_id)
+        # The corpus is public. A search run with an account's own token can match
+        # that account's private repos; keep them out of detection. Rows without a
+        # stored repo record are kept and rely on the cross-identity 404 retry.
+        .where(or_(Repo.visibility.is_(None), Repo.visibility == "public"))
         .order_by(RunItem.stargazers.desc().nullslast(), RunItem.repo_id)
     )
     if limit is not None:
@@ -258,8 +262,13 @@ def _scan_repo_from_pool(
     return last_scan
 
 
+_IDENTITY_RETRY_KINDS = frozenset({FailureKind.RETRYABLE, FailureKind.NOT_FOUND})
+
+
 def _retry_on_another_identity(scan: _RepoScan) -> bool:
-    return any(result.failure_kind is FailureKind.RETRYABLE for result in scan.results.values())
+    # A not-found answer is identity-scoped: a repository one pooled account cannot
+    # see may be readable by another, so availability must not depend on the lease.
+    return any(result.failure_kind in _IDENTITY_RETRY_KINDS for result in scan.results.values())
 
 
 def _failed_scan(
