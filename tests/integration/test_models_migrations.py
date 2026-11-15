@@ -490,9 +490,7 @@ def test_indexes_exist_with_partial_predicates(migrated: Engine):
     assert defs["audit_ts_idx"].endswith("(ts)")
     assert defs["de_run_lifecycle_repo_idx"].endswith("(run_id, rule_lifecycle, repo_id)")
     assert defs["de_run_semantics_repo_idx"].endswith("(run_id, evidence_semantics, repo_id)")
-    assert defs["de_run_current_repo_idx"].endswith(
-        "(run_id, repo_id) WHERE (is_current IS TRUE)"
-    )
+    assert defs["de_run_current_repo_idx"].endswith("(run_id, repo_id) WHERE (is_current IS TRUE)")
     assert defs["de_run_historical_repo_idx"].endswith(
         "(run_id, repo_id) WHERE (is_historical IS TRUE)"
     )
