@@ -694,6 +694,30 @@ def test_fetch_pr_refs_returns_the_remote_map_and_persists_a_sorted_snapshot(tmp
     assert read_pr_refs_snapshot(fake) == {2: "s2", 10: "s10"}
 
 
+def test_newest_pr_refs_keeps_the_highest_numbers():
+    refs = {2: "a", 10: "b", 7: "c", 3: "d"}
+    assert gitio.newest_pr_refs(refs, 2) == {10: "b", 7: "c"}
+    assert gitio.newest_pr_refs(refs, None) == refs
+    assert gitio.newest_pr_refs(refs, 10) == refs
+
+
+def test_fetch_pr_refs_limit_fetches_only_the_newest_prs(tmp_path):
+    listing = "".join(f"s{n}\trefs/pull/{n}/head\n" for n in (1, 2, 3, 40, 41))
+    fake = FakeRepo(
+        lambda args: listing if args[0] == "ls-remote" else "",
+        dest=_repo_dir(tmp_path),
+    )
+    assert fetch_pr_refs(fake, depth=100, limit=2) == {40: "s40", 41: "s41"}
+    assert fake.stdins[-1] == b"refs/pull/40/head\nrefs/pull/41/head\n"
+    assert read_pr_refs_snapshot(fake) == {40: "s40", 41: "s41"}
+
+
+def test_fetch_pr_refs_limit_also_caps_prelisted_refs(tmp_path):
+    fake = FakeRepo(lambda args: "", dest=_repo_dir(tmp_path))
+    refs = {n: f"s{n}" for n in range(1, 6)}
+    assert fetch_pr_refs(fake, depth=100, refs=refs, limit=1) == {5: "s5"}
+
+
 def test_fetch_pr_refs_skips_fetch_and_snapshot_when_no_pr_refs(tmp_path):
     fake = FakeRepo(lambda args: "" if args[0] == "ls-remote" else None, dest=_repo_dir(tmp_path))
     assert fetch_pr_refs(fake, depth=100) == {}

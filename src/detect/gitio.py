@@ -726,6 +726,18 @@ def remote_refs_for(full_name: str) -> RemoteRefs:
         raise RemoteRefsUnavailable(f"ls-refs failed for {full_name}: {exc}") from exc
 
 
+def newest_pr_refs(refs: Mapping[int, str], limit: int | None) -> dict[int, str]:
+    """Keep the ``limit`` highest-numbered PR refs (``None`` keeps all).
+
+    PR numbers rise with creation time, so this is the same "last N pull
+    requests" window the API channels apply; without it a git scan walks every
+    PR the repository ever had, including long-closed unmerged ones.
+    """
+    if limit is None or len(refs) <= limit:
+        return dict(refs)
+    return {number: refs[number] for number in sorted(refs, reverse=True)[: max(0, limit)]}
+
+
 def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
     return remote_refs(repo).pr_refs
 
@@ -841,6 +853,7 @@ def fetch_pr_refs(
     gate: object | None = None,
     refs: Mapping[int, str] | None = None,
     gate_reserved: bool = False,
+    limit: int | None = None,
 ) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
     # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
@@ -865,6 +878,7 @@ def fetch_pr_refs(
         finally:
             if metrics is not None:
                 metrics.pr_listing_ms = phase_metrics.elapsed_ms(listing_started)
+    remote = newest_pr_refs(remote, limit)
     if metrics is not None:
         metrics.refs_count = len(remote)
     if not remote:

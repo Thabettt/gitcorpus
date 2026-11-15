@@ -31,6 +31,7 @@ from detect.gitio import (
     git_error_tail,
     list_hidden_refs,
     list_tree_entries,
+    newest_pr_refs,
     parse_merge_branches,
     read_commits,
     read_log,
@@ -373,13 +374,21 @@ def detect_pr_commits_local(
     refs: Mapping[int, str] | None = None,
     gate_reserved: bool = False,
     session: RepoWalkSession | None = None,
+    pr_limit: int | None = None,
 ) -> ChannelResult:
     empty_stats = {"propagated_oids": (), "commenter_entries": (), "created_at": {}}
     resumed_note = ""
     metrics = phase_metrics.current()
 
     def fetch_and_list() -> dict[int, str]:
-        return fetch_pr_refs(repo, depth=depth, gate=gate, refs=refs, gate_reserved=gate_reserved)
+        return fetch_pr_refs(
+            repo,
+            depth=depth,
+            gate=gate,
+            refs=refs,
+            gate_reserved=gate_reserved,
+            limit=pr_limit,
+        )
 
     try:
         refs = retry_call(fetch_and_list, attempts=attempts, base_delay=retry_delay)
@@ -393,7 +402,7 @@ def detect_pr_commits_local(
                 note=f"pull refs fetch failed: {git_error_tail(exc)}",
                 stats=empty_stats,
             )
-        refs = snapshot
+        refs = newest_pr_refs(snapshot, pr_limit)
         resumed_note = f"resumed from persisted PR ref snapshot: {git_error_tail(exc)}"
         if metrics is not None:
             metrics.refs_count = len(refs)
@@ -465,6 +474,8 @@ def detect_pr_commits_local(
     hits = dedupe_hits(hits)
     propagated = tuple(sorted({hit.evidence["commit"] for hit in hits}))
     note = f"local PR refs; depth {depth}"
+    if pr_limit is not None:
+        note = f"local PR refs (newest {pr_limit}); depth {depth}"
     if resumed_note:
         note = f"{note}; {resumed_note}"
     if walk_failures:

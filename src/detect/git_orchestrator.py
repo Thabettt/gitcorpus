@@ -15,7 +15,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -37,6 +37,7 @@ from detect.gitio import (
     _acquire_gate,
     classify_git_failure,
     clone_lean,
+    newest_pr_refs,
     remote_refs_for,
     retry_call,
 )
@@ -248,6 +249,7 @@ def _scan_one(
                 refs=prefetched.pr_refs if prefetched is not None else None,
                 gate_reserved=gate_reserved,
                 session=walk_session(repo),
+                pr_limit=_pr_window(spec),
             )
             results["pr_metadata"] = pr_result
         if "branch" in active:
@@ -574,6 +576,11 @@ def _failure_message(scan: _RepoScan) -> str:
     return f"{scan.full_name}: {scan.document['notes'][0]}"
 
 
+def _pr_window(spec: DetectOptions) -> int:
+    """The "last N pull requests" window, shared with the API channels."""
+    return max(1, int(spec.windows.get("prs", 100)))
+
+
 def _is_monster(refs: RemoteRefs) -> bool:
     return len(refs.pr_refs) > _MONSTER_PR_THRESHOLD
 
@@ -673,10 +680,15 @@ def _scan_worker_main(
     pool = ThreadPoolExecutor(max_workers=max(1, threads))
     probe_times: dict[str, float] = {}
 
+    pr_window = _pr_window(spec)
+
     def timed_probe(full_name: str) -> RemoteRefs:
         started = time.monotonic()
         try:
-            return admission_probe(full_name)
+            refs = admission_probe(full_name)
+            # Admission sees the capped window, so a repo whose newest PRs fit
+            # under the monster threshold never reserves a fleet permit.
+            return replace(refs, pr_refs=newest_pr_refs(refs.pr_refs, pr_window))
         finally:
             probe_times[full_name] = phase_metrics.elapsed_ms(started)
 
@@ -969,7 +981,7 @@ def run_git_detection(
             ]
             rotation = itertools.cycle(identities)
             rotation_lock = threading.Lock()
-            pr_limit = int(spec.windows.get("prs", 100))
+            pr_limit = _pr_window(spec)
             workers = min(_PR_MAX_WORKERS, _PR_WORKERS_PER_TOKEN * len(identities))
 
             def fetch(full_name: str) -> ChannelResult:

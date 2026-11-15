@@ -611,7 +611,18 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     captured: dict[str, object] = {}
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         captured.update(
             depth=depth,
@@ -656,7 +667,18 @@ def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp
     gates: list[object] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         gates.append(gate)
         return ChannelResult(status="ok")
@@ -1237,7 +1259,18 @@ def test_admit_requeued_monster_is_not_re_probed(tmp_path, monkeypatch):
     seen: list[dict] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         seen.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
@@ -1325,7 +1358,18 @@ def test_scan_one_releases_a_reserved_permit_in_finally(tmp_path, monkeypatch):
     calls: list[dict] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         calls.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
@@ -1429,7 +1473,18 @@ def test_scan_one_shares_one_walk_session_across_file_history_and_pr(tmp_path, m
         return {key: ChannelResult(status="ok") for key in ("author", "commit_trailer", "bot")}
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         seen.append(("pr", session))
         return ChannelResult(status="ok")
@@ -1658,7 +1713,7 @@ def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_p
         out_queue,
         FakeCancelEvent(),
         GitScanConfig(keep=True, scan_root=str(tmp_path)),
-        make_spec(1, frozenset({"pr_metadata"})),
+        make_spec(1, frozenset({"pr_metadata"}), windows={"prs": 1000}),
         PACK,
         str(tmp_path),
         1,
@@ -1675,6 +1730,36 @@ def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_p
     # test_scan_one_releases_a_reserved_permit_in_finally.
     assert gate.acquires == 1 and gate.held == 1
     assert out_queue.messages and out_queue.messages[0][0] == "scan"
+
+
+def test_scan_worker_main_caps_probed_refs_to_the_pr_window(tmp_path, monkeypatch):
+    seen: list[dict] = []
+
+    def fake_scan_one(run_dir, cfg, spec, pack, active, candidate, **kwargs):
+        seen.append(kwargs)
+        return _failed_scan(candidate, GitError(["git"], 128, "synthetic"), failure_class="fatal")
+
+    monkeypatch.setattr("detect.git_orchestrator._scan_one", fake_scan_one)
+    gate = AdmissionGate()
+    _scan_main_isolated(
+        [_candidate("octo/monster")],
+        FakeOutQueue(),
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"pr_metadata"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        gate,
+        lambda full_name: _refs(501),
+    )
+
+    # The default 100-PR window keeps only the newest refs, so the repo is no
+    # longer a monster and never takes a fleet permit.
+    assert sorted(seen[0]["prefetched"].pr_refs) == list(range(401, 501))
+    assert seen[0]["gate_reserved"] is False
+    assert gate.acquires == 0
 
 
 def test_git_scan_config_defaults_pr_gate_permits_to_32():

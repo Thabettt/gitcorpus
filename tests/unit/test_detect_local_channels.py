@@ -419,6 +419,30 @@ def test_detect_pr_commits_local_maps_commits_to_prs_and_dedupes(tmp_path):
     assert result.stats["created_at"] == {}
 
 
+def test_detect_pr_commits_local_walks_only_the_newest_prs(tmp_path):
+    walked: list[str] = []
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return "aaa\trefs/pull/7/head\nbbb\trefs/pull/9/head\n"
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "rev-list":
+            walked.append(args[-1])
+            return {"aaa": "s1\ns2\n", "bbb": "s2\n"}[args[-1]]
+        if args[0] == "log":
+            return _PR_LOG
+        return None
+
+    result = detect_pr_commits_local(
+        FakeRepo(handler, dest=_repo_dir(tmp_path)), PACK, depth=100, pr_limit=1
+    )
+    assert result.status == "ok"
+    assert "aaa" not in walked
+    assert result.hits == ()
+    assert "newest 1" in (result.note or "")
+
+
 def test_detect_pr_commits_local_without_refs_is_ok():
     repo = FakeRepo(lambda args: "" if args[0] == "fetch" else "")
     result = detect_pr_commits_local(repo, PACK)
@@ -431,7 +455,7 @@ def test_detect_pr_commits_local_forwards_the_gate(monkeypatch):
     captured: dict[str, object] = {}
     gate = object()
 
-    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False, limit=None):
         captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
         return {}
 
@@ -445,7 +469,7 @@ def test_detect_pr_commits_local_forwards_the_gate(monkeypatch):
 def test_detect_pr_commits_local_defaults_to_no_gate(monkeypatch):
     captured: dict[str, object] = {}
 
-    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False, limit=None):
         captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
         return {}
 
@@ -460,7 +484,7 @@ def test_detect_pr_commits_local_forwards_prefetched_refs_and_reserved_gate(monk
     gate = object()
     prefetched = {7: "aaa"}
 
-    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False):
+    def fake_fetch(repo, *, depth, gate=None, refs=None, gate_reserved=False, limit=None):
         captured.update(gate=gate, refs=refs, gate_reserved=gate_reserved)
         return {}
 
