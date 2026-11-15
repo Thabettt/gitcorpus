@@ -82,6 +82,16 @@ redis.call('EXPIRE', key, ttl)
 return tostring(paused)
 """
 
+# GitHub stamps every response with the reset of the window it was counted in.
+# A response that was in flight across a reset arrives carrying the *previous*
+# window's usage; folding that into the new window's count once parked every
+# worker for ~55 minutes per hour. So a header is applied only when it belongs
+# to the current (or a newer) GitHub window:
+#   * reset <= now            -> that window is over; ignore the header.
+#   * reset <  stored gh_reset -> an older window than one already seen; ignore.
+#   * reset >  stored gh_reset -> a new window: GitHub's count replaces ours.
+#   * same window / first seen -> only ever raise the count (in-flight calls
+#                                 are not yet reflected in the header).
 _RECONCILE_SCRIPT = """
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
@@ -91,17 +101,27 @@ local reset = tonumber(ARGV[4])
 local ttl = tonumber(ARGV[5])
 local window_end = tonumber(redis.call('HGET', key, 'window_end') or '0')
 local count = tonumber(redis.call('HGET', key, 'count') or '0')
+local gh_reset = tonumber(redis.call('HGET', key, 'gh_reset') or '0')
+if reset >= 0 and reset <= now then
+  return count
+end
+if reset > 0 and gh_reset > 0 and reset < gh_reset then
+  return count
+end
 if window_end <= now then
   count = 0
   window_end = now + window_seconds
 end
-if target > count then
+if reset > 0 and gh_reset > 0 and reset > gh_reset then
+  count = target
+elseif target > count then
   count = target
 end
 if reset > now then
   window_end = reset
+  gh_reset = reset
 end
-redis.call('HSET', key, 'window_end', window_end, 'count', count)
+redis.call('HSET', key, 'window_end', window_end, 'count', count, 'gh_reset', gh_reset)
 redis.call('EXPIRE', key, ttl)
 return count
 """
