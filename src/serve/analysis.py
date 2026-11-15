@@ -573,7 +573,7 @@ _FINGERPRINT_CHANNELS = (
 
 
 def _fingerprint_debut(engine: Engine, run_id: int, limit: int = FINGERPRINT_LIMIT) -> list[dict]:
-    # Query channel by channel so each scan can use de_run_channel_idx. A single
+    # Query channel by channel so each scan can use de_run_channel_repo_idx. A single
     # CASE over every evidence row is roughly 5x slower on large runs.
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for channel, expression in _FINGERPRINT_CHANNELS:

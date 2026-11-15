@@ -152,6 +152,17 @@ _TRANSIENT_PHRASES = (
     "returned error: 504",
     "rate limit",
     "abuse detection",
+    # Mid-transfer disconnects. Protocol-v2 desyncs ("expected
+    # 'acknowledgments'") are matched by ``_NEGOTIATION_FAILURE`` below.
+    "remote end hung up unexpectedly",
+    "unexpected disconnect",
+)
+# Failures of the have/ack negotiation itself. Skipping negotiation (the noop
+# algorithm sends "done" up front, so no acknowledgments section is expected)
+# sidesteps them at the cost of re-receiving a few already-held commits.
+_NEGOTIATION_FAILURE = re.compile(
+    r"expected\s+\W?(acknowledgments|packfile|shallow-info|wanted-refs)\b|protocol error",
+    re.IGNORECASE,
 )
 _LOCAL_PHRASES = (
     "index.lock",
@@ -179,11 +190,22 @@ def classify_git_failure(exc: BaseException) -> str:
     haystack = f"{stderr}\n{exc}".lower()
     if any(phrase in haystack for phrase in _DEAD_PHRASES):
         return "dead"
-    if any(phrase in haystack for phrase in _TRANSIENT_PHRASES):
+    if any(phrase in haystack for phrase in _TRANSIENT_PHRASES) or _NEGOTIATION_FAILURE.search(
+        haystack
+    ):
+        # A negotiation desync is the server answering a round with something
+        # other than the section git expected (an ERR line, a cut-off body, a
+        # load-shed reply): GitHub-side noise, not a dead repository.
         return "transient"
     if any(phrase in haystack for phrase in _LOCAL_PHRASES):
         return "local"
     return "fatal"
+
+
+def is_negotiation_failure(exc: BaseException) -> bool:
+    """True when git died mid have/ack negotiation (see ``_NEGOTIATION_FAILURE``)."""
+    stderr = getattr(exc, "stderr", "") or ""
+    return bool(_NEGOTIATION_FAILURE.search(f"{stderr}\n{exc}"))
 
 
 def _sleep_interruptibly(delay: float) -> None:
@@ -704,6 +726,18 @@ def remote_refs_for(full_name: str) -> RemoteRefs:
         raise RemoteRefsUnavailable(f"ls-refs failed for {full_name}: {exc}") from exc
 
 
+def newest_pr_refs(refs: Mapping[int, str], limit: int | None) -> dict[int, str]:
+    """Keep the ``limit`` highest-numbered PR refs (``None`` keeps all).
+
+    PR numbers rise with creation time, so this is the same "last N pull
+    requests" window the API channels apply; without it a git scan walks every
+    PR the repository ever had, including long-closed unmerged ones.
+    """
+    if limit is None or len(refs) <= limit:
+        return dict(refs)
+    return {number: refs[number] for number in sorted(refs, reverse=True)[: max(0, limit)]}
+
+
 def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
     return remote_refs(repo).pr_refs
 
@@ -819,6 +853,7 @@ def fetch_pr_refs(
     gate: object | None = None,
     refs: Mapping[int, str] | None = None,
     gate_reserved: bool = False,
+    limit: int | None = None,
 ) -> dict[int, str]:
     # Size the ref set first, then request exactly those refs in bounded
     # chunks. Destination-less refspecs ride --stdin (off the argv ceiling);
@@ -843,6 +878,7 @@ def fetch_pr_refs(
         finally:
             if metrics is not None:
                 metrics.pr_listing_ms = phase_metrics.elapsed_ms(listing_started)
+    remote = newest_pr_refs(remote, limit)
     if metrics is not None:
         metrics.refs_count = len(remote)
     if not remote:
@@ -859,6 +895,9 @@ def fetch_pr_refs(
         metrics.gate_wait_ms = 0.0 if metrics.gated else None
     gate_wait_ms = 0.0
     fetch_started = time.monotonic()
+    # Once one chunk trips a negotiation failure, the rest of this repo's
+    # chunks skip negotiation outright instead of failing the same way first.
+    skip_negotiation = False
     try:
         for numbers in chunked(sorted(remote), chunk_refs):
             if gated:
@@ -867,29 +906,15 @@ def fetch_pr_refs(
                 gate_wait_ms += phase_metrics.elapsed_ms(wait_started)
             try:
                 request = "".join(f"refs/pull/{number}/head\n" for number in numbers)
-                handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
-                try:
-                    handle.write(request.encode("ascii"))
-                    handle.close()
-                    with open(handle.name, "rb") as stdin:
-                        repo.git(
-                            "fetch",
-                            "--quiet",
-                            "--depth",
-                            str(depth),
-                            "--filter=tree:0",
-                            "--no-tags",
-                            "--no-write-fetch-head",
-                            "--recurse-submodules=no",
-                            "origin",
-                            "--stdin",
-                            stdin=stdin,
-                            timeout=_PR_CHUNK_TIMEOUT,
-                            env_extra={"GIT_NO_LAZY_FETCH": "1"},
-                        )
-                finally:
-                    with contextlib.suppress(OSError):
-                        os.unlink(handle.name)
+                if not skip_negotiation:
+                    try:
+                        _fetch_pr_chunk(repo, request, depth=depth, skip_negotiation=False)
+                        continue
+                    except GitError as exc:
+                        if not is_negotiation_failure(exc):
+                            raise
+                        skip_negotiation = True
+                _fetch_pr_chunk(repo, request, depth=depth, skip_negotiation=True)
             finally:
                 if gated:
                     gate.release()
@@ -905,6 +930,34 @@ def fetch_pr_refs(
         # not sink a fetch whose objects are already in place.
         pass
     return remote
+
+
+def _fetch_pr_chunk(repo: GitRepo, request: str, *, depth: int, skip_negotiation: bool) -> None:
+    prefix = ("-c", "fetch.negotiationAlgorithm=noop") if skip_negotiation else ()
+    handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-refspecs")
+    try:
+        handle.write(request.encode("ascii"))
+        handle.close()
+        with open(handle.name, "rb") as stdin:
+            repo.git(
+                *prefix,
+                "fetch",
+                "--quiet",
+                "--depth",
+                str(depth),
+                "--filter=tree:0",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--recurse-submodules=no",
+                "origin",
+                "--stdin",
+                stdin=stdin,
+                timeout=_PR_CHUNK_TIMEOUT,
+                env_extra={"GIT_NO_LAZY_FETCH": "1"},
+            )
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(handle.name)
 
 
 _FETCH_BLOBS_ARGV = (

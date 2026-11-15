@@ -564,11 +564,11 @@ def bootstrap_copy(
                     continue
                 normalized.append(row)
                 owners[row["owner_id"]] = (
-                row["owner_login"],
-                row["owner_type"],
-                row["owner_location_raw"],
-                row["owner_blog"],
-            )
+                    row["owner_login"],
+                    row["owner_type"],
+                    row["owner_location_raw"],
+                    row["owner_blog"],
+                )
             if not normalized:
                 continue
             staged_total += _bootstrap_chunk(engine, normalized, owners, stats, table_name)

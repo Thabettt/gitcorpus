@@ -32,7 +32,7 @@
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <section class="filter-section" id="detect-method-section">
       <h2>Detection method</h2>
-      <p class="muted">Two methods are available per run and produce the same evidence tables — they differ in where the data comes from and what they cost. The API method stays the default; local clone is additive, not a replacement.</p>
+      <p class="muted">Three methods are available per run and produce the same evidence tables — they differ in where the data comes from and what they cost. The API method stays the default; local clone and hybrid are additive, not replacements.</p>
       <div class="method-grid">
         <label class="method-card" for="detect-source-api">
           <input type="radio" id="detect-source-api" name="source" value="api" checked>
@@ -59,6 +59,20 @@
             <li><code>label</code> and <code>issue</code> are API-only and are recorded as skipped.</li>
             <li>Branch names are recovered only for projects that merge with merge commits (23% measured).</li>
             <li>Needs git installed.</li>
+          </ul>
+        </label>
+        <label class="method-card" for="detect-source-hybrid">
+          <input type="radio" id="detect-source-hybrid" name="source" value="hybrid">
+          <span class="method-title">Hybrid (git + PR metadata) — new</span>
+          <ul class="method-pros">
+            <li>Everything the local clone finds, plus what only GitHub stores: PR descriptions (e.g. “Generated with Claude Code”), PR authors, head branch names of squash-merged PRs, and <code>label</code>.</li>
+            <li>Dates PR evidence from PR creation times, which a clone alone cannot.</li>
+            <li>One lean GraphQL query (≈1 point) per repo, fetched in parallel with the clones — scan time stays that of a git run.</li>
+          </ul>
+          <ul class="method-cons">
+            <li>Needs at least one configured GitHub token; PR calls rotate over every configured token, and each covers ≈5,000 repos/hour. With fewer tokens than the clone pace needs, the run waits on the API quota.</li>
+            <li><code>issue</code> stays API-only (it added 1 repo in 9,510 when compared against a git run).</li>
+            <li>If the API fails repeatedly, the run continues as a plain git scan and says so.</li>
           </ul>
         </label>
       </div>
@@ -192,8 +206,11 @@
   var gitFields = document.querySelectorAll("[data-git-field]");
   var apiFields = document.querySelectorAll("[data-api-field]");
   var gitRadio = document.getElementById("detect-source-git");
+  var hybridRadio = document.getElementById("detect-source-hybrid");
   var apiOnlyValues = { label: true, issue: true };
-  var unavailableNote = " (unavailable with git detection — API-only channel)";
+  // Hybrid fetches PR metadata, so only issue stays API-only there.
+  var hybridOnlyValues = { issue: true };
+  var unavailableNote = " (unavailable with this detection method — API-only channel)";
   var categoryLabels = { "legacy-only": "legacy" };
 
   function el(tag, attrs, text) {
@@ -265,7 +282,9 @@
     });
   }
   function syncMethod() {
-    var gitSelected = !!(gitRadio && gitRadio.checked);
+    var hybridSelected = !!(hybridRadio && hybridRadio.checked);
+    var gitSelected = !!(gitRadio && gitRadio.checked) || hybridSelected;
+    var blocked = hybridSelected ? hybridOnlyValues : apiOnlyValues;
     Array.prototype.forEach.call(gitFields, function (field) {
       field.hidden = !gitSelected;
     });
@@ -286,18 +305,19 @@
       }
       var note = label.querySelector(".channel-note");
       var base = channelNotes[input.value] || "";
-      if (gitSelected && !input.disabled) {
+      var unavailable = gitSelected && !!blocked[input.value];
+      if (unavailable && !input.disabled) {
         input.dataset.wasChecked = input.checked ? "1" : "0";
         input.checked = false;
         input.disabled = true;
-      } else if (!gitSelected && input.disabled) {
+      } else if (!unavailable && input.disabled) {
         input.disabled = false;
         input.checked = input.dataset.wasChecked === "1";
       }
       if (note) {
-        note.textContent = gitSelected ? base + unavailableNote : base;
+        note.textContent = unavailable ? base + unavailableNote : base;
       }
-      label.classList.toggle("channel-api-only", gitSelected);
+      label.classList.toggle("channel-api-only", unavailable);
     });
   }
   function setAll(list, checked) {

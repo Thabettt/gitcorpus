@@ -1,0 +1,281 @@
+channel,pattern,subtype,outcome,rules
+files,copilot-instructions.md,Copilot,added,copilot.baseline.file.copilot-instructions-md
+files,copilot_instructions.md,Copilot,added,copilot.baseline.file.copilot-instructions-md-2
+files,copilot-instructions/,Copilot,added,copilot.baseline.file.copilot-instructions
+files,.github/instructions/,Copilot,widened,copilot.project
+files,.copilot-*.md,Copilot,covered,copilot.instructions copilot.project copilot.baseline.file.copilot-instructions-md copilot.baseline.file.copilot-instructions-md-2 copilot.baseline.file.copilot-instructions
+files,.copilotignore,Copilot,added,copilot.baseline.file.copilotignore
+files,.copilot/,Copilot,covered,copilot.project
+files,.github/workflows/copilot/,Copilot,covered,copilot.project
+files,.cursor/,Cursor,added,cursor.baseline.file.cursor
+files,.cursorrules,Cursor,added,cursor.baseline.file.cursorrules
+files,CURSOR.md,Cursor,rejected,cursor.unsupported-cursor-md
+files,AGENTS.md,Generic,covered,generic.agents-md
+files,.codex/,Codex,widened,codex.project
+files,CLAUDE.md,Claude Code,widened,claude.project
+files,.claude/,Claude Code,widened,claude.project-tree
+files,.anthropic/,Claude Code,covered,claude.project-tree
+files,.claudeignore,Claude Code,added,claude-code.baseline.file.claudeignore
+files,.github/workflows/claude,Claude Code,added,claude-code.baseline.file.github-workflows-claude
+files,.devin/,Devin,widened,devin.project
+files,.augment/,Augment Code,added,augment-code.baseline.file.augment
+files,.augmentignore,Augment Code,added,augment-code.baseline.file.augmentignore
+files,.augment-guidelines,Augment Code,added,augment-code.baseline.file.augment-guidelines
+files,.windsurf/,Windsurf,added,devin.baseline.file.windsurf
+files,.windsurfrules,Windsurf,added,devin.baseline.file.windsurfrules
+files,.codeium/,Windsurf,widened,devin.windsurf-compat
+files,.clinerules,Cline,added,cline.baseline.file.clinerules
+files,.cline/,Cline,added,cline.baseline.file.cline
+files,README-task-master.md,Taskmaster,added,taskmaster.baseline.file.readme-task-master-md
+files,taskmaster.md,Taskmaster,added,taskmaster.baseline.file.taskmaster-md
+files,.taskmaster/,Taskmaster,added,taskmaster.baseline.file.taskmaster
+files,memory-bank/,Cline,added,cline.baseline.file.memory-bank
+files,memory_bank/,Cline,added,cline.baseline.file.memory-bank-2
+files,.specify/memory/constitution.md,SpecKit,added,speckit.baseline.file.specify-memory-constitution-md
+files,.specify,SpecKit,added,speckit.baseline.file.specify
+files,AGENT.md,Amp,added,amp.baseline.file.agent-md
+files,.sourcegraph/,Amp,added,amp.baseline.file.sourcegraph
+files,aider.conf.yaml,Aider,widened,aider.project-config
+files,aider.conf.yml,Aider,covered,aider.project-config
+files,.aider.conf.yaml,Aider,covered,aider.project-config
+files,.aider.conf.yml,Aider,covered,aider.project-config
+files,.aiderignore,Aider,added,aider.baseline.file.aiderignore
+files,.aider/,Aider,widened,aider.project-tree
+files,.junie/,Junie,added,junie.baseline.file.junie
+files,.jetbrains/instructions.md,Junie,widened,junie.project
+files,.junieignore,Junie,added,junie.baseline.file.junieignore
+files,.jules/,Jules,widened,jules.project
+files,.aiderrules,Aider,added,aider.baseline.file.aiderrules
+files,.roo/,Roo Code,added,zoo-code.baseline.file.roo
+files,.roorules,Roo Code,added,zoo-code.baseline.file.roorules
+files,.trae/,Trae,added,trae.baseline.file.trae
+files,.traerules,Trae,added,trae.baseline.file.traerules
+files,GEMINI.md,Gemini,added,google-antigravity.baseline.file.gemini-md
+files,.gemini/,Gemini,widened,antigravity.gemini-project
+files,.openhands/,OpenHands,added,openhands.baseline.file.openhands
+files,.openhands_instructions,OpenHands,added,openhands.baseline.file.openhands-instructions
+files,.goosehints,Goose,added,goose.baseline.file.goosehints
+files,.plandexignore,Plandex,added,plandex.baseline.file.plandexignore
+files,.plandex/,Plandex,widened,plandex.project
+files,.plandex-v2,Plandex,added,plandex.baseline.file.plandex-v2
+files,.continue/,Continue,widened,continue.project
+files,.kiro/,Kiro,widened,kiro.project
+files,.brokk/,Brokk,added,brokk.baseline.file.brokk
+files,.kilocode/,Kilo Code,added,kilo-code.baseline.file.kilocode
+files,.kilocodeignore,Kilo Code,added,kilo-code.baseline.file.kilocodeignore
+files,.opencode/,Opencode,added,opencode.baseline.file.opencode
+files,.opencode.json,Opencode,widened,opencode.v1-config
+files,opencode.json,Opencode,widened,opencode.v2-config
+files,WARP.md,Warp,widened,warp.project
+files,.warp/,Warp,covered,warp.project
+files,.crush/,Crush,added,crush.baseline.file.crush
+files,.amazonq/,Amazon Q,widened,amazon-q-ide.project
+files,AmazonQ.md,Amazon Q,widened,amazon-q-ide.instructions
+files,AMAZONQ.md,Amazon Q,covered,amazon-q-ide.instructions
+files,CRUSH.md,Crush,widened,crush.project
+files,QWEN.md,Qwen Coder,widened,qwen.instructions
+files,CODEBUDDY.md,Codebuddy,widened,codebuddy.instructions
+files,.comate/,Baidu Comate,widened,comate.project
+files,.lingma/,Alibaba Lingma,widened,qoder.lingma-history
+files,.tessl/,Tessl,added,tessl.baseline.file.tessl
+files,.serena/,Serena,added,serena.baseline.file.serena
+files,.rulesync/,Rulesync,added,rulesync.baseline.file.rulesync
+files,.factory/droids/,Factory,widened,factory.project
+files,.factory/commands/,Factory,covered,factory.project
+files,.factory/docs/,Factory,covered,factory.project
+files,.qodo/,Qodo,added,qodo.baseline.file.qodo
+files,.verdent/,Verdent,widened,verdent.project
+files,.marscode/,Trae,widened,trae.project
+files,.charlie/instructions/,Charlie,widened,charlie.instructions
+files,.kimi/,Kimi Code,added,kimi-code-cli.baseline.file.kimi
+files,.pi/,Pi,added,pi.baseline.file.pi
+files,.pi/prompts/,Pi,covered,pi.baseline.file.pi
+files,.pi/extensions/,Pi,covered,pi.baseline.file.pi
+files,.rovodev/,Atlassian Rovodev,widened,rovo.project
+branches,codex/,Codex,covered,codex.branch
+branches,copilot/,Copilot,added,copilot.baseline.branch.copilot
+branches,jetbrains_junie,Junie,added,junie.baseline.branch.jetbrains-junie
+branches,cursor/,Cursor,added,cursor.baseline.branch.cursor
+branches,openhands/,OpenHands,covered,openhands.branch
+branches,devin/,Devin,added,devin.baseline.branch.devin
+branches,gru/,Gru,covered,gru.branch
+branches,claudecode/,Claude Code,rejected,duplicate.claudecode-branch
+branches,claudecode/,Claude Code,rejected,duplicate.claudecode-branch
+branches,claude/,Claude Code,added,claude-code.baseline.branch.claude
+branches,opencode/,Opencode,covered,opencode.v1-branch
+branches,jules/,Jules,added,jules.baseline.branch.jules
+branches,sweep/,Sweep,covered,sweep.historical-branch
+branches,coderabbit/,Coderabbit,added,coderabbit.baseline.branch.coderabbit
+branches,sourcery-ai/,Sourcery,covered,sourcery.branch
+branches,windsurf-bot/,Windsurf,added,devin.baseline.branch.windsurf-bot
+branches,open-swe/,Langchain Open SWE,covered,open-swe.branch
+branches,codegen-bot/,Codegen,covered,codegen.generated-branch
+branches,serena/,Serena,added,serena.baseline.branch.serena
+branches,goose/,Goose,added,goose.baseline.branch.goose
+labels,ai-generated,Generic,covered,generic.ai-generated-label
+labels,codex,Codex,added,codex.baseline.label.codex
+labels,open-swe,Langchain Open SWE,covered,open-swe.workflow-label
+labels,^amp$,Amp,covered,amp.workflow-label
+authors,aider,Aider,rejected,baseline.rejected.bare-aider
+authors,aider@aider\.chat,Aider,covered+added,aider.baseline.identity.aider-aider-chat.author aider.baseline.identity.aider-aider-chat.committer aider.baseline.identity.aider-aider-chat.co-author
+authors,Claude,Claude Code,rejected,broad-identity.claude
+authors,noreply@anthropic\.com,Claude Code,covered+added,claude.commit-email.author claude.commit-email.committer claude-code.baseline.identity.noreply-anthropic-com.co-author
+authors,claude@anthropic\.com,Claude Code,covered+added,claude.commit-email.author claude.commit-email.committer claude-code.baseline.identity.claude-anthropic-com.co-author
+authors,assistant@anthropic\.com,Claude Code,covered+added,claude.commit-email.author claude.commit-email.committer claude-code.baseline.identity.assistant-anthropic-com.co-author
+authors,Copilot,Copilot,rejected,broad-identity.copilot
+authors,openhands@all-hands\.dev,OpenHands,covered+added,openhands.commit-email.author openhands.commit-email.committer openhands.baseline.identity.openhands-all-hands-dev.co-author
+authors,openhands-agent,OpenHands,covered+added,openhands.baseline.identity.openhands-agent.author openhands.baseline.identity.openhands-agent.committer openhands.baseline.identity.openhands-agent.co-author openhands.baseline.identity.openhands-agent.pr-author openhands.baseline.identity.openhands-agent.pr-commenter openhands.baseline.identity.openhands-agent.issue-commenter
+authors,devin-ai-integration,Devin,covered+added,devin.baseline.identity.devin-ai-integration.author devin.baseline.identity.devin-ai-integration.committer devin.baseline.identity.devin-ai-integration.co-author devin.baseline.identity.devin-ai-integration.pr-author devin.baseline.identity.devin-ai-integration.pr-commenter devin.baseline.identity.devin-ai-integration.issue-commenter
+authors,google-labs-jules,Jules,covered+added,jules.baseline.identity.google-labs-jules.author jules.baseline.identity.google-labs-jules.committer jules.baseline.identity.google-labs-jules.co-author jules.baseline.identity.google-labs-jules.pr-author jules.baseline.identity.google-labs-jules.pr-commenter jules.baseline.identity.google-labs-jules.issue-commenter
+authors,jules@users\.noreply\.github\.com,Jules,covered+added,jules.commit-email.author jules.commit-email.committer jules.baseline.identity.jules-users-noreply-github-com.co-author
+authors,copilot-swe-agent,Copilot,covered+added,copilot.baseline.identity.copilot-swe-agent.author copilot.baseline.identity.copilot-swe-agent.committer copilot.baseline.identity.copilot-swe-agent.co-author copilot.baseline.identity.copilot-swe-agent.pr-author copilot.baseline.identity.copilot-swe-agent.pr-commenter copilot.baseline.identity.copilot-swe-agent.issue-commenter
+authors,cline,Cline,rejected,broad-identity.cline
+authors,cline@example\.com,Cline,rejected,baseline.rejected.cline-placeholder-email
+authors,junie,Junie,rejected,broad-identity.junie
+authors,jetbrains-junie,Junie,covered+added,junie.baseline.identity.jetbrains-junie.author junie.baseline.identity.jetbrains-junie.committer junie.baseline.identity.jetbrains-junie.co-author junie.baseline.identity.jetbrains-junie.pr-author junie.baseline.identity.jetbrains-junie.pr-commenter junie.baseline.identity.jetbrains-junie.issue-commenter
+authors,gru-agent,Gru,covered+added,gru.baseline.identity.gru-agent.author gru.baseline.identity.gru-agent.committer gru.baseline.identity.gru-agent.co-author gru.baseline.identity.gru-agent.pr-author gru.baseline.identity.gru-agent.pr-commenter gru.baseline.identity.gru-agent.issue-commenter
+authors,cursor,Cursor,rejected,broad-identity.cursor
+authors,cursoragent@cursor\.com,Cursor,covered+added,cursor.commit-email.author cursor.commit-email.committer cursor.baseline.identity.cursoragent-cursor-com.co-author
+authors,gemini-code-assist,Gemini,covered+added,google-antigravity.baseline.identity.gemini-code-assist.author google-antigravity.baseline.identity.gemini-code-assist.committer google-antigravity.baseline.identity.gemini-code-assist.co-author google-antigravity.baseline.identity.gemini-code-assist.pr-author google-antigravity.baseline.identity.gemini-code-assist.pr-commenter google-antigravity.baseline.identity.gemini-code-assist.issue-commenter
+authors,gemini-cli,Gemini,covered+added,google-antigravity.baseline.identity.gemini-cli.author google-antigravity.baseline.identity.gemini-cli.committer google-antigravity.baseline.identity.gemini-cli.co-author google-antigravity.baseline.identity.gemini-cli.pr-author google-antigravity.baseline.identity.gemini-cli.pr-commenter google-antigravity.baseline.identity.gemini-cli.issue-commenter
+authors,sweep-ai,Sweep,covered+added,sweep.baseline.identity.sweep-ai.author sweep.baseline.identity.sweep-ai.committer sweep.baseline.identity.sweep-ai.co-author sweep.baseline.identity.sweep-ai.pr-author sweep.baseline.identity.sweep-ai.pr-commenter sweep.baseline.identity.sweep-ai.issue-commenter
+authors,coderabbit,Coderabbit,covered+added,coderabbit.baseline.identity.coderabbit.author coderabbit.baseline.identity.coderabbit.committer coderabbit.baseline.identity.coderabbit.co-author coderabbit.baseline.identity.coderabbit.pr-author coderabbit.baseline.identity.coderabbit.pr-commenter coderabbit.baseline.identity.coderabbit.issue-commenter
+authors,sourcery-ai,Sourcery,covered+added,sourcery.baseline.identity.sourcery-ai.author sourcery.baseline.identity.sourcery-ai.committer sourcery.baseline.identity.sourcery-ai.co-author sourcery.baseline.identity.sourcery-ai.pr-author sourcery.baseline.identity.sourcery-ai.pr-commenter sourcery.baseline.identity.sourcery-ai.issue-commenter
+authors,deepsource-autofix,Deepsource,covered+added,deepsource.baseline.identity.deepsource-autofix.author deepsource.baseline.identity.deepsource-autofix.committer deepsource.baseline.identity.deepsource-autofix.co-author deepsource.baseline.identity.deepsource-autofix.pr-author deepsource.baseline.identity.deepsource-autofix.pr-commenter deepsource.baseline.identity.deepsource-autofix.issue-commenter
+authors,gpt-engineer,GPT-Engineer,covered+added,gpt-engineer.baseline.identity.gpt-engineer.author gpt-engineer.baseline.identity.gpt-engineer.committer gpt-engineer.baseline.identity.gpt-engineer.co-author gpt-engineer.baseline.identity.gpt-engineer.pr-author gpt-engineer.baseline.identity.gpt-engineer.pr-commenter gpt-engineer.baseline.identity.gpt-engineer.issue-commenter
+authors,codegen-sh,Codegen,covered+added,codegen.baseline.identity.codegen-sh.author codegen.baseline.identity.codegen-sh.committer codegen.baseline.identity.codegen-sh.co-author codegen.baseline.identity.codegen-sh.pr-author codegen.baseline.identity.codegen-sh.pr-commenter codegen.baseline.identity.codegen-sh.issue-commenter
+authors,hello@sketch\.dev,Sketch,covered+added,shelley.sketch-history.author shelley.sketch-history.committer shelley.baseline.identity.hello-sketch-dev.co-author
+authors,windsurf-bot,Windsurf,covered+added,devin.baseline.identity.windsurf-bot.author devin.baseline.identity.windsurf-bot.committer devin.baseline.identity.windsurf-bot.co-author devin.baseline.identity.windsurf-bot.pr-author devin.baseline.identity.windsurf-bot.pr-commenter devin.baseline.identity.windsurf-bot.issue-commenter
+authors,cascade@windsurf\.ai,Windsurf,covered+added,devin.baseline.identity.cascade-windsurf-ai.author devin.baseline.identity.cascade-windsurf-ai.committer devin.baseline.identity.cascade-windsurf-ai.co-author
+authors,dev@fly\.io,Fly,covered+added,phoenix.commit-email.author phoenix.commit-email.committer phoenix-new.baseline.identity.dev-fly-io.co-author
+authors,ChatGPT,ChatGPT,rejected,broad-identity.chatgpt
+authors,chatgpt@chatgpt\.com,ChatGPT,covered+added,chatgpt.baseline.identity.chatgpt-chatgpt-com.author chatgpt.baseline.identity.chatgpt-chatgpt-com.committer chatgpt.baseline.identity.chatgpt-chatgpt-com.co-author
+authors,chatgpt@openai\.com,ChatGPT,covered+added,chatgpt.baseline.identity.chatgpt-openai-com.author chatgpt.baseline.identity.chatgpt-openai-com.committer chatgpt.baseline.identity.chatgpt-openai-com.co-author
+authors,chatGPT@no-reply\.com,ChatGPT,covered+added,chatgpt.baseline.identity.chatgpt-no-reply-com.author chatgpt.baseline.identity.chatgpt-no-reply-com.committer chatgpt.baseline.identity.chatgpt-no-reply-com.co-author
+authors,roomote-agent,Roo Code,covered+added,roomote.baseline.identity.roomote-agent.author roomote.baseline.identity.roomote-agent.committer roomote.baseline.identity.roomote-agent.co-author roomote.baseline.identity.roomote-agent.pr-author roomote.baseline.identity.roomote-agent.pr-commenter roomote.baseline.identity.roomote-agent.issue-commenter
+authors,roomote@roocode\.com,Roo Code,covered+added,roomote.baseline.identity.roomote-roocode-com.author roomote.baseline.identity.roomote-roocode-com.committer roomote.baseline.identity.roomote-roocode-com.co-author
+authors,roomote,Roo Code,covered+added,roomote.baseline.identity.roomote.author roomote.baseline.identity.roomote.committer roomote.baseline.identity.roomote.co-author roomote.baseline.identity.roomote.pr-author roomote.baseline.identity.roomote.pr-commenter roomote.baseline.identity.roomote.issue-commenter
+authors,Roo Code,Roo Code,covered+added,zoo-code.baseline.identity.roo-code.author zoo-code.baseline.identity.roo-code.committer zoo-code.baseline.identity.roo-code.co-author
+authors,amp@ampcode\.com,Amp,covered+added,amp.commit-email.author amp.commit-email.committer amp.baseline.identity.amp-ampcode-com.co-author
+authors,noreply@opencode\.ai,Opencode,covered+added,opencode.v1-email.author opencode.v1-email.committer opencode.baseline.identity.noreply-opencode-ai.co-author
+authors,Kilo Code,Kilo Code,covered+added,kilo-code.baseline.identity.kilo-code.author kilo-code.baseline.identity.kilo-code.committer kilo-code.baseline.identity.kilo-code.co-author
+authors,crush@charm\.land,Crush,covered+added,crush.baseline.identity.crush-charm-land.author crush.baseline.identity.crush-charm-land.committer crush.baseline.identity.crush-charm-land.co-author
+authors,Codex,Codex,rejected,broad-identity.codex
+authors,codex@openai\.com,Codex,covered+added,codex.baseline.identity.codex-openai-com.author codex.baseline.identity.codex-openai-com.committer codex.baseline.identity.codex-openai-com.co-author
+authors,Gemini 2\.5 Pro,Gemini,covered+added,google-antigravity.baseline.identity.gemini-2-5-pro.author google-antigravity.baseline.identity.gemini-2-5-pro.committer google-antigravity.baseline.identity.gemini-2-5-pro.co-author
+authors,Gemini 2\.5 Flash,Gemini,covered+added,google-antigravity.baseline.identity.gemini-2-5-flash.author google-antigravity.baseline.identity.gemini-2-5-flash.committer google-antigravity.baseline.identity.gemini-2-5-flash.co-author
+authors,Qwen-Coder,Qwen Coder,covered+added,qwen-coder.baseline.identity.qwen-coder.author qwen-coder.baseline.identity.qwen-coder.committer qwen-coder.baseline.identity.qwen-coder.co-author qwen-coder.baseline.identity.qwen-coder.pr-author qwen-coder.baseline.identity.qwen-coder.pr-commenter qwen-coder.baseline.identity.qwen-coder.issue-commenter
+authors,qwen-coder@alibabacloud\.com,Qwen Coder,covered+added,qwen-coder.baseline.identity.qwen-coder-alibabacloud-com.author qwen-coder.baseline.identity.qwen-coder-alibabacloud-com.committer qwen-coder.baseline.identity.qwen-coder-alibabacloud-com.co-author
+authors,open-swe,Langchain Open SWE,covered+added,langchain-open-swe.baseline.identity.open-swe.author langchain-open-swe.baseline.identity.open-swe.committer langchain-open-swe.baseline.identity.open-swe.co-author langchain-open-swe.baseline.identity.open-swe.pr-author langchain-open-swe.baseline.identity.open-swe.pr-commenter langchain-open-swe.baseline.identity.open-swe.issue-commenter
+authors,noreply@warp\.dev,Warp,covered+added,warp.commit-email.author warp.commit-email.committer warp.baseline.identity.noreply-warp-dev.co-author
+authors,no-reply@ona\.com,Ona,covered+added,ona.commit-email.author ona.commit-email.committer ona.baseline.identity.no-reply-ona-com.co-author
+authors,AI Assistant,Generic,covered+added,generic.baseline.identity.ai-assistant.author generic.baseline.identity.ai-assistant.committer generic.baseline.identity.ai-assistant.co-author
+authors,seer-by-sentry,Sentry Seer,covered+added,sentry-seer.baseline.identity.seer-by-sentry.author sentry-seer.baseline.identity.seer-by-sentry.committer sentry-seer.baseline.identity.seer-by-sentry.co-author sentry-seer.baseline.identity.seer-by-sentry.pr-author sentry-seer.baseline.identity.seer-by-sentry.pr-commenter sentry-seer.baseline.identity.seer-by-sentry.issue-commenter
+authors,agent@abacus\.ai,Abacus,covered+added,abacus.agent-email.author abacus.agent-email.committer abacus-ai-agent.baseline.identity.agent-abacus-ai.co-author
+authors,abacus-ai-automation\[bot\],Abacus,rejected,abacus.release-bot
+authors,vibe@mistral\.ai,Mistral Vibe,covered+added,vibe.commit-email.author vibe.commit-email.committer mistral-vibe.baseline.identity.vibe-mistral-ai.co-author
+authors,noreply@letta\.com,Letta Code,covered+added,letta.commit-email.author letta.commit-email.committer letta-code.baseline.identity.noreply-letta-com.co-author
+authors,factory-droid\[bot\],Factory Droid,covered+added,factory-droid.baseline.identity.factory-droid-bot.author factory-droid.baseline.identity.factory-droid-bot.committer factory-droid.baseline.identity.factory-droid-bot.co-author factory-droid.baseline.identity.factory-droid-bot.pr-author factory-droid.baseline.identity.factory-droid-bot.pr-commenter factory-droid.baseline.identity.factory-droid-bot.issue-commenter
+authors,Claude Opus 4\.5,Claude Code,covered+added,claude-code.baseline.identity.claude-opus-4-5.author claude-code.baseline.identity.claude-opus-4-5.committer claude-code.baseline.identity.claude-opus-4-5.co-author
+authors,Claude Opus 4\.6,Claude Code,covered+added,claude-code.baseline.identity.claude-opus-4-6.author claude-code.baseline.identity.claude-opus-4-6.committer claude-code.baseline.identity.claude-opus-4-6.co-author
+authors,Claude Haiku 4\.5,Claude Code,covered+added,claude-code.baseline.identity.claude-haiku-4-5.author claude-code.baseline.identity.claude-haiku-4-5.committer claude-code.baseline.identity.claude-haiku-4-5.co-author
+authors,Claude Sonnet 4\.5,Claude Code,covered+added,claude-code.baseline.identity.claude-sonnet-4-5.author claude-code.baseline.identity.claude-sonnet-4-5.committer claude-code.baseline.identity.claude-sonnet-4-5.co-author
+authors,Codex \(gpt-5\.2-codex\),Codex,covered+added,codex.baseline.identity.codex-gpt-5-2-codex.author codex.baseline.identity.codex-gpt-5-2-codex.committer codex.baseline.identity.codex-gpt-5-2-codex.co-author
+authors,opencode-agent,Opencode,covered+added,opencode.baseline.identity.opencode-agent.author opencode.baseline.identity.opencode-agent.committer opencode.baseline.identity.opencode-agent.co-author opencode.baseline.identity.opencode-agent.pr-author opencode.baseline.identity.opencode-agent.pr-commenter opencode.baseline.identity.opencode-agent.issue-commenter
+authors,Claude \(glm-4\.7\),Claude Code,covered+added,claude-code.baseline.identity.claude-glm-4-7.author claude-code.baseline.identity.claude-glm-4-7.committer claude-code.baseline.identity.claude-glm-4-7.co-author
+authors,Claude \(GLM-4\.7\),Claude Code,covered+added,claude-code.baseline.identity.claude-glm-4-7.author-2 claude-code.baseline.identity.claude-glm-4-7.committer-2 claude-code.baseline.identity.claude-glm-4-7.co-author-2
+authors,Claude \(glm-4\.6\),Claude Code,covered+added,claude-code.baseline.identity.claude-glm-4-6.author claude-code.baseline.identity.claude-glm-4-6.committer claude-code.baseline.identity.claude-glm-4-6.co-author
+authors,Claude \(GLM-4\.6\),Claude Code,covered+added,claude-code.baseline.identity.claude-glm-4-6.author-2 claude-code.baseline.identity.claude-glm-4-6.committer-2 claude-code.baseline.identity.claude-glm-4-6.co-author-2
+authors,Claude \(kimi-for-coding\),Claude Code,covered+added,claude-code.baseline.identity.claude-kimi-for-coding.author claude-code.baseline.identity.claude-kimi-for-coding.committer claude-code.baseline.identity.claude-kimi-for-coding.co-author
+authors,Claude \(kimi-k2\.5\),Claude Code,covered+added,claude-code.baseline.identity.claude-kimi-k2-5.author claude-code.baseline.identity.claude-kimi-k2-5.committer claude-code.baseline.identity.claude-kimi-k2-5.co-author
+authors,Claude \(MiniMax-M2\.1\),Claude Code,covered+added,claude-code.baseline.identity.claude-minimax-m2-1.author claude-code.baseline.identity.claude-minimax-m2-1.committer claude-code.baseline.identity.claude-minimax-m2-1.co-author
+authors,kiro@aws\.amazon\.com,Kiro,covered+added,kiro.commit-email.author kiro.commit-email.committer kiro.baseline.identity.kiro-aws-amazon-com.co-author
+authors,kiro-noreply@amazon\.com,Kiro,covered+added,kiro.commit-email.author kiro.commit-email.committer kiro.baseline.identity.kiro-noreply-amazon-com.co-author
+authors,kiro-agent@amazon\.com,Kiro,covered+added,kiro.commit-email.author kiro.commit-email.committer kiro.baseline.identity.kiro-agent-amazon-com.co-author
+authors,microsoft-amplifier@users\.noreply\.github\.com,Microsoft Amplifier,covered+added,microsoft-amplifier.baseline.identity.microsoft-amplifier-users-noreply-github-com.author microsoft-amplifier.baseline.identity.microsoft-amplifier-users-noreply-github-com.committer microsoft-amplifier.baseline.identity.microsoft-amplifier-users-noreply-github-com.co-author
+authors,verdent@verdent\.ai,Verdent,covered+added,verdent.commit-email.author verdent.commit-email.committer verdent.baseline.identity.verdent-verdent-ai.co-author
+authors,noreply@verdent\.ai,Verd,covered+added,verdent.commit-email.author verdent.commit-email.committer verdent.baseline.identity.noreply-verdent-ai.co-author
+bots,dependabot\[bot\],dependabot,covered,noise ledger
+bots,github-actions\[bot\],github actions,covered,noise ledger
+bots,gh-action-bump-version@users.noreply.github.com,github actions,covered,noise ledger
+bots,microsoft-github-policy-service\[bot\],microsoft,covered,noise ledger
+bots,renovate\[bot\],renovate,covered,noise ledger
+bots,github-actions\[bot\],github actions,covered,noise ledger
+bots,Microsoft Open Source,Bot,covered,noise ledger
+bots,omahs,Bot,covered,noise ledger
+bots,snyk-bot,snyk,covered,noise ledger
+bots,Renovate Bot,renovate,covered,noise ledger
+bots,microsoft-github-operations\[bot\],microsoft,covered,noise ledger
+bots,msftbot\[bot\],microsoft,covered,noise ledger
+bots,Microsoft GitHub User,microsoft,covered,noise ledger
+bots,dotnet-maestro\[bot\],dotnet,covered,noise ledger
+bots,dotnet bot,dotnet,covered,noise ledger
+bots,dotnet-maestro\[bot\],dotnet,covered,noise ledger
+bots,dotnet-policy-service\[bot\],dotnet,covered,noise ledger
+bots,Azure SDK Bot,azure,covered,noise ledger
+bots,dotnet-bot,dotnet,covered,noise ledger
+bots,GitHub Action,github actions,covered,noise ledger
+bots,dotnet-maestro-bot,dotnet,covered,noise ledger
+bots,DotNet Bot,dotnet,covered,noise ledger
+bots,dotnet-maestro,dotnet,covered,noise ledger
+bots,github-actions,github actions,covered,noise ledger
+bots,GitStart,Bot,covered,noise ledger
+bots,ImgBotApp,Bot,covered,noise ledger
+bots,github-action-benchmark,Bot,covered,noise ledger
+bots,integration-test@airbyte.io,Bot,covered,noise ledger
+bots,ASP.NET CI,Bot,covered,noise ledger
+bots,PyTorch MergeBot,Bot,covered,noise ledger
+bots,Mattermost Build,Bot,covered,noise ledger
+bots,Fluent UI Build,Bot,covered,noise ledger
+bots,Crowdin Bot,Bot,covered,noise ledger
+bots,repo-visualizer,Bot,covered,noise ledger
+bots,dotnet-bot,Bot,covered,noise ledger
+bots,getsentry-bot,Bot,covered,noise ledger
+bots,QUIC Dev Bot,Bot,covered,noise ledger
+bots,xerial-bot,Bot,covered,noise ledger
+bots,Azure SDK for Python bot,Bot,covered,noise ledger
+bots,stainless-app\[bot\],Bot,covered,noise ledger
+bots,Travis CI User,Bot,covered,noise ledger
+bots,octo-sts\[bot\],Bot,covered,noise ledger
+bots,kodiakhq\[bot\],Bot,covered,noise ledger
+bots,Calypso Bot,Bot,covered,noise ledger
+bots,pytorchbot,Bot,covered,noise ledger
+bots,QUIC Dev\[bot\],Bot,covered,noise ledger
+bots,Loc Bot,Bot,covered,noise ledger
+bots,GitHub Actions,Bot,covered,noise ledger
+bots,UI Fabric Build Bot,Bot,covered,noise ledger
+bots,Azure CLI Bot,Bot,covered,noise ledger
+bots,semantic-release-bot,Bot,covered,noise ledger
+bots,Turbobot,Bot,covered,noise ledger
+bots,getsantry\[bot\],Bot,covered,noise ledger
+bots,dependabot-preview\[bot\],Bot,covered,noise ledger
+bots,PyTorch UpdateBot,Bot,covered,noise ledger
+bots,microsoft-github-policy-service\[bot\],Bot,covered,noise ledger
+bots,bott@conexco.com,Bot,covered,noise ledger
+bots,release-please\[bot\],Bot,covered,noise ledger
+bots,GitHub Actions Bot,Bot,covered,noise ledger
+bots,Docusaurus bot,Bot,covered,noise ledger
+bots,vellum-automation\[bot\],Bot,covered,noise ledger
+bots,unified-ci-app\[bot\],Bot,covered,noise ledger
+bots,Calcom Bot,Bot,covered,noise ledger
+bots,scala-steward-wvlet\[bot\],Bot,covered,noise ledger
+bots,mergify\[bot\],Bot,covered,noise ledger
+bots,WhiteSource Renovate,Bot,covered,noise ledger
+bots,penify-dev\[bot\],Bot,covered,noise ledger
+bots,enzyme-ci-bot\[bot\],Bot,covered,noise ledger
+bots,NuGet Team Bot,Bot,covered,noise ledger
+bots,support@kodexa.com,Bot,covered,noise ledger
+bots,Bff Bot,Bot,covered,noise ledger
+bots,Facebook Community Bot,Bot,covered,noise ledger
+bots,release-automation-rllyy97@microsoft.com,Bot,covered,noise ledger
+bots,Mend Renovate,Bot,covered,noise ledger
+bots,fern-api\[bot\],Bot,covered,noise ledger
+bots,GitHub Design Systems Bot,Bot,covered,noise ledger
+bots,primer\[bot\],Bot,covered,noise ledger
+bots,pytorchbot,Bot,covered,noise ledger
+bots,SXS Bot,Bot,covered,noise ledger
+bots,gcf-owl-bot\[bot\],Bot,covered,noise ledger
+bots,Sentry Bot,Bot,covered,noise ledger
+bots,Release Bot,Bot,covered,noise ledger
+bots,ASP.NET Push Bot,Bot,covered,noise ledger
+bots,sentry-autofix\[bot\],Bot,covered,noise ledger

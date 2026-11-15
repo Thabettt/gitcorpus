@@ -53,6 +53,9 @@ _RETRYABLE_HTTP_STATUSES = frozenset({401, 403, 408, 409, 425, 429, 500, 502, 50
 class FailureKind(StrEnum):
     PERMANENT = "permanent"
     RETRYABLE = "retryable"
+    # GitHub answers 404 / NOT_FOUND both for a missing repository and for one the
+    # calling account cannot see, so another identity may still be able to read it.
+    NOT_FOUND = "not_found"
 
 
 @dataclass(frozen=True)
@@ -398,7 +401,7 @@ def detect_files(
             return ChannelResult(
                 status="unavailable",
                 note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
+                failure_kind=FailureKind.NOT_FOUND,
             )
         return ChannelResult(
             status="partial",
@@ -607,7 +610,7 @@ def _graphql(
                     payload,
                     "unavailable",
                     "repo not found",
-                    FailureKind.PERMANENT,
+                    FailureKind.NOT_FOUND,
                 )
             last_note = "graphql errors"
             if not _retryable_graphql_errors(payload):
@@ -745,7 +748,7 @@ def detect_history(
             key: ChannelResult(
                 status="unavailable",
                 note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
+                failure_kind=FailureKind.NOT_FOUND,
             )
             for key in ("author", "commit_trailer", "bot")
         }
@@ -874,6 +877,28 @@ query(
         commits(first: 100) {
           nodes { commit { oid author { user { login } } } }
         }
+      }
+    }
+  }
+  rateLimit { cost limit used remaining resetAt }
+}
+"""
+
+# Hybrid (git + PR metadata) mode: the clone already holds every commit, so the
+# API is asked only for what git cannot see — PR descriptions, authors, head
+# branch names, labels and creation dates. No commits, comments or reviews, so
+# a 100-PR window stays about one GraphQL point.
+_PR_METADATA_QUERY = """
+query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: $limit, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        createdAt
+        headRefName
+        bodyText
+        author { login }
+        labels(first: 20) { nodes { name } }
       }
     }
   }
@@ -1143,7 +1168,7 @@ def detect_prs(
         return ChannelResult(
             status=status,
             note=note,
-            failure_kind=FailureKind.PERMANENT,
+            failure_kind=FailureKind.NOT_FOUND,
         )
     if gql_status != "ok":
         status, note = "partial", gql_note
@@ -1201,6 +1226,63 @@ def detect_prs(
     )
 
 
+def detect_pr_metadata(
+    deps: Deps,
+    full_name: str,
+    pack: Pack,
+    *,
+    limit: int = 100,
+    agents: frozenset[str] | None = None,
+    on_response: OnResponse = None,
+) -> ChannelResult:
+    """PR descriptions, authors, head branches and labels — the hybrid-mode sidecar.
+
+    Emits ``branch``, ``label`` and ``pr_metadata`` hits plus ``created_at`` per
+    PR number, which dates PR evidence a local clone finds undated. Commit
+    propagation is left to the local PR walk, which already holds the commits.
+    """
+    owner, _, name = full_name.partition("/")
+    try:
+        outcome = _graphql(
+            deps,
+            _PR_METADATA_QUERY,
+            {"owner": owner, "name": name, "limit": limit},
+            on_response=on_response,
+        )
+    except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
+        return ChannelResult(
+            status="partial", note=_fault_note(exc), failure_kind=FailureKind.RETRYABLE
+        )
+    if outcome.payload is None:
+        return ChannelResult(
+            status=outcome.status, note=outcome.note, failure_kind=outcome.failure_kind
+        )
+    prs, status, note = _prs_from_payload(outcome.payload)
+    if status == "unavailable":
+        return ChannelResult(
+            status=outcome.status if outcome.status != "ok" else status,
+            note=outcome.note if outcome.status != "ok" else note,
+            failure_kind=outcome.failure_kind or FailureKind.PERMANENT,
+        )
+    if outcome.status != "ok":
+        status, note = "partial", outcome.note
+    else:
+        note = f"window: most recent {limit} PRs (metadata only)"
+    hits = match_pr_metadata(pack, prs, agents, forge="github") + match_pr_authors(
+        pack, prs, agents, forge="github"
+    )
+    return ChannelResult(
+        hits=tuple(dedupe_hits(hits)),
+        status=status,
+        note=note,
+        failure_kind=outcome.failure_kind,
+        stats={
+            "prs": len(prs),
+            "created_at": {pr["number"]: pr["createdAt"] for pr in prs if pr.get("createdAt")},
+        },
+    )
+
+
 def detect_issues(
     deps: Deps,
     full_name: str,
@@ -1248,7 +1330,7 @@ def detect_issues(
         return ChannelResult(
             status="unavailable",
             note="repo not found",
-            failure_kind=FailureKind.PERMANENT,
+            failure_kind=FailureKind.NOT_FOUND,
         )
     entries: list[dict] = list(extra_entries)
     created_at: dict[object, str] = {}

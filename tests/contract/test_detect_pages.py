@@ -1540,3 +1540,110 @@ def test_detection_detail_caps_repo_evidence(clean):
     assert response.text.count('<li data-agent="Claude Code">') == DETECTION_REPO_EVIDENCE_CAP
     truncated_note = f"Showing first {DETECTION_REPO_EVIDENCE_CAP} of {total_hits} evidence rows"
     assert truncated_note in response.text
+
+
+def _set_evidence_facets(engine, run_id: int, facets: list[tuple[str | None, str | None]]):
+    """Assign (rule_lifecycle, evidence_semantics) to a run's evidence rows in id order."""
+    with engine.begin() as connection:
+        ids = connection.execute(
+            text("SELECT id FROM detection_evidence WHERE run_id = :run ORDER BY id"),
+            {"run": run_id},
+        ).scalars()
+        for evidence_id, (lifecycle, semantics) in zip(ids, facets, strict=True):
+            connection.execute(
+                text(
+                    "UPDATE detection_evidence SET rule_lifecycle = :lifecycle,"
+                    " evidence_semantics = :semantics WHERE id = :id"
+                ),
+                {"lifecycle": lifecycle, "semantics": semantics, "id": evidence_id},
+            )
+
+
+def test_detection_lifecycle_and_semantics_options_are_this_runs_distinct_values(clean):
+    from serve.detect import _distinct_evidence_values
+
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    row = {"repo": 1, "agent": "Claude Code", "channel": "file", "evidence": {"path": "x"}}
+    detect_id = seed_detect_run_with_evidence(clean, source, [row] * 5)
+    _set_evidence_facets(
+        clean,
+        detect_id,
+        [
+            ("legacy", "authorship"),
+            ("current", "activity"),
+            ("legacy", None),
+            (None, "configuration"),
+            ("retired", "activity"),
+        ],
+    )
+    other_id = seed_detect_run_with_evidence(clean, source, [row])
+    _set_evidence_facets(clean, other_id, [("deprecated", "orchestration")])
+
+    with clean.connect() as connection:
+        assert _distinct_evidence_values(connection, detect_id, "rule_lifecycle") == [
+            "current",
+            "legacy",
+            "retired",
+        ]
+        assert _distinct_evidence_values(connection, detect_id, "evidence_semantics") == [
+            "activity",
+            "authorship",
+            "configuration",
+        ]
+        with pytest.raises(ValueError):
+            _distinct_evidence_values(connection, detect_id, "agent; DROP TABLE runs")
+
+    page = make_client(clean).get(f"/detections/{detect_id}")
+    assert page.status_code == 200
+    assert '<option value="legacy">legacy</option>' in page.text
+    assert '<option value="authorship">authorship</option>' in page.text
+    assert "deprecated" not in page.text
+    assert '<option value="orchestration">' not in page.text
+
+
+def test_detection_filter_lookups_are_index_backed(clean):
+    """The facet lookups must not degrade to a scan of every run's evidence."""
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    row = {"repo": 1, "agent": "Claude Code", "channel": "file", "evidence": {"path": "x"}}
+    detect_id = seed_detect_run_with_evidence(clean, source, [row])
+    with clean.connect() as connection:
+        connection.execute(text("SET LOCAL enable_seqscan = off"))
+        for column in ("rule_lifecycle", "evidence_semantics"):
+            plan = "\n".join(
+                connection.execute(
+                    text(
+                        f"EXPLAIN SELECT {column} FROM detection_evidence"
+                        f" WHERE run_id = :run AND {column} > '' ORDER BY {column} LIMIT 1"
+                    ),
+                    {"run": detect_id},
+                ).scalars()
+            )
+            assert "Seq Scan" not in plan
+            assert "_repo_idx" in plan
+
+
+def test_slow_detection_page_query_fails_fast_with_503(clean, monkeypatch):
+    import serve.detect as detect_module
+    from store.bounded import bounded as real_bounded
+
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+
+    def slow_lookup(connection, run_id, column):
+        connection.execute(text("SELECT pg_sleep(5)"))
+        return []
+
+    monkeypatch.setattr(detect_module, "bounded", lambda engine: real_bounded(engine, 100))
+    monkeypatch.setattr(detect_module, "_distinct_evidence_values", slow_lookup)
+    client = make_client(clean)
+
+    page = client.get(f"/detections/{detect_id}", headers={"accept": "text/html"})
+    assert page.status_code == 503
+    assert "took too long" in page.text
+
+    api = client.get(f"/detections/{detect_id}", headers={"accept": "application/json"})
+    assert api.status_code == 503
+    assert api.json() == {"error": "database_timeout"}

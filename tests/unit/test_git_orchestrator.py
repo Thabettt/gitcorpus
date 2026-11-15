@@ -126,11 +126,9 @@ def seed_source(engine) -> int:
 def make_spec(source_id: int, channels: frozenset[str], **overrides) -> DetectOptions:
     return DetectOptions(
         source_run_id=source_id,
-        pack_version="v1",
         agents=None,
         channels=channels,
-        source="git",
-        **overrides,
+        **{"source": "git", "pack_version": "v1", **overrides},
     )
 
 
@@ -613,7 +611,18 @@ def test_run_git_detection_passes_scan_knobs_to_the_pr_channel(clean_db, tmp_pat
     captured: dict[str, object] = {}
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         captured.update(
             depth=depth,
@@ -658,7 +667,18 @@ def test_run_git_detection_single_process_path_forwards_no_pr_gate(clean_db, tmp
     gates: list[object] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         gates.append(gate)
         return ChannelResult(status="ok")
@@ -1239,7 +1259,18 @@ def test_admit_requeued_monster_is_not_re_probed(tmp_path, monkeypatch):
     seen: list[dict] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         seen.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
@@ -1327,7 +1358,18 @@ def test_scan_one_releases_a_reserved_permit_in_finally(tmp_path, monkeypatch):
     calls: list[dict] = []
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         calls.append({"refs": refs, "gate_reserved": gate_reserved})
         return ChannelResult(status="ok")
@@ -1431,7 +1473,18 @@ def test_scan_one_shares_one_walk_session_across_file_history_and_pr(tmp_path, m
         return {key: ChannelResult(status="ok") for key in ("author", "commit_trailer", "bot")}
 
     def fake_pr(
-        repo, pack, agents, *, depth, attempts, retry_delay, gate, refs, gate_reserved, session=None
+        repo,
+        pack,
+        agents,
+        *,
+        depth,
+        attempts,
+        retry_delay,
+        gate,
+        refs,
+        gate_reserved,
+        session=None,
+        pr_limit=None,
     ):
         seen.append(("pr", session))
         return ChannelResult(status="ok")
@@ -1660,7 +1713,7 @@ def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_p
         out_queue,
         FakeCancelEvent(),
         GitScanConfig(keep=True, scan_root=str(tmp_path)),
-        make_spec(1, frozenset({"pr_metadata"})),
+        make_spec(1, frozenset({"pr_metadata"}), windows={"prs": 1000}),
         PACK,
         str(tmp_path),
         1,
@@ -1677,6 +1730,36 @@ def test_scan_worker_main_submits_with_prefetched_refs_and_reserved_permit(tmp_p
     # test_scan_one_releases_a_reserved_permit_in_finally.
     assert gate.acquires == 1 and gate.held == 1
     assert out_queue.messages and out_queue.messages[0][0] == "scan"
+
+
+def test_scan_worker_main_caps_probed_refs_to_the_pr_window(tmp_path, monkeypatch):
+    seen: list[dict] = []
+
+    def fake_scan_one(run_dir, cfg, spec, pack, active, candidate, **kwargs):
+        seen.append(kwargs)
+        return _failed_scan(candidate, GitError(["git"], 128, "synthetic"), failure_class="fatal")
+
+    monkeypatch.setattr("detect.git_orchestrator._scan_one", fake_scan_one)
+    gate = AdmissionGate()
+    _scan_main_isolated(
+        [_candidate("octo/monster")],
+        FakeOutQueue(),
+        FakeCancelEvent(),
+        GitScanConfig(keep=True, scan_root=str(tmp_path)),
+        make_spec(1, frozenset({"pr_metadata"})),
+        PACK,
+        str(tmp_path),
+        1,
+        local_values(),
+        gate,
+        lambda full_name: _refs(501),
+    )
+
+    # The default 100-PR window keeps only the newest refs, so the repo is no
+    # longer a monster and never takes a fleet permit.
+    assert sorted(seen[0]["prefetched"].pr_refs) == list(range(401, 501))
+    assert seen[0]["gate_reserved"] is False
+    assert gate.acquires == 0
 
 
 def test_git_scan_config_defaults_pr_gate_permits_to_32():
@@ -1910,3 +1993,374 @@ def test_scan_worker_main_records_probe_metrics_for_dead_repos(tmp_path, monkeyp
     assert rows[0]["full_name"] == "octo/gone"
     assert rows[0]["probe_ms"] is not None
     assert rows[0]["clone_ms"] is None
+
+
+HYBRID_PACK = Pack(
+    version="hybrid-v1",
+    agents={"Claude Code": "https://claude.com", "Codex": "https://openai.com"},
+    authors=(Pattern(r"noreply@anthropic\.com", "Claude Code"),),
+    files=(Pattern(r"CLAUDE\.md", "Claude Code"),),
+    branches=(Pattern("claude/", "Claude Code"),),
+    labels=(Pattern("^codex$", "Codex"),),
+    bots=(),
+    generic_weights={},
+    exclusions=frozenset(),
+)
+
+
+def test_hybrid_detection_merges_pr_metadata_into_git_scans(clean_db, tmp_path, monkeypatch):
+    from detect.attribution import Hit
+
+    engine = clean_db()
+    source_id = seed_source(engine)
+    freeze_pack(engine, HYBRID_PACK)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    fetched: list[str] = []
+
+    def pr_fetch(full_name: str) -> ChannelResult:
+        fetched.append(full_name)
+        if full_name == "octo/two":
+            return ChannelResult(status="partial", note="HTTP 502")
+        return ChannelResult(
+            hits=(Hit("Codex", "label", {"pr": 3, "label": "codex", "match": "codex"}),),
+            stats={"created_at": {3: "2026-01-01T00:00:00Z"}},
+        )
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    config = GitScanConfig(depth=100, keep=False, scan_root=str(tmp_path / "clones"), workers=2)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(
+            source_id,
+            frozenset({"file", "label", "issue"}),
+            source="hybrid",
+            pack_version=HYBRID_PACK.version,
+        ),
+        HYBRID_PACK,
+        config=config,
+        clone_fn=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
+        pr_fetch=pr_fetch,
+    )
+
+    assert sorted(fetched) == ["octo/one", "octo/two"]
+    summary = payload.result_summary
+    assert summary["source"] == "hybrid"
+    assert summary["skipped_channels"] == ["issue"]
+    assert summary["pr_api"]["statuses"] == {"ok": 1, "partial": 1}
+    by_name = {item.full_name: item.detection for item in payload.items}
+    assert by_name["octo/one"]["channels"]["label"] == "ok"
+    assert by_name["octo/one"]["agents"] == ["Claude Code", "Codex"]
+    assert by_name["octo/one"]["first_signal_at"] == "2026-01-01T00:00:00Z"
+    assert by_name["octo/two"]["channels"]["file"] == "ok"
+    assert by_name["octo/two"]["pr_api"] == "partial"
+    assert by_name["octo/two"]["unavailable"] is False
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT r.full_name, d.channel, d.agent FROM detection_evidence d"
+                " JOIN repos r ON r.id = d.repo_id WHERE d.run_id = :run"
+            ),
+            {"run": detect_run},
+        ).all()
+        stored = (
+            connection.execute(
+                text(
+                    "SELECT detection->>'pr_api' FROM run_items WHERE run_id = :run"
+                    " ORDER BY repo_id"
+                ),
+                {"run": detect_run},
+            )
+            .scalars()
+            .all()
+        )
+    assert ("octo/one", "label", "Codex") in rows
+    assert stored == ["ok", "partial"]
+
+
+def test_hybrid_detection_requires_api_credentials(clean_db, tmp_path):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    with pytest.raises(ValueError, match="hybrid detection needs API credentials"):
+        run_git_detection(
+            engine,
+            1,
+            make_spec(source_id, frozenset({"file"}), source="hybrid"),
+            PACK,
+            config=GitScanConfig(scan_root=str(tmp_path / "clones")),
+        )
+
+
+def test_plain_git_detection_never_calls_the_pr_api(clean_db, tmp_path, monkeypatch):
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+    def pr_fetch(full_name: str) -> ChannelResult:
+        raise AssertionError("git mode must not fetch PR metadata")
+
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file", "label"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
+        pr_fetch=pr_fetch,
+    )
+    assert payload.result_summary["skipped_channels"] == ["label"]
+    assert "pr_api" not in payload.result_summary
+
+
+def test_run_git_detection_survives_a_repo_whose_enrichment_and_persist_fail(
+    clean_db, tmp_path, monkeypatch
+):
+    """One repository's post-scan crash is a warning, never a failed run."""
+    import detect.git_orchestrator as git_orchestrator
+
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+    real_persist = git_orchestrator._persist_scan
+
+    def flaky_persist(engine_, run_id, scan, pack, checkpoint=None):
+        if scan.full_name == "octo/one":
+            raise RuntimeError("db hiccup")
+        return real_persist(engine_, run_id, scan, pack, checkpoint)
+
+    def pr_fetch(full_name):
+        if full_name == "octo/one":
+            # PrSidecar swallows fetch errors itself, so break the merge instead.
+            return object()
+        return ChannelResult(status="ok")
+
+    monkeypatch.setattr(git_orchestrator, "_persist_scan", flaky_persist)
+    monkeypatch.setattr(git_orchestrator.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    payload = run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"}), source="hybrid"),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
+        pr_fetch=pr_fetch,
+    )
+    assert sorted(item.full_name for item in payload.items) == ["octo/one", "octo/two"]
+    assert payload.incomplete
+    assert any("octo/one: enrichment skipped" in warning for warning in payload.warnings)
+    assert any("octo/one: evidence not saved" in warning for warning in payload.warnings)
+    with engine.connect() as connection:
+        saved = connection.scalars(
+            text("SELECT full_name FROM run_items WHERE run_id = :run"), {"run": detect_run}
+        ).all()
+    assert saved == ["octo/two"]
+
+
+def test_admit_submits_unprobed_when_the_probe_raises_unexpectedly():
+    def probe(full_name):
+        raise subprocess.TimeoutExpired(["git"], 30)
+
+    pending = deque([{"full_name": "octo/one", "repo_id": 1}])
+    admission = _admit(pending, probe, None)
+    assert admission is not None
+    assert admission.prefetched is None
+
+
+def _detect_run(engine, source_id: int) -> int:
+    return create_run(
+        engine,
+        {"kind": "detect"},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source_id,
+    )
+
+
+def _checkpoints(engine, run_id: int) -> dict[int, bool]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT repo_id, clean FROM detection_checkpoints WHERE run_id = :run"),
+            {"run": run_id},
+        ).all()
+    return {repo_id: clean for repo_id, clean in rows}
+
+
+def test_resume_keeps_cleanly_finished_repos_and_rescans_only_the_rest(
+    clean_db, tmp_path, monkeypatch
+):
+    from serve.executor import reset_run_artifacts
+
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = _detect_run(engine, source_id)
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    spec = make_spec(source_id, frozenset({"file", "commit_trailer", "pr_metadata"}))
+    config = GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1, attempts=1)
+    clone = lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True)  # noqa: E731
+
+    broken: set[str] = {"octo/two"}
+
+    def fake_pr(repo, pack, agents, **kwargs):
+        if repo.full_name in broken:
+            return ChannelResult(
+                status="partial", note="pull refs fetch failed: fatal: expected 'acknowledgments'"
+            )
+        return ChannelResult(status="ok", note="no pull requests found")
+
+    class NamedRepo(FakeRepo):
+        def __init__(self, full_name):
+            super().__init__(happy_handler)
+            self.full_name = full_name
+
+    monkeypatch.setattr("detect.git_orchestrator.detect_pr_commits_local", fake_pr)
+    first = run_git_detection(
+        engine,
+        detect_run,
+        spec,
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest, full_name=None: NamedRepo(full_name),
+    )
+    assert first.incomplete
+    assert _checkpoints(engine, detect_run) == {1: True, 2: False}
+    first_one = next(item.detection for item in first.items if item.full_name == "octo/one")
+
+    reset_run_artifacts(engine, detect_run, keep_finished=True)
+    with engine.connect() as connection:
+        kept = connection.scalars(
+            text("SELECT full_name FROM run_items WHERE run_id = :run"), {"run": detect_run}
+        ).all()
+        kept_evidence = connection.scalar(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run AND repo_id = 2"),
+            {"run": detect_run},
+        )
+    assert kept == ["octo/one"]
+    assert kept_evidence == 0
+
+    scanned: list[str] = []
+    broken.clear()
+
+    def factory(dest, full_name=None):
+        scanned.append(full_name)
+        return NamedRepo(full_name)
+
+    second = run_git_detection(
+        engine, detect_run, spec, PACK, config=config, clone_fn=clone, repo_factory=factory
+    )
+    assert scanned == ["octo/two"]
+    assert not second.incomplete
+    assert second.total_count == 2
+    assert [item.full_name for item in second.items] == ["octo/one", "octo/two"]
+    assert second.items[0].detection == first_one
+    assert second.field_stats["clone"]["resumed"] == 1
+    # The kept repo's checkpointed contribution folds in exactly as a rescan would.
+    fresh = run_git_detection(
+        engine,
+        _detect_run(engine, source_id),
+        spec,
+        PACK,
+        config=config,
+        clone_fn=clone,
+        repo_factory=lambda dest, full_name=None: NamedRepo(full_name),
+    )
+    assert second.result_summary == fresh.result_summary
+    assert second.result_summary["repos_scanned"] == 2
+    assert _checkpoints(engine, detect_run) == {1: True, 2: True}
+    with engine.connect() as connection:
+        evidence_one = connection.scalar(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run AND repo_id = 1"),
+            {"run": detect_run},
+        )
+    assert evidence_one > 0  # the kept repo's evidence survived the resume
+    with engine.connect() as connection:
+        dupes = connection.scalar(
+            text(
+                "SELECT count(*) FROM (SELECT repo_id, channel, evidence::text"
+                " FROM detection_evidence WHERE run_id = :run"
+                " GROUP BY 1, 2, 3 HAVING count(*) > 1) d"
+            ),
+            {"run": detect_run},
+        )
+    assert dupes == 0
+
+
+def test_full_reset_still_clears_checkpoints(clean_db, tmp_path, monkeypatch):
+    from serve.executor import reset_run_artifacts
+
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = _detect_run(engine, source_id)
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
+    )
+    assert _checkpoints(engine, detect_run) == {1: True, 2: True}
+    reset_run_artifacts(engine, detect_run)
+    assert _checkpoints(engine, detect_run) == {}
+
+
+def test_load_finished_drops_unreadable_checkpoints_for_a_clean_rescan(
+    clean_db, tmp_path, monkeypatch
+):
+    from detect.git_orchestrator import _load_finished
+
+    engine = clean_db()
+    source_id = seed_source(engine)
+    detect_run = _detect_run(engine, source_id)
+    monkeypatch.setattr("detect.git_orchestrator.free_disk_mb", lambda path: 10_000.0)
+    run_git_detection(
+        engine,
+        detect_run,
+        make_spec(source_id, frozenset({"file"})),
+        PACK,
+        config=GitScanConfig(scan_root=str(tmp_path / "clones"), workers=1),
+        clone_fn=lambda full_name, dest: dest.mkdir(parents=True, exist_ok=True),
+        repo_factory=lambda dest, full_name=None: FakeRepo(happy_handler),
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE detection_checkpoints SET contribution = '{\"old_field\": 1}'"
+                " WHERE run_id = :run AND repo_id = 2"
+            ),
+            {"run": detect_run},
+        )
+    finished = _load_finished(engine, detect_run, {1, 2})
+    assert sorted(finished) == [1]
+    with engine.connect() as connection:
+        left = connection.scalar(
+            text("SELECT count(*) FROM detection_evidence WHERE run_id = :run AND repo_id = 2"),
+            {"run": detect_run},
+        )
+    assert left == 0
+    assert _checkpoints(engine, detect_run) == {1: True}

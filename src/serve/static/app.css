@@ -2357,7 +2357,7 @@ kbd {
   }
 }
 
-.method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+.method-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 12px 0; }
 .method-card {
   border: 1px solid var(--gc-border);
   border-radius: var(--gc-radius);
