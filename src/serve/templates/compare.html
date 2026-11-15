@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}Cross Stack Comparison · gitcorpus{% endblock %}
+{% block body %}
+<section class="panel" id="compare-root">
+  <div class="panel-head">
+    <h1>Cross Stack Comparison</h1>
+    <p class="muted">Upload one CSV per stack to compare AI coding agent adoption across language ecosystems. Accepts the app's "Export for Cross Stack" output or any CSV with <code>adoption_label</code> and <code>stack</code> columns.</p>
+  </div>
+
+  <!-- Upload zone -->
+  <div id="compare-upload-area">
+    <div id="compare-dropzone" class="compare-dropzone" role="button" tabindex="0" aria-label="Drop CSV files here or click to browse">
+      <p class="compare-dropzone-label">Drop CSV files here or <label for="compare-file-input" class="compare-browse-link">browse</label></p>
+      <p class="muted compare-dropzone-hint">Each file = one stack. Files need <code>adoption_label</code> (or <code>adoption_level</code>) and optionally <code>stack</code>, <code>country</code>, <code>agents_found</code>, <code>created_at</code>, <code>stars</code>, <code>commit_ratio</code>.</p>
+      <input id="compare-file-input" type="file" accept=".csv" multiple hidden>
+    </div>
+
+    <div id="compare-stacks" class="compare-stacks" hidden>
+      <table class="data-table" id="compare-stacks-table">
+        <thead><tr><th>File</th><th>Stack label</th><th>Repos</th><th>Adopted</th><th>Rate</th><th></th></tr></thead>
+        <tbody id="compare-stacks-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Dashboard: sidebar + main -->
+  <div id="compare-dashboard" hidden>
+    <div class="compare-layout">
+
+      <!-- Sidebar filters -->
+      <aside class="compare-sidebar" id="compare-sidebar" aria-label="Filters"></aside>
+
+      <!-- Main content -->
+      <div class="compare-main">
+        <!-- Toolbar: tabs + export -->
+        <div class="compare-toolbar">
+          <div class="compare-tabs" role="tablist" aria-label="Comparison views">
+            <button class="compare-tab active" role="tab" aria-selected="true"  data-tab="overview">Overview</button>
+            <button class="compare-tab"        role="tab" aria-selected="false" data-tab="agents">Agents</button>
+            <button class="compare-tab"        role="tab" aria-selected="false" data-tab="geography">Geography</button>
+            <button class="compare-tab"        role="tab" aria-selected="false" data-tab="time">Time Series</button>
+            <button class="compare-tab"        role="tab" aria-selected="false" data-tab="size">Size</button>
+            <button class="compare-tab"        role="tab" aria-selected="false" data-tab="depth">Depth &amp; Ecosystems</button>
+          </div>
+          <div class="compare-export-actions">
+            <button class="button ghost" id="btn-export-html" type="button">Export HTML</button>
+            <button class="button ghost" id="btn-export-pdf"  type="button">Export PDF</button>
+          </div>
+        </div>
+
+        <!-- ── Tab 1: Overview ───────────────────────────────────────────── -->
+        <div id="tab-overview" class="compare-tab-panel">
+          <div class="compare-chart-grid">
+            <div class="compare-chart-card">
+              <h3>Adoption Rate by Stack <span class="muted" style="font-weight:400;font-size:.8rem">(95% Wilson CI)</span></h3>
+              <div class="compare-chart-wrap"><canvas id="chart-adoption-bars"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>Agentic vs AI-Assisted Breakdown</h3>
+              <div class="compare-chart-wrap"><canvas id="chart-adoption-split"></canvas></div>
+            </div>
+          </div>
+          <div id="compare-summary-table-wrap" style="margin-top:1.5rem;overflow-x:auto">
+            <table class="data-table" id="compare-summary-table">
+              <thead><tr><th>Stack</th><th>Repos</th><th>Adopted</th><th>Agentic</th><th>AI-Assisted</th><th>Rate</th><th>95% CI Low</th><th>95% CI High</th></tr></thead>
+              <tbody id="compare-summary-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── Tab 2: Agents ─────────────────────────────────────────────── -->
+        <div id="tab-agents" class="compare-tab-panel" hidden>
+          <div class="compare-chart-card compare-chart-full">
+            <h3>Top Agents per Stack</h3>
+            <div id="compare-agents-top-stacks"></div>
+          </div>
+          <div class="compare-chart-grid" style="margin-top:1.5rem">
+            <div class="compare-chart-card">
+              <h3>Tool Loyalty — Single vs Multi-Tool</h3>
+              <div class="compare-chart-wrap"><canvas id="chart-tool-loyalty"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>Agent Diversity — Single vs Multi-Agent</h3>
+              <div class="compare-chart-wrap"><canvas id="chart-agent-diversity"></canvas></div>
+            </div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>AI Commit Density Buckets</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">AI density = commit_ratio column (trailer commits ÷ total commits). Buckets: 0%, &lt;10%, 10–40%, 40–80%, ≥80%.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-commit-depth"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>AI Density Distribution per Stack</h3>
+            <div id="compare-commit-density-hist-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Median AI Commit Density per Agent</h3>
+            <div id="compare-density-by-agent-stacks"></div>
+          </div>
+        </div>
+
+        <!-- ── Tab 3: Geography ──────────────────────────────────────────── -->
+        <div id="tab-geography" class="compare-tab-panel" hidden>
+          <div class="compare-chart-card compare-chart-full">
+            <h3>Adoption Rate by World Region</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-world-regions"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Top Countries by Adoption Rate per Stack</h3>
+            <div id="compare-countries-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Adoption by Country Income Group (World Bank 2024)</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-income-group"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Adoption Rate &amp; Tool Pricing by Income Group — per Stack</h3>
+            <div id="compare-pricing-income-stacks"></div>
+          </div>
+          <div class="compare-chart-grid" style="margin-top:1.5rem">
+            <div class="compare-chart-card">
+              <h3>MENA vs Non-MENA Adoption by Stack</h3>
+              <div class="compare-chart-wrap"><canvas id="chart-mena-vs-rest"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>MENA Countries — Adoption Rate Detail</h3>
+              <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-mena-countries"></canvas></div>
+            </div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Country × Month Adoption Heatmap</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Cells with &lt;5 repos shown as grey. Requires <code>created_at</code> and <code>country</code> columns.</p>
+            <div id="compare-country-heatmap"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Country Rank Over Time (Bump Chart)</h3>
+            <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-country-bump"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Cumulative Agentic Repos per Country</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-country-cumulative"></canvas></div>
+          </div>
+        </div>
+
+        <!-- ── Tab 4: Time Series ────────────────────────────────────────── -->
+        <div id="tab-time" class="compare-tab-panel" hidden>
+          <div class="compare-chart-card compare-chart-full">
+            <h3>AI Adoption Rate by Repository Creation Month</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-time-series"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Monthly New Repos by Adoption Label (Stacked) — per Stack</h3>
+            <div id="compare-stacked-area-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>First AI Signal — Adoption Timing</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Requires <code>timing_category</code> or both <code>created_at</code> and <code>first_signal_at</code> columns.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-adoption-timing"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Days to First AI Signal — per Stack</h3>
+            <div id="compare-days-hist-stacks"></div>
+          </div>
+        </div>
+
+        <!-- ── Tab 5: Size ───────────────────────────────────────────────── -->
+        <div id="tab-size" class="compare-tab-panel" hidden>
+          <div class="compare-chart-card compare-chart-full">
+            <h3>Adoption Rate by Stars Tertile</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos split into Small / Medium / Large by star count. Requires <code>stars</code> column.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-size-tertile"></canvas></div>
+          </div>
+          <div class="compare-chart-grid" style="margin-top:1.5rem">
+            <div class="compare-chart-card">
+              <h3>Median Stars by Adoption Category</h3>
+              <div class="compare-chart-wrap"><canvas id="chart-size-stars"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>Median Commits by Adoption Category</h3>
+              <p class="muted" style="margin:0 0 .5rem;font-size:.8rem">Requires <code>commits</code> column.</p>
+              <div class="compare-chart-wrap"><canvas id="chart-size-commits"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Tab 6: Depth & Ecosystems ────────────────────────────────── -->
+        <div id="tab-depth" class="compare-tab-panel" hidden>
+          <div class="compare-chart-card compare-chart-full">
+            <h3>Adoption Rate by Ecosystem / Build System — per Stack</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Uses <code>ecosystem_type</code>, <code>primary_language</code>, or <code>corpus_source</code> column (first found).</p>
+            <div id="compare-ecosystem-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Agent Market Share Over Time (Top 7 Agents)</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-agent-market-share"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Tool Co-occurrence Heatmap</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">% of repos with the row agent that also have the column agent.</p>
+            <div id="compare-cooccurrence-table"></div>
+          </div>
+        </div>
+
+      </div><!-- .compare-main -->
+    </div><!-- .compare-layout -->
+  </div><!-- #compare-dashboard -->
+
+  <div id="compare-empty" class="empty-state" hidden>
+    <p>No plottable data</p>
+    <p class="muted">Make sure your CSVs have <code>adoption_label</code> (agentic/none) or <code>adoption_level</code> columns.</p>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="/static/compare.js"></script>
+
+<style>
+/* ── Upload zone ──────────────────────────────────────────────────────────── */
+.compare-dropzone {
+  border: 2px dashed var(--gc-border, #e2dbc6);
+  border-radius: var(--gc-radius, 6px);
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  margin-bottom: 1.5rem;
+}
+.compare-dropzone:hover,
+.compare-dropzone.drag-over {
+  border-color: var(--gc-accent, #1d3557);
+  background: color-mix(in srgb, var(--gc-accent, #1d3557) 6%, transparent);
+}
+.compare-dropzone-label { font-size: 1rem; margin: 0 0 .4rem; }
+.compare-dropzone-hint  { margin: 0; font-size: .85rem; }
+.compare-browse-link    { color: var(--gc-accent, #1d3557); cursor: pointer; text-decoration: underline; }
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.compare-layout {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  margin-top: 1.5rem;
+}
+.compare-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+.compare-main { flex: 1; min-width: 0; }
+@media (max-width: 860px) {
+  .compare-layout    { flex-direction: column; }
+  .compare-sidebar   { width: 100%; position: static; max-height: none; }
+}
+
+/* ── Sidebar filters ──────────────────────────────────────────────────────── */
+.compare-filter-group {
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: var(--gc-radius, 6px);
+  padding: .75rem;
+  margin-bottom: 1rem;
+  background: var(--gc-surface, #fffdf8);
+}
+.compare-filter-group h4 {
+  margin: 0 0 .5rem;
+  font-size: .8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--gc-muted, #6d6554);
+}
+.compare-filter-row {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .85rem;
+  margin-bottom: .3rem;
+  cursor: pointer;
+}
+.compare-filter-row input[type="range"] { flex: 1; cursor: pointer; }
+.compare-range { width: 100%; margin: .25rem 0; cursor: pointer; }
+.compare-eco-group > summary { cursor: pointer; font-size: .85rem; font-weight: 600; margin-bottom: .4rem; }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+.compare-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--gc-border, #e2dbc6);
+  margin-bottom: 1.5rem;
+}
+.compare-tabs {
+  display: flex;
+  gap: .25rem;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  margin-bottom: 0;
+}
+.compare-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: .5rem .85rem;
+  cursor: pointer;
+  color: var(--gc-muted, #6d6554);
+  font-size: .88rem;
+  margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.compare-tab:hover  { color: var(--gc-text, #201d16); }
+.compare-tab.active { color: var(--gc-accent, #1d3557); border-bottom-color: var(--gc-accent, #1d3557); font-weight: 600; }
+.compare-export-actions { display: flex; gap: .5rem; padding-bottom: .2rem; flex-shrink: 0; }
+
+/* ── Chart cards ──────────────────────────────────────────────────────────── */
+.compare-chart-card {
+  background: var(--gc-surface, #fffdf8);
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: var(--gc-radius, 6px);
+  padding: 1rem;
+}
+.compare-chart-card h3 { margin: 0 0 .75rem; font-size: .95rem; }
+.compare-chart-card h4 { margin: 0 0 .5rem; font-size: .88rem; }
+.compare-chart-wrap      { position: relative; height: 300px; }
+.compare-chart-tall      { height: 420px; }
+.compare-chart-full      { margin-bottom: 0; }
+.compare-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 700px) { .compare-chart-grid { grid-template-columns: 1fr; } }
+
+/* ── Per-stack grid ───────────────────────────────────────────────────────── */
+.compare-per-stack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: .5rem;
+}
+.compare-per-stack-grid .compare-chart-wrap { height: 260px; }
+
+/* ── Stack table ──────────────────────────────────────────────────────────── */
+.compare-stacks        { margin-bottom: 1.5rem; }
+.compare-label-input   { padding: .25rem .5rem; font-size: .85rem; width: 160px; }
+.compare-stack-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: .4rem;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* ── Heatmap tables ───────────────────────────────────────────────────────── */
+.compare-heatmap-scroll { overflow-x: auto; margin-top: .5rem; }
+.compare-heatmap-table  { border-collapse: collapse; font-size: .78rem; }
+.compare-heatmap-table th,
+.compare-heatmap-table td { padding: .3rem .5rem; border: 1px solid var(--gc-border, #e2dbc6); text-align: center; white-space: nowrap; }
+.compare-heatmap-table th  { background: var(--gc-surface-alt, #efe9d9); font-weight: 600; }
+.compare-heatmap-table td:first-child { text-align: left; background: var(--gc-surface-alt, #efe9d9); }
+</style>
+{% endblock %}

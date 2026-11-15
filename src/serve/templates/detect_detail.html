@@ -131,6 +131,18 @@
           </div>
         </details>
       </form>
+      <form method="get" action="/runs/{{ run.id }}/export" class="export-group">
+        <input type="hidden" name="format" value="comparison">
+        <input class="field-input" type="text" name="stack" placeholder="Stack name (e.g. Python)" aria-label="Stack name for comparison export">
+        <button class="button" type="submit" id="detection-export-comparison">Export for Cross Stack</button>
+        <details class="info-pop">
+          <summary aria-label="What the cross-stack export contains">i</summary>
+          <div class="info-pop-body">
+            <p>One row per scanned repo in the canonical cross-stack format: full_name, stack, stars, primary_language, country, adoption_label, agents_found, created_at, commit_ratio.</p>
+            <p>Upload this CSV directly to the <a href="/compare">Cross Stack Comparison</a> tab to compare adoption across language stacks. Enter a stack name to label this run's data (e.g. "Python", "Java").</p>
+          </div>
+        </details>
+      </form>
       {% endif %}
     </div>
   </div>
