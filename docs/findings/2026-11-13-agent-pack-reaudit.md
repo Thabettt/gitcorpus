@@ -237,7 +237,7 @@ The folded variant, pseudo-family, exclusions, and negative control do not enter
 
 ## 5. Every frozen label accounted for
 
-This table maps each of the 63 labels in [`packs/patterns/tools.csv`](../../packs/patterns/tools.csv) to its final treatment.
+This table maps each of the 63 labels in [`packs/sources/2026-10-19/tools.csv`](../../packs/sources/2026-10-19/tools.csv) to its final treatment.
 
 | # | Frozen label | Canonical family / treatment | Disposition |
 |---:|---|---|---|
@@ -1740,12 +1740,12 @@ Preserve dated historical evidence for the six legacy-only families and lifecycl
 ## Appendix A. Local baseline and pattern references
 
 - [`packs/2026-10-19.json`](../../packs/2026-10-19.json) — frozen 63-label baseline.
-- [`packs/patterns/tools.csv`](../../packs/patterns/tools.csv) — baseline names and URLs.
-- [`packs/patterns/authors.csv`](../../packs/patterns/authors.csv) — current author patterns and broad-identity hygiene targets.
-- [`packs/patterns/files.csv`](../../packs/patterns/files.csv) — current file rules.
-- [`packs/patterns/branches.csv`](../../packs/patterns/branches.csv) — current branch rules, including the duplicate Claude Code entry.
-- [`packs/patterns/labels.csv`](../../packs/patterns/labels.csv) — current label rules.
-- [`packs/patterns/bots.csv`](../../packs/patterns/bots.csv) — generic bot exclusions.
+- [`packs/sources/2026-10-19/tools.csv`](../../packs/sources/2026-10-19/tools.csv) — baseline names and URLs.
+- [`packs/sources/2026-10-19/authors.csv`](../../packs/sources/2026-10-19/authors.csv) — current author patterns and broad-identity hygiene targets.
+- [`packs/sources/2026-10-19/files.csv`](../../packs/sources/2026-10-19/files.csv) — current file rules.
+- [`packs/sources/2026-10-19/branches.csv`](../../packs/sources/2026-10-19/branches.csv) — current branch rules, including the duplicate Claude Code entry.
+- [`packs/sources/2026-10-19/labels.csv`](../../packs/sources/2026-10-19/labels.csv) — current label rules.
+- [`packs/sources/2026-10-19/bots.csv`](../../packs/sources/2026-10-19/bots.csv) — generic bot exclusions.
 
 ## Appendix B. Related research
 

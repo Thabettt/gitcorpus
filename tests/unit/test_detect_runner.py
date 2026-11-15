@@ -138,10 +138,11 @@ def test_api_runner_uses_a_fixed_four_token_pool_with_twelve_workers(clean_db, m
 
     fake_pool = FakePool()
 
-    def fake_build_pool(engine_, tokens, channels, *, max_concurrent):
+    def fake_build_pool(engine_, tokens, channels, *, max_concurrent, file_core_calls):
         captured["tokens"] = list(tokens)
         captured["channels"] = channels
         captured["max_concurrent"] = max_concurrent
+        captured["file_core_calls"] = file_core_calls
         return fake_pool
 
     def fake_run_detection(deps, run_id, spec, pack, *, config=None, token_pool=None):

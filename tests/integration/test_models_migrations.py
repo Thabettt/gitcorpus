@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from alembic import command
 from conftest import UnsafeTestDatabase, assert_test_database
@@ -168,6 +170,8 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "bots": False,
         "generic_weights": False,
         "exclusions": False,
+        "schema_version": False,
+        "document": True,
         "frozen_at": False,
     },
     "detection_evidence": {
@@ -178,6 +182,21 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "channel": False,
         "evidence": False,
         "pack_version": False,
+        "family_id": True,
+        "family_name": True,
+        "observed_as": True,
+        "variant": True,
+        "rule_id": True,
+        "rule_lifecycle": True,
+        "evidence_semantics": True,
+        "forge": True,
+        "role": True,
+        "confidence": True,
+        "provenance_ref": True,
+        "is_current": True,
+        "is_historical": True,
+        "metric_eligibility": True,
+        "explanatory_note": True,
         "detected_at": False,
     },
     "detection_repo_filters": {
@@ -207,6 +226,8 @@ EXPECTED_INDEXES = {
     "audit_ts_idx": "audit_log",
     "audit_run_idx": "audit_log",
     "de_run_committed_file_repo_idx": "detection_evidence",
+    "de_run_family_idx": "detection_evidence",
+    "de_run_rule_idx": "detection_evidence",
 }
 
 
@@ -349,6 +370,7 @@ def test_server_defaults(migrated: Engine):
         ("app_settings", "detect_token_mode"): "single",
         ("app_settings", "graphql_batch_size"): "29",
         ("app_settings", "adaptive"): "false",
+        ("trace_packs", "schema_version"): "1",
     }
     for (table, column), fragment in expected.items():
         assert fragment in (_columns(migrated, table)[column]["default"] or "")
@@ -559,3 +581,93 @@ def test_detect_rows_round_trip(migrated: Engine):
                 ),
                 {"run": detect_id},
             )
+
+
+def test_lifecycle_evidence_round_trips_without_reinterpreting_old_rows(migrated: Engine):
+    with migrated.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs"
+                " (version, authors, files, branches, labels, schema_version, document)"
+                " VALUES ('rt-v2', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 2,"
+                " CAST(:document AS jsonb))"
+                " ON CONFLICT (version) DO NOTHING"
+            ),
+            {"document": json.dumps({"schema_version": 2, "version": "rt-v2"})},
+        )
+        source_id = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version)"
+                " VALUES ('rt-v2-find', '{}'::jsonb, '2022-11-28') RETURNING id"
+            )
+        ).scalar_one()
+        detect_id = connection.execute(
+            text(
+                "INSERT INTO runs (filter_hash, filter_spec, api_version, kind, source_run_id)"
+                " VALUES ('rt-v2-detect', '{}'::jsonb, '2022-11-28', 'detect', :src)"
+                " RETURNING id"
+            ),
+            {"src": source_id},
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO owners (id, login, type) VALUES (902, 'lifecycle-octo', 'User')"
+                " ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO repos (id, node_id, full_name, owner_id, name, visibility)"
+                " VALUES (902, 'rt-v2-n1', 'octo/rt-v2', 902, 'rt-v2', 'public')"
+                " ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO detection_evidence"
+                " (run_id, repo_id, agent, channel, evidence, pack_version, family_id,"
+                " family_name, observed_as, variant, rule_id, rule_lifecycle,"
+                " evidence_semantics, forge, role, confidence, provenance_ref, is_current,"
+                " is_historical, metric_eligibility, explanatory_note)"
+                " VALUES (:run, 902, 'Herder', 'hidden_ref',"
+                " CAST(:evidence AS jsonb), 'rt-v2', 'herder', 'Herder',"
+                " 'Herder', NULL, 'herder.checkpoint-ref', 'recovery-only',"
+                " 'recovery_checkpoint', 'local', 'checkpoint_ref', 'strong', 'source@pin',"
+                " true, false, CAST(:eligibility AS jsonb),"
+                " 'checkpoint evidence')"
+            ),
+            {
+                "run": detect_id,
+                "evidence": json.dumps({"ref": "refs/herder/a/b"}),
+                "eligibility": json.dumps({"current_commit_ratio": False}),
+            },
+        )
+    with migrated.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT family_id, rule_id, channel, evidence_semantics, forge, role,"
+                    " is_current, is_historical, metric_eligibility, explanatory_note"
+                    " FROM detection_evidence WHERE run_id = :run"
+                ),
+                {"run": detect_id},
+            )
+            .mappings()
+            .one()
+        )
+        legacy = connection.execute(
+            text(
+                "SELECT family_id, rule_id, metric_eligibility FROM detection_evidence"
+                " WHERE pack_version = 'rt-1' LIMIT 1"
+            )
+        ).one()
+    assert row["family_id"] == "herder"
+    assert row["rule_id"] == "herder.checkpoint-ref"
+    assert row["channel"] == "hidden_ref"
+    assert row["evidence_semantics"] == "recovery_checkpoint"
+    assert row["forge"] == "local"
+    assert row["role"] == "checkpoint_ref"
+    assert row["is_current"] is True and row["is_historical"] is False
+    assert row["metric_eligibility"] == {"current_commit_ratio": False}
+    assert row["explanatory_note"] == "checkpoint evidence"
+    assert legacy == (None, None, None)

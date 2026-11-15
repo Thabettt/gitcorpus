@@ -1,10 +1,10 @@
 # The 2026-11-14 Coding-Agent Trace Pack: A Complete Human Guide
 
-**Status:** implementation guide for the proposed lifecycle-aware trace pack  
+**Status:** implemented lifecycle-aware trace pack  
 **Guide date:** 2026-11-14  
-**Proposed pack version:** `2026-11-14`  
-**Proposed artifact:** `packs/2026-11-14.json`  
-**Current state:** researched and specified; the JSON pack has not been built yet  
+**Pack version:** `2026-11-14`  
+**Artifact:** `packs/2026-11-14.json` (source: `packs/sources/2026-11-14/catalogue.json`)  
+**Current state:** schema v2 implemented; immutable JSON artifact built and all six formerly gated families activated  
 **Frozen predecessors:** `packs/2026-10-14.json` and `packs/2026-10-19.json`  
 **Normative audit:** [`findings/2026-11-13-agent-pack-reaudit.md`](findings/2026-11-13-agent-pack-reaudit.md)  
 **Research methodology:** [`findings/2026-11-08-agent-fingerprint-methodology.md`](findings/2026-11-08-agent-fingerprint-methodology.md)
@@ -19,6 +19,21 @@
 - **Quick lookup:** use Section 25 for frequently asked questions and Section 26 for the underlying research documents.
 
 The guide explains the system in plain language first. Code, regex, and schema examples appear only where they remove ambiguity.
+
+> **Implementation update (2026-11-14):** `packs/2026-11-14.json` is now the complete
+> schema-v2 snapshot. References below to “v2-gated” describe the audit state before the
+> required matcher and collector capabilities existed. GitLab Duo, Orca, T3 Code, GitHub
+> Agentic Workflows, PR-Agent, and Herder are active in this artifact through their scoped
+> structured contracts; none was replaced by a broad fallback regex. The editable source is
+> `packs/sources/2026-11-14/catalogue.json`. The `2026-10-19` CSV inputs are kept separately
+> under `packs/sources/2026-10-19/`, because every pack owns its own source.
+>
+> **Coverage caveat:** the built artifact is not a superset of the `2026-10-19` heuristics.
+> Several validated high-volume branch, label, and identity heuristics (e.g. `copilot/`,
+> `cursor/`, the `codex` label, `copilot-swe-agent`, `devin-ai-integration`) are absent and
+> not recorded in the rejection ledger, and there are no issue-participant rules. See
+> [`trace-packs.md`](trace-packs.md#known-gaps-in-2026-11-14) before comparing runs across
+> packs. How packs, agents, and channels relate is documented there too.
 
 ---
 
@@ -1143,7 +1158,7 @@ Preserving known false attribution would not preserve history; it would preserve
 ```powershell
 $env:PYTHONPATH = 'src'
 .\.venv\Scripts\python.exe -m detect.packs build `
-  --src packs\patterns `
+  --src packs\sources\2026-11-14 `
   --version 2026-11-14 `
   --out packs\2026-11-14.json
 ```
@@ -1299,7 +1314,7 @@ The new pack is ready only when all of the following hold.
 
 - Exactly 72 active families are current-matcher-detectable.
 - Exactly 25 of those are additions.
-- Exactly six active families remain v2-gated.
+- Exactly six active families are identified as the formerly v2-gated cohort and are activated by schema-v2 contracts.
 - Total active catalogue is exactly 78.
 - `Generic` is not counted as a vendor family.
 - Legacy families and rules do not increase current active counts.
@@ -1402,7 +1417,9 @@ Rules are removed from positive detection only when they were unsupported, overb
 
 ### Does “active family” mean detectable today?
 
-No. Six active families require matcher v2.
+In the implemented `2026-11-14` snapshot, yes: all 78 active families have at least one safe
+runtime contract. The audit's six-family “v2-gated” cohort became detectable only after the
+structured matcher and collector work described here landed.
 
 ### Does “current-matcher-detectable” mean every use is detected?
 
@@ -1426,7 +1443,9 @@ Sometimes. Shared artifacts should remain ambiguous until content or context sel
 
 ### Is the new pack already available?
 
-No. This guide and the reaudit define the implementation contract. `packs/2026-11-14.json` still needs to be built, tested, replayed, and frozen.
+Yes. `packs/2026-11-14.json` is built from `packs/sources/2026-11-14/catalogue.json`; predecessor
+packs remain byte-for-byte unchanged. Database freezing remains an explicit deployment operation.
+Note the coverage gaps listed in [`trace-packs.md`](trace-packs.md#known-gaps-in-2026-11-14).
 
 ---
 

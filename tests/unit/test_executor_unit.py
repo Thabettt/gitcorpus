@@ -129,11 +129,34 @@ def _cells(row):
 
 
 def test_evidence_header_is_the_flat_schema():
+    # The schema-v2 rule contract sits between `agent` and the flat v1 fields;
+    # schema-v1 rows leave those columns empty.
     assert executor.EVIDENCE_CSV_HEADER == [
         "repo_id",
         "full_name",
         "agent",
+        "family_id",
+        "family_name",
+        "observed_as",
+        "variant",
+        "rule_id",
+        "rule_lifecycle",
+        "evidence_semantics",
         "channel",
+        "forge",
+        "role",
+        "confidence",
+        "provenance_ref",
+        "is_current",
+        "is_historical",
+        "repository_presence_eligible",
+        "current_presence_eligible",
+        "activity_eligible",
+        "authorship_eligible",
+        "generated_code_eligible",
+        "current_ratio_eligible",
+        "historical_attribution_eligible",
+        "explanatory_note",
         "detected_at",
         "commit_sha",
         "path",

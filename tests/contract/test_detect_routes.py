@@ -183,9 +183,13 @@ def test_detect_status_partial_shows_live_token_pool_health(clean):
 
     body = client.get(f"/partials/detections/{run_id}/status").text
 
-    assert "API pool:" in body
-    assert "account 1 · core 4900 · GraphQL 4800 · workers 1/3" in body
-    assert "account 4" in body and "disabled" in body
+    assert 'class="pool-table"' in body
+    rows = body.split("<tbody>", 1)[1].split("</tbody>", 1)[0].split("<tr>")[1:]
+    assert len(rows) == 4
+    assert '<span class="pool-num">4900</span>' in rows[0]
+    assert '<span class="pool-num">4800</span>' in rows[0]
+    assert ">1/3<" in rows[0]
+    assert "disabled" in rows[3] and "disabled" not in rows[0]
     assert "private-fingerprint" not in body
 
 
@@ -373,6 +377,32 @@ def test_start_detection_creates_run_and_submits_runner(clean):
     assert row["filter_spec"]["agents"] == ["Claude Code", "Codex"]
     assert row["filter_spec"]["channels"] == ["file", "pr_metadata"]
     assert row["filter_spec"]["limit"] == 50
+
+
+def test_start_detection_records_fast_mode_and_shows_it(clean):
+    client = make_client(clean, detect_runner=lambda run_id, spec: None)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    options = client.get(f"/detections/from/{source}")
+    assert 'name="scan_mode" value="fast"' in options.text
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "channels": ["file"],
+            "scan_mode": "fast",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    new_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    with clean.connect() as connection:
+        spec = connection.scalar(
+            text("SELECT filter_spec FROM runs WHERE id = :id"), {"id": new_id}
+        )
+    assert spec["scan_mode"] == "fast"
+    assert 'id="run-scan-mode"' in client.get(f"/detections/{new_id}").text
 
 
 def test_start_pool4_detection_rejects_two_or_three_configured_tokens(clean, monkeypatch):
@@ -714,6 +744,46 @@ def test_detect_spec_rejects_unknown_source_and_bad_clone():
     assert any("clone.keep must be" in error for error in bad_keep.value.errors)
 
 
+def test_detect_spec_scan_mode_defaults_full_and_round_trips_fast():
+    base = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+    }
+    full = parse_detect_spec(base)
+    assert full.scan_mode == "full"
+    # Full mode is omitted so pre-existing specs and filter hashes are unchanged.
+    assert "scan_mode" not in detect_spec_to_dict(full)
+    fast = parse_detect_spec({**base, "scan_mode": "fast"})
+    assert fast.scan_mode == "fast"
+    assert detect_spec_to_dict(fast)["scan_mode"] == "fast"
+    assert parse_detect_spec(detect_spec_to_dict(fast)) == fast
+
+
+def test_detect_spec_rejects_unknown_scan_mode_and_fast_git():
+    base = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+    }
+    with pytest.raises(DetectSpecError) as unknown:
+        parse_detect_spec({**base, "scan_mode": "turbo"})
+    assert any("scan_mode must be" in error for error in unknown.value.errors)
+    with pytest.raises(DetectSpecError) as git_fast:
+        parse_detect_spec({**base, "source": "git", "scan_mode": "fast"})
+    assert any("only to API" in error for error in git_fast.value.errors)
+
+
 def test_options_page_presents_both_detection_methods(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
@@ -765,6 +835,41 @@ def test_estimate_partial_reflects_keep_and_depth(clean):
     assert "MB kept on disk" not in no_keep.text
 
 
+V1_CHANNELS = (
+    "file",
+    "author",
+    "branch",
+    "label",
+    "bot",
+    "commit_trailer",
+    "pr_metadata",
+    "issue",
+)
+
+
+def seed_older_pack(engine) -> None:
+    from json import dumps
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs (version, authors, files, branches, labels,"
+                " frozen_at) VALUES ('older-pack', CAST(:authors AS jsonb),"
+                " '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, now() - interval '1 day')"
+            ),
+            {"authors": dumps([{"pattern": "cursor", "agent": "Cursor"}])},
+        )
+
+
+def seed_lifecycle_pack(engine) -> None:
+    from pathlib import Path
+
+    from detect.packs import freeze_pack, load_pack_file
+
+    root = Path(__file__).resolve().parents[2]
+    freeze_pack(engine, load_pack_file(root / "packs" / "2026-11-14.json"))
+
+
 def test_options_page_moves_clone_fields_into_scope_and_disables_api_only_channels(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
@@ -774,7 +879,132 @@ def test_options_page_moves_clone_fields_into_scope_and_disables_api_only_channe
     assert body.count("data-git-field>") == 2
     assert body.index("data-git-field>") < body.index('id="detect-estimate"')
     assert "unavailable with git detection" in body
-    assert "input.disabled = true" in body
+    assert "apiOnlyValues" in body
+
+
+def test_schema_v1_pack_offers_its_eight_channels(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    body = client.get(f"/detections/from/{source}").text
+    # The flat v1 matcher feeds all eight channels (author patterns also match
+    # PR authors and issue participants), and none of them is opt-in.
+    for channel in V1_CHANNELS:
+        assert f'name="channels" value="{channel}" checked>' in body
+    assert 'data-channel="hidden_ref"' not in body
+    assert 'Channels (<span id="detect-channels-count">8</span>)' in body
+
+
+def test_lifecycle_pack_offers_only_channels_its_rules_feed(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_lifecycle_pack(clean)
+    body = client.get(f"/detections/from/{source}").text
+    for channel in ("file", "author", "branch", "label", "bot", "commit_trailer", "pr_metadata"):
+        assert f'name="channels" value="{channel}" checked>' in body
+    # hidden_ref is supported but opt-in; issue has no rules in this pack.
+    assert 'name="channels" value="hidden_ref">' in body
+    assert 'data-channel="issue"' not in body
+    # Legacy-only families stay selectable and are labelled.
+    assert 'value="Brokk" checked> <span>Brokk</span> <span class="muted">(legacy)</span>' in body
+
+
+def test_options_page_renders_only_the_selected_packs_agents(clean):
+    seed_older_pack(clean)
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    body = client.get(f"/detections/from/{source}").text
+    # test-pack is the newest frozen pack, so it is selected and only its
+    # roster is in the form; the other pack lives only in the JSON map.
+    assert '<option value="test-pack" selected>' in body
+    assert '<option value="older-pack">' in body
+    assert 'data-agent="Claude Code">' in body
+    assert 'data-agent="Cursor"' not in body
+    assert '"older-pack": {"agents": [{"category": "active", "name": "Cursor"}' in body
+
+
+def test_options_error_page_keeps_the_submitted_pack_and_selection(clean):
+    seed_older_pack(clean)
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/detections/from/{source}")
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "older-pack",
+            "agents": ["Ghost"],
+            "channels": ["author"],
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    assert "unknown agents for pack" in response.text
+    assert "Ghost" in response.text
+    assert '<option value="older-pack" selected>' in response.text
+    assert 'data-agent="Cursor">' in response.text
+    assert 'data-agent="Claude Code"' not in response.text
+    assert 'value="author" checked>' in response.text
+    assert 'name="channels" value="file">' in response.text
+
+
+def test_start_rejects_a_channel_the_pack_cannot_feed(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/detections/from/{source}")
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "channels": ["file", "hidden_ref"],
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    assert "channels not supported by pack" in response.text
+    assert "hidden_ref" in response.text
+
+
+def test_start_stores_the_whole_roster_as_an_unfiltered_scan(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    client.get(f"/detections/from/{source}")
+    response = client.post(
+        f"/detections/from/{source}",
+        data={
+            "csrf": csrf_token(client),
+            "pack_version": "test-pack",
+            "agents": ["Claude Code", "Codex", "Generic"],
+            "channels": ["file"],
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with clean.connect() as connection:
+        spec = connection.execute(
+            text("SELECT filter_spec FROM runs WHERE kind = 'detect' ORDER BY id DESC LIMIT 1")
+        ).scalar_one()
+    assert spec["agents"] is None
+
+
+def test_estimate_prices_only_the_selected_packs_channels(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    seed_lifecycle_pack(clean)
+    older = client.get(
+        f"/partials/detections/{source}/estimate?pack_version=test-pack&channels=hidden_ref"
+    ).text
+    newer = client.get(
+        f"/partials/detections/{source}/estimate?pack_version=2026-11-14&channels=hidden_ref"
+    ).text
+    assert "hidden_ref" not in older
+    assert older != newer
 
 
 def test_start_detection_records_git_source_and_clone(clean):

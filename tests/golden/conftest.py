@@ -194,6 +194,8 @@ PATH_PARAMS = {
     "/detections/new": {},
     "/detections/from/{run_id}": {"run_id": RUN_A},
     "/detections/{run_id}": {"run_id": 952},
+    "/api/trace-packs/{version}": {"version": "golden-pack"},
+    "/api/detections/{run_id}/evidence": {"run_id": 952},
     "/analysis": {},
     "/analysis/{run_id}": {"run_id": 952},
     "/analysis/{run_id}/dashboard": {"run_id": 952},

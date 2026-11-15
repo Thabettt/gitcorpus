@@ -23,7 +23,7 @@ A single agent can use several channels. The pack treats them as corroborating e
 
 ## Current pack — 63 agents
 
-Alphabetical. Fingerprints are the patterns currently shipped in `packs/patterns/*.csv`.
+Alphabetical. Fingerprints are the patterns currently shipped in `packs/sources/2026-10-19/*.csv`.
 
 - **Aider** — **Files:** `aider.conf.yaml`, `aider.conf.yml`, `.aider.conf.yaml`, `.aider.conf.yml`, `.aiderignore`, `.aider/`, `.aiderrules`; **Identity:** `aider`, `aider@aider\.chat`
 - **Alibaba Lingma** — **Files:** `.lingma/`
@@ -159,7 +159,7 @@ The 5 depth deltas are already inside the 63 and do not add rows. The 3 watch fa
 
 ## Sources
 
-- Current names and URLs: `packs/patterns/tools.csv` and `packs/2026-10-19.json`.
-- Current fingerprints: `packs/patterns/files.csv`, `authors.csv`, `branches.csv`, and `labels.csv`.
+- Current names and URLs: `packs/sources/2026-10-19/tools.csv` and `packs/2026-10-19.json`.
+- Current fingerprints: `packs/sources/2026-10-19/files.csv`, `authors.csv`, `branches.csv`, and `labels.csv`.
 - New families and native traces: [`2026-11-09-agent-inventory-final-decision.md`](findings/2026-11-09-agent-inventory-final-decision.md).
 - Detection design: [`agent-detection-efficient-engineering.md`](../design/agent-detection-efficient-engineering.md).

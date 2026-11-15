@@ -70,6 +70,40 @@ def seed_source_run(engine) -> int:
     return source_id
 
 
+def test_candidates_snapshot_repo_metadata_missing_from_imported_run(clean_db):
+    engine = clean_db(
+        owners=[{"id": 1, "login": "octo", "type": "User"}],
+        repos=[
+            {
+                "id": 1,
+                "node_id": "n1",
+                "full_name": "octo/one",
+                "owner_id": 1,
+                "name": "one",
+                "visibility": "public",
+                "language": "Rust",
+                "license_spdx": "MIT",
+                "stargazers": 42,
+                "default_branch": "main",
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+    )
+    source_id = create_run(engine, {"q": "import: repos.csv"}, api_version="2022-11-28")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO run_items (run_id, repo_id, full_name)" " VALUES (:run, 1, 'octo/one')"
+            ),
+            {"run": source_id},
+        )
+    candidate = orchestrator_module._candidates(engine, source_id, None)[0]
+    assert candidate["language"] == "Rust"
+    assert candidate["license_spdx"] == "MIT"
+    assert candidate["stargazers"] == 42
+    assert candidate["repo_created_at"] is not None
+
+
 def make_handler(seen: list[str], queries: list[str]):
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.url.path)

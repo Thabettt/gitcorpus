@@ -15,7 +15,40 @@
   {% endif %}
   {% set token_pool = result_summary.get('token_pool') if result_summary else none %}
   {% if token_pool and token_pool.accounts %}
-  <p class="muted"><strong>API pool:</strong>{% if token_pool.global_cooldown_seconds %} global cooldown {{ token_pool.global_cooldown_seconds }}s ·{% endif %}{% for account in token_pool.accounts %} account {{ loop.index }} · core {{ account.core_remaining if account.core_remaining is not none else '—' }} · GraphQL {{ account.graphql_remaining if account.graphql_remaining is not none else '—' }} · workers {{ account.active }}/{{ account.active_limit }} · 5xx {{ account.transient_hits|default(0) }} · limits {{ account.secondary_hits|default(0) }}{% if account.disabled %} · disabled{% elif account.cooldown_seconds %} · cooling {{ account.cooldown_seconds }}s{% endif %}{% if not loop.last %};{% endif %}{% endfor %}</p>
+  {% macro budget(value) -%}
+    {%- if value is none -%}<span class="muted">—</span>
+    {%- else -%}
+    {%- set pct = [[(value / 50.0)|round(0, 'floor'), 0]|max, 100]|min -%}
+    <span class="pool-budget{% if value <= 400 %} low{% endif %}"><span class="pool-num">{{ value }}</span><span class="pool-meter" aria-hidden="true"><span style="width: {{ pct }}%"></span></span></span>
+    {%- endif -%}
+  {%- endmacro %}
+  <div class="pool-stats">
+    <div class="pool-head">
+      <strong>API pool</strong>
+      <span class="muted">calls left this hour (of 5,000) per account</span>
+      {% if token_pool.global_cooldown_seconds %}<span class="flag warn">global cooldown {{ token_pool.global_cooldown_seconds }}s</span>{% endif %}
+    </div>
+    <div class="pool-scroll">
+      <table class="pool-table">
+        <thead>
+          <tr><th scope="col">Account</th><th scope="col">REST</th><th scope="col">GraphQL</th><th scope="col" class="num">Workers</th><th scope="col" class="num" title="GitHub server errors (retried)">5xx</th><th scope="col" class="num" title="Secondary rate-limit responses">Limits</th><th scope="col">Status</th></tr>
+        </thead>
+        <tbody>
+          {% for account in token_pool.accounts %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ budget(account.core_remaining) }}</td>
+            <td>{{ budget(account.graphql_remaining) }}</td>
+            <td class="num">{{ account.active }}/{{ account.active_limit }}</td>
+            <td class="num">{{ account.transient_hits|default(0) }}</td>
+            <td class="num{% if account.secondary_hits %} pool-alert{% endif %}">{{ account.secondary_hits|default(0) }}</td>
+            <td>{% if account.disabled %}<span class="pool-state down">disabled</span>{% elif account.cooldown_seconds %}<span class="pool-state warn">cooling {{ account.cooldown_seconds }}s</span>{% else %}<span class="pool-state ok">ok</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
   {% endif %}
   {% if run.status in ('queued', 'running') %}
   {% if cancelling %}

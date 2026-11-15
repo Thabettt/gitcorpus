@@ -23,6 +23,9 @@
     <div class="run-meta">
       <span id="run-id" data-field="run">run {{ run.id }}</span>
       <span id="run-source" data-field="source">source {{ "git (local clone)" if detection.git_mode else "api" }}</span>
+      {%- if detection.fast_mode %}
+      <span id="run-scan-mode" data-field="scan_mode" title="Broad-pattern file-content reads (every workflow/compose file) were skipped">scan fast</span>
+      {%- endif %}
       <span id="run-created" data-field="created">created {{ run.created_at }}</span>
       <span id="run-started" data-field="started">started {{ run.started_at }}</span>
       <span id="run-finished" data-field="finished">finished {{ run.finished_at }}</span>
@@ -86,15 +89,66 @@
       <h3>First signal</h3><p>{{ detection.first_signal_label or "—" }}</p>
     </article>
   </div>
-  {% if detection.summary.agents %}
-  <div id="detection-agents" class="run-counts">
-    {% for agent, count in detection.summary.agents.items() %}<span class="count">{{ agent }} <strong>{{ count }}</strong></span>{% endfor %}
+  {% set lc = detection.summary.lifecycle %}
+  {% if detection.summary.agents or lc %}
+  <div class="summary-breakdown{{ ' is-single' if not (detection.summary.agents and lc) }}">
+    {% if detection.summary.agents %}
+    {% set ranked = detection.summary.agents.items() | sort(attribute='0') | list %}
+    {% set top_n = 10 %}
+    <section class="breakdown-group" id="detection-agents" aria-labelledby="detection-agents-title">
+      <h3 id="detection-agents-title">Evidence by agent <span class="breakdown-total">{{ ranked | length }}</span></h3>
+      <p class="breakdown-unit">evidence items, not repos · A–Z</p>
+      <ul class="breakdown-chips">
+        {% for agent, count in ranked[:top_n] %}<li><span>{{ agent }}</span><strong>{{ "{:,}".format(count) }}</strong></li>{% endfor %}
+      </ul>
+      {% if ranked | length > top_n %}
+      <details class="breakdown-more">
+        <summary><span class="breakdown-more-show">Show all {{ ranked | length }} agents</span><span class="breakdown-more-hide">Show fewer</span></summary>
+        <ul class="breakdown-chips">
+          {% for agent, count in ranked[top_n:] %}<li><span>{{ agent }}</span><strong>{{ "{:,}".format(count) }}</strong></li>{% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% if lc %}
+    {% set signals = [
+      ("Ever observed", lc.ever_observed or 0),
+      ("Currently configured", lc.currently_configured or 0),
+      ("Current activity", lc.current_activity or 0),
+      ("Review participation", lc.review_participation or 0),
+      ("Authored commits", lc.authored_commits or 0),
+    ] %}
+    {% set caveats = [
+      ("Historical activity", lc.historical_activity or 0),
+      ("Orchestration only", lc.orchestration_only or 0),
+      ("Legacy marker, current use unknown", lc.legacy_markers or 0),
+      ("Recovery / checkpoint", lc.recovery_checkpoint or 0),
+      ("Ambiguous lineage", lc.ambiguous_lineage or 0),
+    ] %}
+    {% set ns = namespace(caveats=false) %}
+    {% for _label, value in caveats %}{% if value %}{% set ns.caveats = true %}{% endif %}{% endfor %}
+    <section class="breakdown-group" id="detection-lifecycle" aria-labelledby="detection-lifecycle-title">
+      <h3 id="detection-lifecycle-title">What the evidence shows</h3>
+      <p class="breakdown-unit">repo–agent pairs; authored commits are distinct commits</p>
+      <dl class="breakdown-stats">
+        {% for label, value in signals %}<div class="{{ 'is-zero' if not value }}"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+      </dl>
+      {% if ns.caveats %}
+      <dl class="breakdown-stats breakdown-caveats" aria-label="Caveats">
+        {% for label, value in caveats %}<div class="{{ 'is-zero' if not value }}"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+      </dl>
+      {% else %}
+      <p class="breakdown-clear">No historical, orchestration-only, legacy, recovery or ambiguous evidence.</p>
+      {% endif %}
+    </section>
+    {% endif %}
   </div>
   {% endif %}
   {% if detection.summary.partial_channels %}
   <p class="flag warn" id="detection-partials">Partial channels: {% for channel, note in detection.summary.partial_channels.items() %}{{ channel }} ({{ note }}){% if not loop.last %}; {% endif %}{% endfor %}</p>
   {% endif %}
-  <p class="muted">Depth: {% if detection.git_mode %}last {{ detection.windows.commits }} commits on the default branch; every PR ref walked {{ detection.windows.commits }} commits deep — labels and issues are API-only (windowed){% else %}{{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed){% endif %}. Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount. Hover or tap the ⓘ on any card for details.</p>
+  <p class="muted">Depth: {% if detection.git_mode %}last {{ detection.windows.commits }} commits on the default branch; every PR ref walked {{ detection.windows.commits }} commits deep — labels and issues are API-only (windowed){% else %}{{ detection.windows.commits }} commits · {{ detection.windows.prs }} PRs · {{ detection.windows.issues }} issues (windowed){% endif %}.{% if detection.fast_mode %} Fast mode: file contents were read only for rules naming one specific file; broad checks over every workflow and compose file were skipped.{% endif %} Papers’ baseline: ~0.5–1% false positives, ~3% borderline; detection is an undercount. Hover or tap the ⓘ on any card for details.</p>
 </section>
 <section class="panel" id="detection-evidence">
   <div class="panel-head">
@@ -166,6 +220,22 @@
         {% for channel in detection.filter_channels %}<option value="{{ channel }}"{{ ' selected' if channel == detection.filters.channel }}>{{ channel }}</option>{% endfor %}
       </select>
     </label>
+    <label class="field" for="detection-filter-state">
+      <span class="field-label">Lifecycle</span>
+      <select class="field-input" id="detection-filter-state" name="state">
+        <option value="">All lifecycle states</option>
+        <option value="current"{{ ' selected' if detection.filters.state == 'current' }}>Current evidence</option>
+        <option value="historical"{{ ' selected' if detection.filters.state == 'historical' }}>Historical evidence</option>
+        {% for state in detection.filter_states %}{% if state not in ['current'] %}<option value="{{ state }}"{{ ' selected' if state == detection.filters.state }}>{{ state }}</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <label class="field" for="detection-filter-semantics">
+      <span class="field-label">Meaning</span>
+      <select class="field-input" id="detection-filter-semantics" name="semantics">
+        <option value="">All meanings</option>
+        {% for semantics in detection.filter_semantics %}<option value="{{ semantics }}"{{ ' selected' if semantics == detection.filters.semantics }}>{{ semantics | replace('_', ' ') }}</option>{% endfor %}
+      </select>
+    </label>
     <div class="field filter-submit">
       <span class="field-label" aria-hidden="true">&nbsp;</span>
       <button class="button" type="submit" id="detection-filter-apply">Filter</button>
@@ -181,7 +251,7 @@
         <div class="evidence-channel" data-channel="{{ channel }}">
           <h4>{{ channel }}</h4>
           <ul>
-            {% for hit in hits %}<li data-agent="{{ hit.agent }}"><strong>{{ hit.agent }}</strong> — {{ hit.summary }}</li>{% endfor %}
+            {% for hit in hits %}<li data-agent="{{ hit.agent }}"><strong>{{ hit.agent }}</strong>{% if hit.observed_as and hit.observed_as != hit.agent %} <span class="muted">observed as {{ hit.observed_as }}</span>{% endif %} — {{ hit.summary }}{% if hit.lifecycle %} <span class="badge">{{ hit.lifecycle }}</span>{% endif %}{% if hit.semantics %} <span class="badge">{{ hit.semantics | replace('_', ' ') }}</span>{% endif %}{% if hit.role %} <span class="muted">{{ hit.role }}</span>{% endif %}{% if hit.note %}<br><span class="muted">{{ hit.note }}</span>{% endif %}</li>{% endfor %}
           </ul>
         </div>
         {% endif %}

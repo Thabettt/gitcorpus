@@ -134,7 +134,13 @@ def _commit_count() -> str:
         "AND (s.virtuals->>'commit_count')::numeric <= 2147483647 "
         "THEN (s.virtuals->>'commit_count')::integer ELSE NULL END"
     )
-    return f"COALESCE(i.commit_count, s.commit_count, {legacy})"
+    detected = (
+        "CASE WHEN jsonb_typeof(i.detection->'total_commits') = 'number' "
+        "AND (i.detection->>'total_commits') ~ '^[0-9]+$' "
+        "AND (i.detection->>'total_commits')::numeric <= 2147483647 "
+        "THEN (i.detection->>'total_commits')::integer ELSE NULL END"
+    )
+    return f"COALESCE(i.commit_count, s.commit_count, {detected}, {legacy})"
 
 
 def _common_select() -> str:

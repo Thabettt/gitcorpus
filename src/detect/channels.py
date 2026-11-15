@@ -12,11 +12,13 @@ import httpx
 from detect.attribution import (
     Hit,
     dedupe_hits,
+    hit_from_rule,
     is_noise_commit,
     match_author_identities,
     match_bots,
     match_commit_messages,
     match_files,
+    match_hidden_refs,
     match_issue_participants,
     match_pr_authors,
     match_pr_metadata,
@@ -24,6 +26,7 @@ from detect.attribution import (
 )
 from detect.content_attribution import CONTENT_CHANNEL, classify_agents_md
 from detect.packs import Pack
+from detect.structured import content_candidates, declared_literal_paths, evaluate_file_rules
 from discover.pipeline import Deps
 from enrich.trees_first import FilePresence, fetch_tree
 from lib import audit
@@ -91,21 +94,31 @@ def _fault_note(exc: Exception) -> str:
 
 
 def _raw_text(
-    deps: Deps, url: str, *, ref: str | None = None, on_response: OnResponse
+    deps: Deps,
+    url: str,
+    *,
+    ref: str | None = None,
+    on_response: OnResponse,
+    byte_limit: int | None = None,
 ) -> tuple[str | None, str | None, FailureKind | None]:
     if ref is not None:
         url = f"{url}?ref={quote(ref)}"
+    headers = dict(_RAW_ACCEPT)
+    if byte_limit is not None:
+        headers["Range"] = f"bytes=0-{max(0, byte_limit - 1)}"
     response = request_with_retry(
         deps.client,
         "GET",
         url,
-        extra_headers=_RAW_ACCEPT,
+        extra_headers=headers,
         limiter=deps.limiter,
         token_id=deps.token_fp,
         on_response=on_response,
     )
     if response.status_code == 404:
         return None, None, None
+    if response.status_code == 206 and byte_limit is not None:
+        return None, f"content exceeds {byte_limit}-byte cap", FailureKind.PERMANENT
     if response.status_code != 200:
         return None, f"HTTP {response.status_code}", _http_failure_kind(response.status_code)
     return response.text, None, None
@@ -131,6 +144,8 @@ def _gitignore_paths(
 
 
 def _literal_candidates(pack: Pack) -> tuple[str, ...]:
+    if pack.schema_version >= 2:
+        return declared_literal_paths(pack)
     candidates: list[str] = []
     for pattern in pack.files:
         candidate = pattern.pattern.replace("\\.", ".")
@@ -175,15 +190,19 @@ def _probe_content(
     *,
     ref: str | None = None,
     on_response: OnResponse,
+    byte_limit: int | None = None,
 ) -> tuple[dict, str | None, str | None, FailureKind | None]:
     text, error, failure_kind = _raw_text(
         deps,
         f"{API_BASE}/repos/{full_name}/contents/{path}",
         ref=ref,
         on_response=on_response,
+        byte_limit=byte_limit,
     )
     if error is not None or text is None:
         return {}, None, error, failure_kind
+    if byte_limit is not None and len(text.encode("utf-8")) > byte_limit:
+        return {}, None, f"content exceeds {byte_limit}-byte cap", FailureKind.PERMANENT
     return {"size": len(text), "empty": not text.strip()}, text, None, None
 
 
@@ -195,7 +214,13 @@ def detect_files(
     ref: str | None = None,
     agents: frozenset[str] | None = None,
     on_response: OnResponse = None,
+    fast: bool = False,
 ) -> ChannelResult:
+    """Detect file-channel evidence over the GitHub API.
+
+    ``fast`` skips content reads for rules on broad path patterns (every
+    workflow or compose file); targeted single-file content rules still run.
+    """
     try:
         presence = fetch_tree(
             deps.client,
@@ -208,6 +233,7 @@ def detect_files(
         status = "ok"
         notes: list[str] = []
         failure_kind: FailureKind | None = None
+        probed_path_set: set[str] = set()
         hits = list(match_files(pack, presence, agents))
         if presence.truncated:
             status = "partial"
@@ -219,6 +245,7 @@ def detect_files(
                 notes.append(f"literal probes: {probe_error}")
                 failure_kind = _merge_failure_kind(failure_kind, probe_failure)
             if probed_paths:
+                probed_path_set.update(probed_paths)
                 probed_presence = FilePresence(
                     repo_full_name=full_name,
                     paths=frozenset(probed_paths),
@@ -226,6 +253,12 @@ def detect_files(
                     source="contents",
                 )
                 hits.extend(match_files(pack, probed_presence, agents))
+                presence = FilePresence(
+                    repo_full_name=full_name,
+                    paths=frozenset(set(presence.paths) | set(probed_paths)),
+                    truncated=True,
+                    source="tree",
+                )
         ignored, ignore_error, ignore_failure = _gitignore_paths(
             deps, full_name, ref=ref, on_response=on_response
         )
@@ -248,16 +281,47 @@ def detect_files(
         generic_paths = sorted(
             path for path in presence.paths if path.rsplit("/", 1)[-1] in pack.generic_weights
         )[:_CONTENT_PROBE_LIMIT]
-        content_paths = [*hit_paths, *(path for path in generic_paths if path not in hit_paths)]
+        structured_paths: tuple[str, ...] = ()
+        candidate_capped = False
+        if pack.schema_version >= 2:
+            structured_paths, candidate_capped = content_candidates(
+                pack, presence.paths, targeted_only=fast
+            )
+            if candidate_capped:
+                status = "partial"
+                notes.append(
+                    f"structured content candidate cap reached ({pack.content_candidate_limit})"
+                )
+            content_paths = [
+                *structured_paths,
+                *(path for path in generic_paths if path not in structured_paths),
+            ]
+        else:
+            content_paths = [*hit_paths, *(path for path in generic_paths if path not in hit_paths)]
         fetched: list[tuple[str, str]] = []
+        content_diagnostics: list[dict[str, object]] = []
         for path in content_paths:
             info, text, content_error, content_failure = _probe_content(
-                deps, full_name, path, ref=ref, on_response=on_response
+                deps,
+                full_name,
+                path,
+                ref=ref,
+                on_response=on_response,
+                byte_limit=pack.content_byte_limit if pack.schema_version >= 2 else None,
             )
             if content_error is not None:
                 status = "partial"
                 notes.append(f"content {path}: {content_error}")
                 failure_kind = _merge_failure_kind(failure_kind, content_failure)
+                content_diagnostics.append(
+                    {
+                        "path": path,
+                        "kind": (
+                            "parse_failure" if "byte cap" in content_error else "fetch_failure"
+                        ),
+                        "note": content_error,
+                    }
+                )
             if not info:
                 continue
             if text is not None:
@@ -265,32 +329,68 @@ def detect_files(
             for hit in hits:
                 if hit.evidence.get("path") == path:
                     hit.evidence.update(info)
-        known = frozenset(pack.agents) if agents is None else frozenset(agents)
-        for path, text in fetched:
-            if path.rsplit("/", 1)[-1] not in pack.generic_weights or not text.strip():
-                continue
-            attribution = classify_agents_md(text, known)
-            for signal in attribution.signals:
-                hits.append(
-                    Hit(
-                        signal.agent,
-                        CONTENT_CHANNEL,
-                        {
-                            "path": path,
-                            "source": "tree",
-                            "marker": path.rsplit("/", 1)[-1],
-                            "cue": signal.cue,
-                            "snippet": signal.snippet,
-                            "confidence": signal.confidence,
-                            "classifier": attribution.version,
-                        },
-                    )
+        if pack.schema_version >= 2:
+            structured_matches, predicate_diagnostics = evaluate_file_rules(
+                pack,
+                presence.paths,
+                dict(fetched),
+                source="tree",
+                agents=agents,
+            )
+            hits = [
+                hit
+                for hit in hits
+                if not (
+                    hit.rule_id is not None and hit.evidence.get("source") in {"tree", "contents"}
                 )
+            ]
+            for matched in structured_matches:
+                evidence = dict(matched.evidence)
+                if evidence.get("path") in probed_path_set:
+                    evidence["source"] = "contents"
+                hit = hit_from_rule(
+                    matched.rule,
+                    "file",
+                    evidence,
+                    forge="github",
+                    role=matched.rule.semantics.role or "repository_file",
+                )
+                if hit is not None:
+                    hits.append(hit)
+            content_diagnostics.extend(item.as_dict() for item in predicate_diagnostics)
+        if pack.schema_version < 2:
+            known = frozenset(pack.agents) if agents is None else frozenset(agents)
+            for path, text in fetched:
+                if path.rsplit("/", 1)[-1] not in pack.generic_weights or not text.strip():
+                    continue
+                attribution = classify_agents_md(text, known)
+                for signal in attribution.signals:
+                    hits.append(
+                        Hit(
+                            signal.agent,
+                            CONTENT_CHANNEL,
+                            {
+                                "path": path,
+                                "source": "tree",
+                                "marker": path.rsplit("/", 1)[-1],
+                                "cue": signal.cue,
+                                "snippet": signal.snippet,
+                                "confidence": signal.confidence,
+                                "classifier": attribution.version,
+                            },
+                        )
+                    )
         hits = dedupe_hits(hits)
         return ChannelResult(
             hits=tuple(hits),
             status=status,
             note="; ".join(notes) or None,
+            stats={
+                "content_candidates": len(structured_paths),
+                "content_scan": "fast" if fast else "full",
+                "content_candidate_cap_reached": candidate_capped,
+                "content_diagnostics": tuple(content_diagnostics),
+            },
             failure_kind=failure_kind,
         )
     except RequestFailed as exc:
@@ -311,6 +411,140 @@ def detect_files(
             note=_fault_note(exc),
             failure_kind=FailureKind.RETRYABLE,
         )
+
+
+def detect_hidden_refs(
+    deps: Deps,
+    full_name: str,
+    pack: Pack,
+    *,
+    agents: frozenset[str] | None = None,
+    on_response: OnResponse = None,
+) -> ChannelResult:
+    namespaces = pack.hidden_ref_namespaces()
+    if not namespaces:
+        return ChannelResult(status="skipped", note="pack declares no hidden-ref namespaces")
+    refs: list[dict[str, object]] = []
+    diagnostics: list[dict[str, object]] = []
+    status = "ok"
+    failure_kind: FailureKind | None = None
+    for namespace in namespaces:
+        prefix = namespace.removeprefix("refs/").rstrip("/")
+        response = request_with_retry(
+            deps.client,
+            "GET",
+            f"{API_BASE}/repos/{full_name}/git/matching-refs/{quote(prefix, safe='/')}",
+            limiter=deps.limiter,
+            token_id=deps.token_fp,
+            on_response=on_response,
+        )
+        if response.status_code == 404:
+            continue
+        if response.status_code != 200:
+            status = "partial"
+            kind = _http_failure_kind(response.status_code)
+            failure_kind = _merge_failure_kind(failure_kind, kind)
+            diagnostics.append(
+                {
+                    "namespace": namespace,
+                    "kind": "fetch_failure",
+                    "note": f"HTTP {response.status_code}",
+                }
+            )
+            continue
+        payload = audit.cached_json(response)
+        if payload is None:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+        if not isinstance(payload, list):
+            status = "partial"
+            diagnostics.append(
+                {
+                    "namespace": namespace,
+                    "kind": "parse_failure",
+                    "note": "matching-refs response was not an array",
+                }
+            )
+            continue
+        for item in payload:
+            if len(refs) >= pack.content_candidate_limit:
+                break
+            if not isinstance(item, Mapping):
+                continue
+            object_data = item.get("object")
+            if not isinstance(object_data, Mapping):
+                continue
+            ref_name = str(item.get("ref") or "")
+            sha = str(object_data.get("sha") or "")
+            if ref_name.startswith(namespace) and sha:
+                refs.append(
+                    {
+                        "ref": ref_name,
+                        "commit": sha,
+                        "reachability": "github_matching_ref",
+                    }
+                )
+    scoped_rules = [
+        rule
+        for rule in pack.rules_for("hidden_ref")
+        if isinstance(rule.match.get("identity"), Mapping)
+    ]
+    if scoped_rules:
+        for entry in refs:
+            ref_name = str(entry["ref"])
+            needs_identity = any(
+                re.fullmatch(str(rule.match.get("regex") or rule.pattern), ref_name)
+                for rule in scoped_rules
+            )
+            if not needs_identity:
+                continue
+            response = request_with_retry(
+                deps.client,
+                "GET",
+                f"{API_BASE}/repos/{full_name}/git/commits/{entry['commit']}",
+                limiter=deps.limiter,
+                token_id=deps.token_fp,
+                on_response=on_response,
+            )
+            if response.status_code != 200:
+                status = "partial"
+                diagnostics.append(
+                    {
+                        "ref": ref_name,
+                        "kind": "fetch_failure",
+                        "note": f"commit HTTP {response.status_code}",
+                    }
+                )
+                failure_kind = _merge_failure_kind(
+                    failure_kind, _http_failure_kind(response.status_code)
+                )
+                continue
+            try:
+                commit = response.json()
+            except ValueError:
+                commit = None
+            if not isinstance(commit, Mapping):
+                diagnostics.append(
+                    {"ref": ref_name, "kind": "parse_failure", "note": "invalid commit JSON"}
+                )
+                continue
+            for role in ("author", "committer"):
+                identity = commit.get(role)
+                if isinstance(identity, Mapping):
+                    entry[f"{role}_name"] = str(identity.get("name") or "")
+                    entry[f"{role}_email"] = str(identity.get("email") or "")
+                    if role == "committer" and identity.get("date"):
+                        entry["observed_at"] = str(identity["date"])
+    hits = match_hidden_refs(pack, refs, agents, forge="github")
+    return ChannelResult(
+        hits=tuple(hits),
+        status=status,
+        note="targeted GitHub hidden-ref namespaces",
+        stats={"refs": len(refs), "diagnostics": tuple(diagnostics)},
+        failure_kind=failure_kind,
+    )
 
 
 _HISTORY_QUERY = """
@@ -434,9 +668,18 @@ def _retryable_graphql_errors(payload: Mapping[str, object]) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _person_entry(person: object, *, commit: str) -> dict[str, str]:
+def _person_entry(
+    person: object, *, commit: str, role: str = "author", observed_at: str = ""
+) -> dict[str, str]:
     if not isinstance(person, Mapping):
-        return {"login": "", "name": "", "email": "", "commit": commit}
+        return {
+            "login": "",
+            "name": "",
+            "email": "",
+            "commit": commit,
+            "role": role,
+            "observed_at": observed_at,
+        }
     user = person.get("user")
     login = ""
     if isinstance(user, Mapping) and user.get("login"):
@@ -446,6 +689,8 @@ def _person_entry(person: object, *, commit: str) -> dict[str, str]:
         "name": str(person.get("name") or ""),
         "email": str(person.get("email") or ""),
         "commit": commit,
+        "role": role,
+        "observed_at": observed_at,
     }
 
 
@@ -514,30 +759,43 @@ def detect_history(
     )
     identities: list[dict[str, str]] = []
     bot_candidates: list[dict[str, str]] = []
-    messages: list[tuple[str, str]] = []
+    messages: list[tuple[str, str, str]] = []
     committed_at: dict[str, str] = {}
     for node in nodes:
         if not isinstance(node, Mapping):
             continue
         oid = str(node.get("oid") or "")
         message = str(node.get("message") or "")
-        if node.get("committedDate"):
-            committed_at[oid] = str(node["committedDate"])
-        author_entry = _person_entry(node.get("author"), commit=oid)
-        committer_entry = _person_entry(node.get("committer"), commit=oid)
+        observed_at = str(node.get("committedDate") or "")
+        if observed_at:
+            committed_at[oid] = observed_at
+        author_entry = _person_entry(
+            node.get("author"), commit=oid, role="author", observed_at=observed_at
+        )
+        committer_entry = _person_entry(
+            node.get("committer"), commit=oid, role="committer", observed_at=observed_at
+        )
         bot_candidates.extend((author_entry, committer_entry))
         if is_noise_commit(message):
             continue
-        messages.append((oid, message))
+        messages.append((oid, message, observed_at))
         identities.extend((author_entry, committer_entry))
     author_hits = match_author_identities(pack, identities, agents)
     trailer_hits = match_commit_messages(pack, messages, agents)
     bot_hits = match_bots(pack, bot_candidates)
-    author_oids = {hit.evidence.get("commit") for hit in author_hits}
-    trailer_oids = {hit.evidence.get("commit") for hit in trailer_hits}
+    author_oids = {
+        hit.evidence.get("commit")
+        for hit in author_hits
+        if pack.schema_version < 2 or hit.metric_eligibility.get("current_commit_ratio")
+    }
+    trailer_oids = {
+        hit.evidence.get("commit")
+        for hit in trailer_hits
+        if pack.schema_version < 2 or hit.metric_eligibility.get("current_commit_ratio")
+    }
     ai_oids = author_oids | trailer_oids
     bot_oids = {hit.evidence.get("commit") for hit in bot_hits}
-    commit_oids = {oid for oid, _ in messages} - bot_oids
+    commit_oids = {oid for oid, _message, _observed_at in messages} - bot_oids
     ai_oids &= commit_oids
     human_oids = commit_oids - ai_oids
     stats: dict[str, object] = {
@@ -550,6 +808,25 @@ def detect_history(
         "ai_oids": tuple(sorted(str(oid) for oid in ai_oids if oid)),
         "human_oids": tuple(sorted(str(oid) for oid in human_oids if oid)),
         "committed_at": committed_at,
+        "authored_oids": tuple(
+            sorted(
+                {
+                    str(hit.evidence.get("commit"))
+                    for hit in (*author_hits, *trailer_hits)
+                    if hit.evidence.get("commit")
+                    and (pack.schema_version < 2 or hit.metric_eligibility.get("authorship"))
+                }
+            )
+        ),
+        "historical_oids": tuple(
+            sorted(
+                {
+                    str(hit.evidence.get("commit"))
+                    for hit in (*author_hits, *trailer_hits)
+                    if hit.evidence.get("commit") and hit.is_historical
+                }
+            )
+        ),
     }
     return {
         "author": ChannelResult(
@@ -576,7 +853,10 @@ def detect_history(
 
 
 _PR_QUERY = """
-query($owner: String!, $name: String!, $limit: Int!, $after: String) {
+query(
+  $owner: String!, $name: String!, $limit: Int!, $after: String,
+  $commentBodies: Boolean!, $reviews: Boolean!
+) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: $limit, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
@@ -587,7 +867,10 @@ query($owner: String!, $name: String!, $limit: Int!, $after: String) {
         bodyText
         author { login }
         labels(first: 20) { nodes { name } }
-        comments(first: 50) { nodes { author { login } } }
+        comments(first: 50) { nodes { author { login } bodyText @include(if: $commentBodies) } }
+        reviews(first: 50) @include(if: $reviews) {
+          nodes { author { login } state bodyText @include(if: $commentBodies) }
+        }
         commits(first: 100) {
           nodes { commit { oid author { user { login } } } }
         }
@@ -599,7 +882,7 @@ query($owner: String!, $name: String!, $limit: Int!, $after: String) {
 """
 
 _ISSUE_QUERY = """
-query($owner: String!, $name: String!, $limit: Int!) {
+query($owner: String!, $name: String!, $limit: Int!, $commentBodies: Boolean!) {
   repository(owner: $owner, name: $name) {
     issues(first: $limit, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
@@ -607,7 +890,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
         createdAt
         author { login }
         assignees(first: 10) { nodes { login } }
-        comments(first: 50) { nodes { author { login } } }
+        comments(first: 50) { nodes { author { login } bodyText @include(if: $commentBodies) } }
       }
     }
   }
@@ -645,9 +928,21 @@ def _prs_from_payload(payload: dict) -> tuple[list[dict], str, str | None]:
                     if isinstance(label, Mapping)
                 ],
                 "comments": [
-                    _login(comment.get("author"))
+                    {
+                        "login": _login(comment.get("author")),
+                        "body": str(comment.get("bodyText") or ""),
+                    }
                     for comment in (node.get("comments") or {}).get("nodes") or []
                     if isinstance(comment, Mapping)
+                ],
+                "reviews": [
+                    {
+                        "login": _login(review.get("author")),
+                        "body": str(review.get("bodyText") or ""),
+                        "state": str(review.get("state") or ""),
+                    }
+                    for review in (node.get("reviews") or {}).get("nodes") or []
+                    if isinstance(review, Mapping)
                 ],
                 "commits": [
                     {
@@ -671,6 +966,8 @@ def _paged_pr_payload(
     *,
     limit: int,
     page_size: int,
+    comment_bodies: bool,
+    reviews: bool,
     on_response: OnResponse,
 ) -> _GraphQLResponse:
     nodes: list[object] = []
@@ -682,7 +979,14 @@ def _paged_pr_payload(
         outcome = _graphql(
             deps,
             _PR_QUERY,
-            {"owner": owner, "name": name, "limit": requested, "after": cursor},
+            {
+                "owner": owner,
+                "name": name,
+                "limit": requested,
+                "after": cursor,
+                "commentBodies": comment_bodies,
+                "reviews": reviews,
+            },
             on_response=on_response,
         )
         payload = outcome.payload
@@ -754,12 +1058,21 @@ def _fetch_pr_payload(
     name: str,
     *,
     limit: int,
+    comment_bodies: bool,
+    reviews: bool,
     on_response: OnResponse,
 ) -> _GraphQLResponse:
     outcome = _graphql(
         deps,
         _PR_QUERY,
-        {"owner": owner, "name": name, "limit": limit, "after": None},
+        {
+            "owner": owner,
+            "name": name,
+            "limit": limit,
+            "after": None,
+            "commentBodies": comment_bodies,
+            "reviews": reviews,
+        },
         on_response=on_response,
     )
     if outcome.payload is not None and outcome.status == "ok":
@@ -774,6 +1087,8 @@ def _fetch_pr_payload(
             name,
             limit=limit,
             page_size=page_size,
+            comment_bodies=comment_bodies,
+            reviews=reviews,
             on_response=on_response,
         )
         if paged.payload is not None and paged.status == "ok":
@@ -798,6 +1113,10 @@ def detect_prs(
             owner,
             name,
             limit=limit,
+            comment_bodies=pack.requires_comment_bodies,
+            # Reviews feed only schema-v2 reviewer rules; v1 packs keep their
+            # original query cost and evidence.
+            reviews=pack.schema_version >= 2,
             on_response=on_response,
         )
     except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
@@ -830,15 +1149,34 @@ def detect_prs(
         status, note = "partial", gql_note
     else:
         note = "window: most recent 100 PRs"
-    hits = match_pr_metadata(pack, prs, agents) + match_pr_authors(pack, prs, agents)
+    hits = match_pr_metadata(pack, prs, agents, forge="github") + match_pr_authors(
+        pack, prs, agents, forge="github"
+    )
     if channels is not None:
         hits = [hit for hit in hits if hit.channel in channels]
     propagated = propagate_pr_commits(hits, prs)
     commenter_entries = tuple(
-        {"login": login, "number": pr["number"], "role": "pr_commenter"}
+        {
+            "login": str(comment.get("login") or ""),
+            "number": pr["number"],
+            "role": "pr_commenter",
+            **({"body": comment["body"]} if comment.get("body") else {}),
+            **({"observed_at": pr["createdAt"]} if pr.get("createdAt") else {}),
+        }
         for pr in prs
-        for login in pr.get("comments") or []
-        if login
+        for comment in pr.get("comments") or []
+        if isinstance(comment, Mapping) and comment.get("login")
+    ) + tuple(
+        {
+            "login": str(review.get("login") or ""),
+            "number": pr["number"],
+            "role": "pr_reviewer",
+            **({"body": review["body"]} if review.get("body") else {}),
+            **({"observed_at": pr["createdAt"]} if pr.get("createdAt") else {}),
+        }
+        for pr in prs
+        for review in pr.get("reviews") or []
+        if isinstance(review, Mapping) and review.get("login")
     )
     return ChannelResult(
         hits=tuple(dedupe_hits([*hits, *propagated])),
@@ -847,6 +1185,16 @@ def detect_prs(
         failure_kind=outcome.failure_kind,
         stats={
             "propagated_oids": tuple(sorted({h.evidence["commit"] for h in propagated})),
+            "ratio_propagated_oids": tuple(
+                sorted(
+                    {
+                        h.evidence["commit"]
+                        for h in propagated
+                        if pack.schema_version < 2
+                        or h.metric_eligibility.get("current_commit_ratio")
+                    }
+                )
+            ),
             "commenter_entries": commenter_entries,
             "created_at": {pr["number"]: pr["createdAt"] for pr in prs if pr.get("createdAt")},
         },
@@ -868,7 +1216,12 @@ def detect_issues(
         outcome = _graphql(
             deps,
             _ISSUE_QUERY,
-            {"owner": owner, "name": name, "limit": limit},
+            {
+                "owner": owner,
+                "name": name,
+                "limit": limit,
+                "commentBodies": pack.requires_comment_bodies,
+            },
             on_response=on_response,
         )
     except (PartialResultsError, ThrottledError, httpx.HTTPError) as exc:
@@ -906,21 +1259,44 @@ def detect_issues(
         if node.get("createdAt"):
             created_at[number] = str(node["createdAt"])
         author = node.get("author")
+        observed_at = str(node.get("createdAt") or "")
         if isinstance(author, Mapping) and author.get("login"):
-            entries.append({"login": str(author["login"]), "number": number, "role": "author"})
+            entries.append(
+                {
+                    "login": str(author["login"]),
+                    "number": number,
+                    "role": "author",
+                    "observed_at": observed_at,
+                }
+            )
         for assignee in (node.get("assignees") or {}).get("nodes") or []:
             if isinstance(assignee, Mapping) and assignee.get("login"):
                 entries.append(
-                    {"login": str(assignee["login"]), "number": number, "role": "assignee"}
+                    {
+                        "login": str(assignee["login"]),
+                        "number": number,
+                        "role": "assignee",
+                        "observed_at": observed_at,
+                    }
                 )
         for comment in (node.get("comments") or {}).get("nodes") or []:
             comment_author = comment.get("author") if isinstance(comment, Mapping) else None
             if isinstance(comment_author, Mapping) and comment_author.get("login"):
                 entries.append(
-                    {"login": str(comment_author["login"]), "number": number, "role": "commenter"}
+                    {
+                        "login": str(comment_author["login"]),
+                        "number": number,
+                        "role": "commenter",
+                        **(
+                            {"body": str(comment.get("bodyText"))}
+                            if comment.get("bodyText")
+                            else {}
+                        ),
+                        "observed_at": observed_at,
+                    }
                 )
     return ChannelResult(
-        hits=tuple(match_issue_participants(pack, entries, agents)),
+        hits=tuple(match_issue_participants(pack, entries, agents, forge="github")),
         status=status,
         note=note if status != "ok" else "window: most recent 100 issues; PR comments included",
         stats={"created_at": created_at},

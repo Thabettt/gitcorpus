@@ -1,0 +1,8 @@
+{
+  "path": "/api/trace-packs/golden-pack",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": "{\"version\":\"golden-pack\",\"schema_version\":1,\"digest\":\"f7b5d1585734fdc767fce17a461df587f80b4053497f09f9e312659e69ccfa8a\",\"active_families\":0,\"legacy_only_families\":0,\"pseudo_families\":0,\"rules\":3,\"rejections\":0,\"document\":{\"version\":\"golden-pack\",\"agents\":{},\"authors\":[{\"pattern\":\"noreply@anthropic\\\\.com\",\"agent\":\"Claude Code\"}],\"files\":[{\"pattern\":\"CLAUDE\\\\.md\",\"agent\":\"Claude Code\"}],\"branches\":[{\"pattern\":\"codex/\",\"agent\":\"Codex\"}],\"labels\":[],\"bots\":[],\"generic_weights\":{\"AGENTS.md\":0.3},\"exclusions\":[\"CONVENTIONS.md\"]}}"
+}

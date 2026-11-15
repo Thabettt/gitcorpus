@@ -76,6 +76,12 @@ def test_cost_profile_prices_shared_channel_groups_once():
     assert profile.graphql == 6.0
 
 
+def test_cost_profile_uses_the_measured_file_cost_for_the_scan_mode():
+    channels = ("file", "author", "pr_metadata", "issue")
+    assert cost_profile(channels, file_core_calls=8.5).core == 8.5
+    assert cost_profile(("author",), file_core_calls=8.5).core == 0.0
+
+
 def test_graphql_dispatch_interval_preserves_the_four_hundred_point_reserve():
     interval = DetectionTokenPool._resource_interval(
         6.0,

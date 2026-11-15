@@ -46,6 +46,8 @@ DETECT_REPO_CSV_HEADER = [
     "repo_id",
     "full_name",
     "stargazers",
+    "repo_created_at",
+    "commit_count",
     "pushed_at",
     "archived",
     "language",
@@ -58,18 +60,35 @@ DETECT_REPO_CSV_HEADER = [
     "failure_class",
     "adoption_level",
     "commit_ratio",
+    "history_window_commits",
+    "history_eligible_commits",
+    "total_commits",
+    "history_coverage",
+    "history_complete",
     "first_signal_at",
     "agents",
+    "ever_observed",
+    "currently_configured",
+    "current_activity",
+    "historical_activity",
+    "authored_commits",
+    "review_participation",
+    "orchestration_only",
+    "legacy_markers",
+    "recovery_checkpoint",
+    "ambiguous_lineage",
     "evidence_rows",
     "signal_rows",
     "bot_rows",
     "file_rows",
+    "content_rows",
     "author_rows",
     "branch_rows",
     "label_rows",
     "commit_trailer_rows",
     "pr_metadata_rows",
     "issue_rows",
+    "hidden_ref_rows",
 ]
 
 EVIDENCE_BATCH_ROWS = 1000
@@ -259,7 +278,10 @@ def _csv_chunks(engine: Engine, run_id: int) -> Iterator[bytes]:
 
 _EVIDENCE_STREAM_SQL = text(
     "SELECT i.full_name, e.repo_id, e.agent, e.channel, e.evidence, e.detected_at,"
-    " COALESCE(i.country_iso, o.country_iso)"
+    " COALESCE(i.country_iso, o.country_iso),"
+    " e.family_id, e.family_name, e.observed_as, e.variant, e.rule_id, e.rule_lifecycle,"
+    " e.evidence_semantics, e.forge, e.role, e.confidence, e.provenance_ref,"
+    " e.is_current, e.is_historical, e.metric_eligibility, e.explanatory_note"
     " FROM detection_evidence e"
     " LEFT JOIN run_items i ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
     " LEFT JOIN repos r ON r.id = e.repo_id"
@@ -299,29 +321,36 @@ def _resolved_repo_id(repo_id: object, full_name: object, resolved: Mapping[str,
 
 _DETECT_REPO_STREAM_SQL = text(
     "SELECT i.repo_id, i.full_name, i.stargazers,"
+    " COALESCE(i.repo_created_at, r.created_at), i.commit_count,"
     " COALESCE(i.pushed_at, r.pushed_at), COALESCE(i.archived, r.archived),"
     " COALESCE(i.language, r.language), COALESCE(i.license_spdx, r.license_spdx),"
     " COALESCE(i.country_iso, o.country_iso), COALESCE(i.geo_confidence, o.geo_confidence),"
     " i.detection,"
     " COALESCE(c.total_rows, 0), COALESCE(c.signal_rows, 0), COALESCE(c.bot_rows, 0),"
-    " COALESCE(c.file_rows, 0), COALESCE(c.author_rows, 0), COALESCE(c.branch_rows, 0),"
+    " COALESCE(c.file_rows, 0), COALESCE(c.content_rows, 0),"
+    " COALESCE(c.author_rows, 0), COALESCE(c.branch_rows, 0),"
     " COALESCE(c.label_rows, 0), COALESCE(c.commit_trailer_rows, 0),"
-    " COALESCE(c.pr_metadata_rows, 0), COALESCE(c.issue_rows, 0)"
+    " COALESCE(c.pr_metadata_rows, 0), COALESCE(c.issue_rows, 0),"
+    " COALESCE(c.hidden_ref_rows, 0)"
     " FROM run_items i"
     " LEFT JOIN repos r ON r.id = i.repo_id"
     " LEFT JOIN owners o ON o.id = r.owner_id"
     " LEFT JOIN ("
     "   SELECT repo_id,"
     "     count(*) AS total_rows,"
-    "     count(*) FILTER (WHERE channel <> 'bot') AS signal_rows,"
+    "     count(*) FILTER (WHERE channel <> 'bot' AND"
+    "       COALESCE((metric_eligibility->>'repository_presence')::boolean, true))"
+    "       AS signal_rows,"
     "     count(*) FILTER (WHERE channel = 'bot') AS bot_rows,"
     "     count(*) FILTER (WHERE channel = 'file') AS file_rows,"
+    "     count(*) FILTER (WHERE channel = 'content') AS content_rows,"
     "     count(*) FILTER (WHERE channel = 'author') AS author_rows,"
     "     count(*) FILTER (WHERE channel = 'branch') AS branch_rows,"
     "     count(*) FILTER (WHERE channel = 'label') AS label_rows,"
     "     count(*) FILTER (WHERE channel = 'commit_trailer') AS commit_trailer_rows,"
     "     count(*) FILTER (WHERE channel = 'pr_metadata') AS pr_metadata_rows,"
     "     count(*) FILTER (WHERE channel = 'issue') AS issue_rows"
+    "    ,count(*) FILTER (WHERE channel = 'hidden_ref') AS hidden_ref_rows"
     "   FROM detection_evidence WHERE run_id = :run GROUP BY repo_id"
     " ) c ON c.repo_id = i.repo_id"
     " WHERE i.run_id = :run"
@@ -356,6 +385,21 @@ def _detections_chunks(
                             "evidence": row[4],
                             "detected_at": row[5],
                             "country_iso": row[6],
+                            "family_id": row[7],
+                            "family_name": row[8],
+                            "observed_as": row[9],
+                            "variant": row[10],
+                            "rule_id": row[11],
+                            "rule_lifecycle": row[12],
+                            "evidence_semantics": row[13],
+                            "forge": row[14],
+                            "role": row[15],
+                            "confidence": row[16],
+                            "provenance_ref": row[17],
+                            "is_current": row[18],
+                            "is_historical": row[19],
+                            "metric_eligibility": row[20],
+                            "explanatory_note": row[21],
                         }
                     )
                 )
@@ -372,6 +416,21 @@ def _detection_json_object(row, repo_id: object) -> dict:
         "evidence": row[4],
         "country_iso": row[6],
         "country": country_name(row[6]),
+        "family_id": row[7],
+        "family_name": row[8],
+        "observed_as": row[9],
+        "variant": row[10],
+        "rule_id": row[11],
+        "rule_lifecycle": row[12],
+        "evidence_semantics": row[13],
+        "forge": row[14],
+        "role": row[15],
+        "confidence": row[16],
+        "provenance_ref": row[17],
+        "is_current": row[18],
+        "is_historical": row[19],
+        "metric_eligibility": row[20],
+        "explanatory_note": row[21],
     }
 
 
@@ -402,7 +461,7 @@ def _detections_json_chunks(
 
 
 def _detect_repo_cells(row, resolved_ids: Mapping[str, int]) -> list[str]:
-    document = row[9] if isinstance(row[9], dict) else {}
+    document = row[11] if isinstance(row[11], dict) else {}
     agents = document.get("agents") or []
     cells = [
         _csv_cell(_resolved_repo_id(row[0], row[1], resolved_ids)),
@@ -410,20 +469,37 @@ def _detect_repo_cells(row, resolved_ids: Mapping[str, int]) -> list[str]:
         _csv_cell(row[2]),
         _csv_cell(_iso(row[3])),
         _csv_cell(row[4]),
-        _csv_cell(row[5]),
+        _csv_cell(_iso(row[5])),
         _csv_cell(row[6]),
         _csv_cell(row[7]),
         _csv_cell(row[8]),
-        _csv_cell(country_name(row[7])),
+        _csv_cell(row[9]),
+        _csv_cell(row[10]),
+        _csv_cell(country_name(row[9])),
         _csv_cell(bool(agents)),
         _csv_cell(bool(document.get("unavailable", False))),
         _csv_cell(document.get("failure_class")),
         _csv_cell(document.get("adoption_level")),
         _csv_cell(document.get("commit_ratio")),
+        _csv_cell(document.get("history_window_commits")),
+        _csv_cell(document.get("history_eligible_commits")),
+        _csv_cell(document.get("total_commits")),
+        _csv_cell(document.get("history_coverage")),
+        _csv_cell(document.get("history_complete")),
         _csv_cell(document.get("first_signal_at")),
         _csv_cell("|".join(str(agent) for agent in agents)),
+        _csv_cell("|".join(str(value) for value in document.get("ever_observed") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("currently_configured") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("current_activity") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("historical_activity") or [])),
+        _csv_cell(document.get("authored_commits")),
+        _csv_cell("|".join(str(value) for value in document.get("review_participation") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("orchestration_only") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("legacy_markers") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("recovery_checkpoint") or [])),
+        _csv_cell("|".join(str(value) for value in document.get("ambiguous_lineage") or [])),
     ]
-    cells.extend(_csv_cell(value) for value in row[10:20])
+    cells.extend(_csv_cell(value) for value in row[12:24])
     return cells
 
 

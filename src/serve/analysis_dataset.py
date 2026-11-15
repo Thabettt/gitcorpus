@@ -26,6 +26,7 @@ KNOWN_CHANNELS = frozenset(
         "pr_metadata",
         "issue",
         "content",
+        "hidden_ref",
     }
 )
 #: ``Generic`` is a shared marker, never a scored agent.
@@ -42,6 +43,7 @@ CHANNEL_FAMILIES = {
     "pr_metadata": "collaboration",
     "label": "collaboration",
     "issue": "collaboration",
+    "hidden_ref": "recovery",
 }
 
 
@@ -206,6 +208,7 @@ def _facet_maps(engine: Engine, run_id: int) -> tuple[dict[int, set[str]], dict[
                 text(
                     "SELECT DISTINCT repo_id, agent, channel FROM detection_evidence"
                     " WHERE run_id = :run AND channel <> 'bot'"
+                    " AND COALESCE((metric_eligibility->>'current_presence')::boolean, true)"
                 ),
                 {"run": run_id},
             ).mappings()
@@ -226,6 +229,7 @@ def _structural_repos(engine: Engine, run_id: int) -> set[int]:
                 "SELECT DISTINCT repo_id FROM detection_evidence"
                 " WHERE run_id = :run AND channel = 'file'"
                 " AND COALESCE(evidence->>'source', 'tree') <> 'gitignore'"
+                " AND COALESCE((metric_eligibility->>'current_presence')::boolean, true)"
             ),
             {"run": run_id},
         )
@@ -252,6 +256,10 @@ def load_analysis_dataset(engine: Engine, run_id: int) -> AnalysisDataset:
                 "          NULLIF(btrim(s.language), ''), 'Unknown') AS language,"
                 " COALESCE(i.stargazers, s.stargazers) AS stars,"
                 " COALESCE(i.commit_count, s.commit_count,"
+                "   CASE WHEN jsonb_typeof(i.detection->'total_commits') = 'number'"
+                "     AND (i.detection->>'total_commits') ~ '^[0-9]+$'"
+                "     AND (i.detection->>'total_commits')::numeric <= 2147483647"
+                "   THEN (i.detection->>'total_commits')::integer ELSE NULL END,"
                 "   CASE WHEN jsonb_typeof(s.virtuals->'commit_count') = 'number'"
                 "     AND (s.virtuals->>'commit_count') ~ '^[0-9]+$'"
                 "     AND (s.virtuals->>'commit_count')::numeric <= 2147483647"

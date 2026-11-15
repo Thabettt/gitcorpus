@@ -69,9 +69,11 @@ class DetectionCostProfile:
     graphql: float
 
 
-def cost_profile(channels: Sequence[str]) -> DetectionCostProfile:
+def cost_profile(channels: Sequence[str], *, file_core_calls: float = 3.0) -> DetectionCostProfile:
+    """Per-repo budget cost used for pacing; `file_core_calls` comes from the
+    pack schema and scan mode (see ``detect.estimate.file_rest_calls``)."""
     selected = frozenset(channels)
-    core = 3.0 if "file" in selected else 0.0
+    core = file_core_calls if "file" in selected else 0.0
     graphql = 0.0
     if selected & _HISTORY_CHANNELS:
         graphql += 1.0
@@ -144,6 +146,7 @@ class DetectionTokenPool:
         max_concurrency: int = MAX_PER_TOKEN_CONCURRENCY,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        file_core_calls: float = 3.0,
     ) -> None:
         if len(dependencies) != FIXED_API_TOKEN_COUNT:
             raise TokenPoolConfigurationError(
@@ -158,7 +161,7 @@ class DetectionTokenPool:
             for index, deps in enumerate(dependencies)
         ]
         self._by_fingerprint = {slot.deps.token_fp: slot for slot in self._slots}
-        self._profile = cost_profile(channels)
+        self._profile = cost_profile(channels, file_core_calls=file_core_calls)
         self._clock = clock
         self._wall_clock = wall_clock
         self._condition = threading.Condition()

@@ -6,6 +6,7 @@ import pytest
 from alembic import command
 from sqlalchemy import insert, text
 
+from serve.adoption_metrics import all_stratified_metrics
 from serve.analysis_dataset import load_analysis_dataset
 from serve.analysis_diagnostics import build_diagnostics
 from store.models import DetectionEvidence, DetectionRepoFilter, RunItem
@@ -168,6 +169,7 @@ def test_frozen_run_diagnostics_reconcile_evidence_owners_and_missingness(clean_
 
     dataset = load_analysis_dataset(engine, int(run_id))
     diagnostics = build_diagnostics(dataset)
+    _dataset, stratified = all_stratified_metrics(engine, int(run_id), dataset=dataset)
 
     evidence = diagnostics["evidence_robustness"]
     assert evidence["eligible"] == 5
@@ -182,6 +184,17 @@ def test_frozen_run_diagnostics_reconcile_evidence_owners_and_missingness(clean_
     assert star_row["repos"] == 6
     assert star_row["coverage"]["complete_channels"]["count"] == 5
     assert star_row["coverage"]["commit_denominator"]["count"] == 5
+    assert star_row["coverage"]["history_observed"]["count"] == 5
+    assert star_row["coverage"]["full_history"]["count"] == 4
+
+    commit_rows = stratified["commit_depth"]
+    assert [row["bucket"] for row in commit_rows] == ["100–499"]
+    assert commit_rows[0]["coverage_observed"] == 5
+    assert commit_rows[0]["full_history"] == 4
+    languages = {row["language"]: row for row in stratified["language_adoption"]}
+    assert set(languages) == {"Python", "Rust"}
+    assert languages["Python"]["repos"] == 4
+    assert languages["Rust"]["repos"] == 2
 
     users = diagnostics["multi_agent_co_use"]["owners"][0]
     organizations = diagnostics["multi_agent_co_use"]["owners"][1]

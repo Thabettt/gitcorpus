@@ -40,6 +40,7 @@ from detect.gitio import (
 from detect.local_channels import (
     detect_branch_local,
     detect_files_local,
+    detect_hidden_refs_local,
     detect_history_local,
     detect_pr_commits_local,
 )
@@ -67,6 +68,7 @@ LOCAL_CHANNELS = (
     "file",
     "author",
     "branch",
+    "hidden_ref",
     "bot",
     "commit_trailer",
     "pr_metadata",
@@ -235,6 +237,8 @@ def _scan_one(
             results["pr_metadata"] = pr_result
         if "branch" in active:
             results["branch"] = detect_branch_local(repo, pack, spec.agents, limit=cfg.depth)
+        if "hidden_ref" in active:
+            results["hidden_ref"] = detect_hidden_refs_local(repo, pack, spec.agents)
         hits = dedupe_hits([hit for result in results.values() for hit in result.hits])
         scan = _RepoScan(
             repo_id=int(candidate["repo_id"]),
@@ -276,10 +280,8 @@ def _persist_scan(engine: Engine, run_id: int, scan: _RepoScan, pack: Pack) -> N
         {
             "run_id": run_id,
             "repo_id": scan.repo_id,
-            "agent": hit.agent,
-            "channel": hit.channel,
-            "evidence": hit.evidence,
             "pack_version": pack.version,
+            **hit.storage_fields(),
         }
         for hit in scan.hits
     ]

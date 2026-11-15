@@ -291,6 +291,8 @@ class TracePack(Base):
     exclusions: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[\"CONVENTIONS.md\"]'")
     )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    document: Mapped[dict | None] = mapped_column(JSONB)
     frozen_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -301,12 +303,14 @@ class DetectionEvidence(Base):
     __table_args__ = (
         CheckConstraint(
             "channel IN ('file','content','author','branch','label','bot','commit_trailer',"
-            "'pr_metadata','issue')",
+            "'pr_metadata','issue','hidden_ref')",
             name="detection_evidence_channel_check",
         ),
         Index("de_run_repo_idx", "run_id", "repo_id"),
         Index("de_run_agent_idx", "run_id", "agent"),
         Index("de_run_channel_idx", "run_id", "channel"),
+        Index("de_run_family_idx", "run_id", "family_id"),
+        Index("de_run_rule_idx", "run_id", "rule_id"),
         Index(
             "de_run_committed_file_repo_idx",
             "run_id",
@@ -329,6 +333,21 @@ class DetectionEvidence(Base):
     pack_version: Mapped[str] = mapped_column(
         Text, ForeignKey("trace_packs.version"), nullable=False
     )
+    family_id: Mapped[str | None] = mapped_column(Text)
+    family_name: Mapped[str | None] = mapped_column(Text)
+    observed_as: Mapped[str | None] = mapped_column(Text)
+    variant: Mapped[str | None] = mapped_column(Text)
+    rule_id: Mapped[str | None] = mapped_column(Text)
+    rule_lifecycle: Mapped[str | None] = mapped_column(Text)
+    evidence_semantics: Mapped[str | None] = mapped_column(Text)
+    forge: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(Text)
+    provenance_ref: Mapped[str | None] = mapped_column(Text)
+    is_current: Mapped[bool | None] = mapped_column(Boolean)
+    is_historical: Mapped[bool | None] = mapped_column(Boolean)
+    metric_eligibility: Mapped[dict | None] = mapped_column(JSONB)
+    explanatory_note: Mapped[str | None] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )

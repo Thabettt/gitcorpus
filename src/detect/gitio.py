@@ -708,6 +708,58 @@ def remote_pr_refs(repo: GitRepo) -> dict[int, str]:
     return remote_refs(repo).pr_refs
 
 
+def list_hidden_refs(
+    repo: GitRepo, namespaces: Sequence[str], *, limit: int = 64
+) -> dict[str, str]:
+    """List only declared product namespaces; never enumerate all remote refs."""
+
+    patterns = [f"{namespace.rstrip('/')}/*" for namespace in sorted(set(namespaces))]
+    if not patterns:
+        return {}
+    output = repo.git("ls-remote", "--refs", "origin", *patterns, timeout=_LS_REMOTE_TIMEOUT)
+    refs: dict[str, str] = {}
+    for line in output.splitlines():
+        sha, _, name = line.partition("\t")
+        if not _is_sha(sha) or not name:
+            continue
+        if any(name.startswith(namespace) for namespace in namespaces):
+            refs[name] = sha
+            if len(refs) >= max(1, limit):
+                break
+    return dict(sorted(refs.items()))
+
+
+def fetch_hidden_ref_records(repo: GitRepo, refs: Mapping[str, str]) -> dict[str, CommitRecord]:
+    """Fetch only selected hidden-ref tips, then read their synthetic identities."""
+
+    if not refs:
+        return {}
+    refspecs = "".join(
+        f"+{name}:refs/gitcorpus/hidden/{index}\n"
+        for index, name in enumerate(sorted(refs), start=1)
+    )
+    handle = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".git-hidden-refs")
+    try:
+        handle.write(refspecs.encode("utf-8"))
+        handle.close()
+        with open(handle.name, "rb") as stdin:
+            repo.git(
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--filter=tree:0",
+                "--no-write-fetch-head",
+                "origin",
+                "--stdin",
+                stdin=stdin,
+                timeout=_PR_CHUNK_TIMEOUT,
+            )
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(handle.name)
+    return read_commits(repo, sorted(set(refs.values())))
+
+
 def write_pr_refs_snapshot(repo: GitRepo, refs: Mapping[int, str]) -> None:
     payload = {
         "version": _PR_SNAPSHOT_VERSION,
