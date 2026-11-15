@@ -579,6 +579,28 @@ def test_run_filter_enforces_min_and_max_commits(clean: Engine):
     assert payload.items[0].virtuals["commit_count"] == 500
 
 
+def test_run_filter_freezes_commit_count_without_a_commit_filter(clean: Engine):
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = path_of(request)
+        if is_search_request(request):
+            if is_count(request):
+                return count_response(request, 1)
+            return page_response([repo_item(1)])
+        if path == "/graphql":
+            return graphql_batch_response(
+                request,
+                {"owner1/repo1": repo_item(1)},
+                commit_counts={1: 500},
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    client, _requests = scripted(handler)
+    payload = run_filter(make_deps(clean, client), spec_for(q="language:python"))
+
+    assert payload.items[0].commit_count == 500
+    assert payload.items[0].virtuals["commit_count"] == 500
+
+
 def test_run_filter_warns_when_commit_counts_are_missing(clean: Engine):
     def handler(request: httpx.Request) -> httpx.Response:
         path = path_of(request)

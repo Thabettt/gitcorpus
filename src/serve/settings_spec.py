@@ -13,6 +13,9 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     "discovery_concurrency": (1, 64),
     "detect_concurrency": (1, 64),
 }
+_CHOICES: dict[str, frozenset[str]] = {
+    "detect_token_mode": frozenset({"single", "pool4"}),
+}
 
 _CORPUS_VALUES: dict[str, object] = {
     "max_shards": 1_000,
@@ -66,6 +69,14 @@ def parse_settings_form(
         values["graphql_batch"] = form.get("graphql_batch") in {"on", "1", "true"}
     if "adaptive" not in pinned:
         values["adaptive"] = form.get("adaptive") in {"on", "1", "true"}
+    for field, choices in _CHOICES.items():
+        if field in pinned:
+            continue
+        raw = str(form.get(field, "")).strip()
+        if raw not in choices:
+            errors.append(f"`{field}` must be one of: {', '.join(sorted(choices))}")
+            continue
+        values[field] = raw
     hydrate = values.get("max_hydrate")
     candidates = values.get("max_candidates")
     if isinstance(hydrate, int) and isinstance(candidates, int) and hydrate > candidates:

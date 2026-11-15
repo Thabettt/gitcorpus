@@ -23,9 +23,11 @@ SETTINGS_ENV: Mapping[str, str] = {
     "limiter_max_concurrent": "GITCORPUS_MAX_CONCURRENT",
     "discovery_concurrency": "GITCORPUS_DISCOVERY_CONCURRENCY",
     "detect_concurrency": "GITCORPUS_DETECT_CONCURRENCY",
+    "detect_token_mode": "GITCORPUS_DETECT_TOKEN_MODE",
 }
 
 _BOOL_FIELDS = frozenset({"graphql_batch", "adaptive"})
+_CHOICE_FIELDS = {"detect_token_mode": frozenset({"single", "pool4"})}
 _DISCOVERY_CONCURRENCY_MAX = 64
 _DETECT_CONCURRENCY_MAX = 64
 
@@ -43,6 +45,7 @@ class RunSettings:
     limiter_max_concurrent: int = 10
     discovery_concurrency: int = 32
     detect_concurrency: int = 32
+    detect_token_mode: str = "single"
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -59,6 +62,9 @@ def _parse_env(field: str, raw: str) -> object | None:
         if lowered in {"0", "false", "off", "no"}:
             return False
         return None
+    if field in _CHOICE_FIELDS:
+        lowered = value.lower()
+        return lowered if lowered in _CHOICE_FIELDS[field] else None
     try:
         parsed = int(value)
     except ValueError:

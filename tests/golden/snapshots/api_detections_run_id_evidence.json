@@ -1,0 +1,8 @@
+{
+  "path": "/api/detections/952/evidence",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": "{\"run_id\":952,\"pack_version\":\"golden-pack\",\"total\":2,\"limit\":100,\"offset\":0,\"items\":[{\"repo_id\":911,\"full_name\":\"octo/alpha\",\"agent\":\"Claude Code\",\"family_id\":null,\"family_name\":null,\"observed_as\":null,\"variant\":null,\"rule_id\":null,\"rule_lifecycle\":null,\"evidence_semantics\":null,\"channel\":\"file\",\"forge\":null,\"role\":null,\"confidence\":null,\"provenance_ref\":null,\"is_current\":null,\"is_historical\":null,\"metric_eligibility\":null,\"explanatory_note\":null,\"evidence\":{\"path\":\"CLAUDE.md\",\"source\":\"tree\"},\"detected_at\":\"2026-01-02T02:00:03+02:00\"},{\"repo_id\":911,\"full_name\":\"octo/alpha\",\"agent\":\"Codex\",\"family_id\":null,\"family_name\":null,\"observed_as\":null,\"variant\":null,\"rule_id\":null,\"rule_lifecycle\":null,\"evidence_semantics\":null,\"channel\":\"pr_metadata\",\"forge\":null,\"role\":null,\"confidence\":null,\"provenance_ref\":null,\"is_current\":null,\"is_historical\":null,\"metric_eligibility\":null,\"explanatory_note\":null,\"evidence\":{\"pr\":7,\"commit\":\"a1\",\"propagated\":true},\"detected_at\":\"2026-01-02T02:00:03+02:00\"}]}"
+}

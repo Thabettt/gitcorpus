@@ -169,6 +169,48 @@ def test_detect_files_local_matches_tree_gitignore_and_probes_content():
     }
 
 
+def test_detect_files_local_attributes_single_addressed_agent_in_agents_md():
+    blobs = {".gitignore": "", "AGENTS.md": "# Claude Code Guidelines for X\n"}
+
+    def handler(args):
+        if args[0] == "ls-tree":
+            return "".join(f"100644 blob {_FILE_OIDS[path]}\t{path}\n" for path in files)
+        if args[0] == "show":
+            return blobs.get(args[1][5:])
+        if "fetch" in args:
+            return ""
+        return None
+
+    files = ["AGENTS.md", ".gitignore"]
+    result = detect_files_local(FakeRepo(handler), PACK)
+    by_channel = {(hit.agent, hit.channel): hit for hit in result.hits}
+    assert ("Generic", "file") in by_channel
+    content = by_channel[("Claude Code", "content")]
+    assert content.evidence["path"] == "AGENTS.md"
+    assert content.evidence["cue"] == "title"
+    assert content.evidence["classifier"] == "agents-md-v1"
+
+
+def test_detect_files_local_does_not_attribute_multi_agent_agents_md():
+    blobs = {
+        ".gitignore": "",
+        "AGENTS.md": "# Guidance\nRead by Claude Code, Codex, Cursor, or whatever comes next.\n",
+    }
+
+    def handler(args):
+        if args[0] == "ls-tree":
+            return "".join(f"100644 blob {_FILE_OIDS[path]}\t{path}\n" for path in files)
+        if args[0] == "show":
+            return blobs.get(args[1][5:])
+        if "fetch" in args:
+            return ""
+        return None
+
+    files = ["AGENTS.md", ".gitignore"]
+    result = detect_files_local(FakeRepo(handler), PACK)
+    assert not [hit for hit in result.hits if hit.channel == "content"]
+
+
 def test_detect_files_local_fetch_failure_falls_back_to_lazy_reads():
     def handler(args):
         if args[0] == "ls-tree":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from detect.orchestrator import CHANNELS, DetectOptions
+from detect.orchestrator import CHANNELS, SCAN_MODE_FAST, SCAN_MODE_FULL, SCAN_MODES, DetectOptions
 
 DETECT_SPEC_VERSION = 1
 DEFAULT_WINDOWS = {"commits": 100, "prs": 100, "issues": 100}
@@ -92,6 +92,13 @@ def parse_detect_spec(doc: Mapping[str, object]) -> DetectOptions:
                 clone_keep = keep
             else:
                 errors.append("clone.keep must be true or false")
+    scan_mode = doc.get("scan_mode", SCAN_MODE_FULL)
+    if scan_mode not in SCAN_MODES:
+        errors.append(f"scan_mode must be one of: {', '.join(SCAN_MODES)}")
+        scan_mode = SCAN_MODE_FULL
+    elif scan_mode == SCAN_MODE_FAST and spec_source != "api":
+        errors.append("scan_mode 'fast' applies only to API detection")
+        hints.append("Clone detection reads files locally at no API cost; use full mode.")
     if errors:
         raise DetectSpecError(errors, hints)
     return DetectOptions(
@@ -104,11 +111,12 @@ def parse_detect_spec(doc: Mapping[str, object]) -> DetectOptions:
         source=str(spec_source),
         clone_depth=clone_depth,
         clone_keep=clone_keep,
+        scan_mode=str(scan_mode),
     )
 
 
 def detect_spec_to_dict(spec: DetectOptions) -> dict:
-    return {
+    doc = {
         "version": DETECT_SPEC_VERSION,
         "kind": "detect",
         "source_run_id": spec.source_run_id,
@@ -120,3 +128,7 @@ def detect_spec_to_dict(spec: DetectOptions) -> dict:
         "source": spec.source,
         "clone": {"depth": spec.clone_depth, "keep": spec.clone_keep},
     }
+    if spec.scan_mode == SCAN_MODE_FAST:
+        # Omitted for full mode so existing specs (and their filter hashes) are unchanged.
+        doc["scan_mode"] = SCAN_MODE_FAST
+    return doc

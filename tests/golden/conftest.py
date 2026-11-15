@@ -88,19 +88,23 @@ GOLDEN_SEED_SQL = (
          '2022-11-28', 2, 2, 2, 0, 0, 0, 1)
     """,
     """
-    INSERT INTO run_items (run_id, repo_id, full_name, stargazers, pushed_at, archived,
-        language, license_spdx, country_iso, geo_confidence, virtuals)
+    INSERT INTO run_items (run_id, repo_id, full_name, stargazers, repo_created_at,
+        commit_count, pushed_at, archived, language, license_spdx, country_iso,
+        geo_confidence, virtuals)
     VALUES
-        (931, 911, 'octo/alpha', 300, '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
+        (931, 911, 'octo/alpha', 300, '2024-01-01T00:00:00Z', 120,
+         '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
          'name', '{"has_dockerfile": true}'::jsonb),
-        (931, 912, 'octo/beta', 200, '2025-12-29T12:00:00Z', false, 'Python',
+        (931, 912, 'octo/beta', 200, '2024-02-01T00:00:00Z', 80,
+         '2025-12-29T12:00:00Z', false, 'Python',
          'Apache-2.0', NULL, NULL, '{}'::jsonb),
-        (931, 913, 'octo/gamma', 100, '2025-01-15T12:00:00Z', true, NULL, NULL, NULL,
-         NULL, '{}'::jsonb),
-        (932, 911, 'octo/alpha', 250, '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
+        (931, 913, 'octo/gamma', 100, '2023-03-01T00:00:00Z', 500,
+         '2025-01-15T12:00:00Z', true, NULL, NULL, NULL, NULL, '{}'::jsonb),
+        (932, 911, 'octo/alpha', 250, '2024-01-01T00:00:00Z', 100,
+         '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
          'name', '{"has_dockerfile": true}'::jsonb),
-        (932, 914, 'octo/delta', 400, '2025-06-01T12:00:00Z', false, 'Rust', 'MIT', NULL,
-         NULL, '{}'::jsonb)
+        (932, 914, 'octo/delta', 400, '2024-03-01T00:00:00Z', 20,
+         '2025-06-01T12:00:00Z', false, 'Rust', 'MIT', NULL, NULL, '{}'::jsonb)
     """,
     """
     INSERT INTO audit_log (id, ts, params, status, token_fp, latency_ms)
@@ -123,7 +127,7 @@ GOLDEN_SEED_SQL = (
                       result_summary, created_at, finished_at, fetched, inserted)
     VALUES (952, 'golden-detect',
             '{"version": 1, "kind": "detect", "source_run_id": 931, "pack_version": "golden-pack",
-              "agents": null, "channels": ["file", "pr_metadata"], "limit": null,
+              "agents": null, "channels": ["file", "commit_trailer", "pr_metadata"], "limit": null,
               "windows": {"commits": 100, "prs": 100, "issues": 100}}'::jsonb,
             '2022-11-28', 'done', 'detect', 931,
             '{"repos_scanned": 1, "repos_with_signal": 1, "repos_unavailable": 0,
@@ -135,18 +139,26 @@ GOLDEN_SEED_SQL = (
             '2026-01-02T00:06:00Z', '2026-01-02T00:07:00Z', 1, 1)
     """,
     """
-    INSERT INTO run_items (run_id, repo_id, full_name, stargazers, pushed_at, archived,
-        language, license_spdx, country_iso, geo_confidence, virtuals, detection)
-    VALUES (952, 911, 'octo/alpha', 300, '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
+    INSERT INTO run_items (run_id, repo_id, full_name, stargazers, repo_created_at,
+        commit_count, pushed_at, archived, language, license_spdx, country_iso,
+        geo_confidence, virtuals, detection)
+    VALUES (952, 911, 'octo/alpha', 300, '2024-01-01T00:00:00Z', 120,
+        '2025-12-30T12:00:00Z', false, 'Rust', 'MIT', 'DE',
         'name', '{"has_dockerfile": true}'::jsonb,
-        '{"agents": ["Claude Code"], "channels": {"file": "ok"}, "unavailable": false,
+        '{"agents": ["Claude Code", "Codex"],
+          "channels": {"file": "ok", "commit_trailer": "ok", "pr_metadata": "ok"},
+          "unavailable": false,
           "first_signal_at": "2026-01-02T00:00:00Z", "commit_ratio": 1.0,
+          "total_commits": 120, "history_window_commits": 100,
+          "history_eligible_commits": 99, "history_coverage": 0.8333,
+          "history_complete": false,
           "adoption_level": "pervasive", "notes": []}'::jsonb)
     """,
     """
     INSERT INTO detection_evidence (run_id, repo_id, agent, channel, evidence, pack_version,
         detected_at)
-    VALUES (952, 911, 'Claude Code', 'file', '{"path": "CLAUDE.md"}'::jsonb, 'golden-pack',
+    VALUES (952, 911, 'Claude Code', 'file',
+            '{"path": "CLAUDE.md", "source": "tree"}'::jsonb, 'golden-pack',
             '2026-01-02T00:00:03Z'),
            (952, 911, 'Codex', 'pr_metadata',
             '{"pr": 7, "commit": "a1", "propagated": true}'::jsonb, 'golden-pack',
@@ -182,8 +194,11 @@ PATH_PARAMS = {
     "/detections/new": {},
     "/detections/from/{run_id}": {"run_id": RUN_A},
     "/detections/{run_id}": {"run_id": 952},
+    "/api/trace-packs/{version}": {"version": "golden-pack"},
+    "/api/detections/{run_id}/evidence": {"run_id": 952},
     "/analysis": {},
     "/analysis/{run_id}": {"run_id": 952},
+    "/analysis/{run_id}/dashboard": {"run_id": 952},
     "/partials/detections/{run_id}/estimate": {"run_id": RUN_A},
     "/partials/detections/{run_id}/status": {"run_id": 952},
 }
@@ -330,6 +345,8 @@ def build_golden_app(engine: Engine, runs_root: Path):
         clock=lambda: 0.0,
         redis_ping=lambda: True,
         token_present=lambda: True,
+        token_count=lambda: 1,
+        token_source_name=lambda: "GITHUB_TOKEN",
         metrics_redis=lambda: None,
         find_count_factory=find_count_factory,
         clone_disk_free=lambda _path: 1_000_000.0,

@@ -344,6 +344,65 @@ def test_detection_detail_lives_under_detections(clean):
     assert "Windowed commit ratio" in response.text
 
 
+def test_trace_pack_api_exposes_schema_and_immutable_document(clean):
+    seed_pack(clean)
+    client = make_client(clean)
+    listing = client.get("/api/trace-packs")
+    assert listing.status_code == 200
+    assert listing.json() == [
+        {
+            "version": "test-pack",
+            "schema_version": 1,
+            "digest": listing.json()[0]["digest"],
+            "active_families": 0,
+            "legacy_only_families": 0,
+            "pseudo_families": 0,
+            "rules": 3,
+            "rejections": 0,
+        }
+    ]
+    detail = client.get("/api/trace-packs/test-pack")
+    assert detail.status_code == 200
+    assert detail.json()["document"]["version"] == "test-pack"
+    assert client.get("/api/trace-packs/missing").status_code == 404
+
+
+def test_detection_evidence_api_is_lifecycle_aware_and_old_run_compatible(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run_with_evidence(
+        clean,
+        source,
+        [
+            {
+                "repo": 1,
+                "agent": "Claude Code",
+                "channel": "file",
+                "evidence": {"path": "CLAUDE.md"},
+            }
+        ],
+    )
+    client = make_client(clean)
+    response = client.get(f"/api/detections/{detect_id}/evidence")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == detect_id
+    assert payload["pack_version"] == "test-pack"
+    assert payload["total"] == 1
+    item = payload["items"][0]
+    assert item["agent"] == "Claude Code"
+    assert item["family_id"] is None
+    assert item["rule_id"] is None
+    assert item["metric_eligibility"] is None
+    assert (
+        client.get(f"/api/detections/{detect_id}/evidence", params={"current": True}).json()[
+            "total"
+        ]
+        == 0
+    )
+    assert client.get("/api/detections/999999/evidence").status_code == 404
+
+
 def test_find_run_page_wires_detect_button_and_badge(clean):
     source = seed_find_run(clean)
     seed_pack(clean)
@@ -589,6 +648,104 @@ def test_detect_repo_export_has_detection_rollup_columns(clean):
     assert row["commit_trailer_rows"] == "0"
     assert row["unavailable"] == "false"
     assert row["adoption_level"] == "pervasive"
+
+
+def test_detect_exports_include_lifecycle_and_history_analysis_fields(clean):
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    detect_id = seed_detect_run(clean, source)
+    lifecycle = {
+        "ever_observed": ["Claude Code"],
+        "currently_configured": ["Claude Code"],
+        "current_activity": ["Claude Code"],
+        "historical_activity": [],
+        "authored_commits": 3,
+        "review_participation": [],
+        "orchestration_only": [],
+        "legacy_markers": [],
+        "recovery_checkpoint": [],
+        "ambiguous_lineage": [],
+        "history_window_commits": 100,
+        "history_eligible_commits": 95,
+        "total_commits": 250,
+        "history_coverage": 0.4,
+        "history_complete": False,
+    }
+    with clean.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE run_items SET language = 'Rust', commit_count = 250,"
+                " repo_created_at = '2024-01-02T00:00:00Z',"
+                " detection = detection || CAST(:extra AS jsonb)"
+                " WHERE run_id = :run AND repo_id = 1"
+            ),
+            {"run": detect_id, "extra": json.dumps(lifecycle)},
+        )
+        connection.execute(
+            text(
+                "UPDATE detection_evidence SET family_id = 'claude-code',"
+                " family_name = 'Claude Code', observed_as = 'Claude Code',"
+                " rule_id = 'claude.project', rule_lifecycle = 'current',"
+                " evidence_semantics = 'configuration', forge = 'github',"
+                " role = 'repository_file', confidence = 'strong',"
+                " provenance_ref = 'source@pin:path', is_current = true,"
+                " is_historical = false,"
+                " metric_eligibility = CAST(:metrics AS jsonb),"
+                " explanatory_note = 'current project configuration'"
+                " WHERE run_id = :run"
+            ),
+            {
+                "run": detect_id,
+                "metrics": json.dumps(
+                    {
+                        "repository_presence": True,
+                        "current_presence": True,
+                        "activity": False,
+                        "authorship": False,
+                        "generated_code": False,
+                        "current_commit_ratio": False,
+                        "historical_attribution": False,
+                    }
+                ),
+            },
+        )
+    client = make_client(clean)
+    repo_rows = list(
+        csv.DictReader(
+            io.StringIO(
+                client.get(f"/runs/{detect_id}/export?format=csv").content.decode("utf-8-sig")
+            )
+        )
+    )
+    row = repo_rows[0]
+    assert row["language"] == "Rust"
+    assert row["commit_count"] == "250"
+    assert row["repo_created_at"].startswith("2024-01-02")
+    assert row["history_window_commits"] == "100"
+    assert row["history_eligible_commits"] == "95"
+    assert row["total_commits"] == "250"
+    assert row["history_coverage"] == "0.4"
+    assert row["history_complete"] == "false"
+    assert row["currently_configured"] == "Claude Code"
+    evidence_rows = list(
+        csv.DictReader(
+            io.StringIO(
+                client.get(f"/runs/{detect_id}/export?format=detections").content.decode(
+                    "utf-8-sig"
+                )
+            )
+        )
+    )
+    evidence = evidence_rows[0]
+    assert evidence["family_id"] == "claude-code"
+    assert evidence["rule_id"] == "claude.project"
+    assert evidence["rule_lifecycle"] == "current"
+    assert evidence["evidence_semantics"] == "configuration"
+    assert evidence["current_presence_eligible"] == "true"
+    assert evidence["authorship_eligible"] == "false"
+    json_evidence = client.get(f"/runs/{detect_id}/export?format=detections-json").json()[0]
+    assert json_evidence["family_id"] == "claude-code"
+    assert json_evidence["metric_eligibility"]["current_presence"] is True
 
 
 def test_detect_repo_export_handles_signal_less_repos(clean):
@@ -874,6 +1031,21 @@ def test_detect_export_evidence_json_streams_all_rows(clean):
         "evidence",
         "country_iso",
         "country",
+        "family_id",
+        "family_name",
+        "observed_as",
+        "variant",
+        "rule_id",
+        "rule_lifecycle",
+        "evidence_semantics",
+        "forge",
+        "role",
+        "confidence",
+        "provenance_ref",
+        "is_current",
+        "is_historical",
+        "metric_eligibility",
+        "explanatory_note",
     }
     assert first["repo_id"] == 1
     assert first["full_name"] == "octo/one"

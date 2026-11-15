@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · {% if run %}detection #{{ run.number }}{% else %}not found{% endif %} · gitcorpus{% endblock %}
+{% block body %}
+{% if not run %}
+<section class="panel" id="analysis-not-found">
+  <h1>Dashboard not found</h1>
+  <p class="muted">No detection run with this id exists, or it is not a detection run.</p>
+  <p><a href="/analysis">All analyses</a></p>
+</section>
+{% else %}
+<section class="analysis-dashboard-head" data-run-id="{{ run.id }}">
+  <div>
+    <h1>Detection #{{ run.number }} dashboard</h1>
+    <p>Headline measures, a measurement boundary for shared markers, and validity diagnostics, drawn from one versioned snapshot of the same frozen evidence and denominators as the analysis tables.</p>
+  </div>
+  <div class="analysis-view-switch" aria-label="Analysis view">
+    <a href="/analysis/{{ run.id }}/dashboard" aria-current="page">Dashboard</a>
+    <a href="/analysis/{{ run.id }}">Data tables</a>
+  </div>
+</section>
+
+<div class="dashboard-ledger" aria-label="Detection summary">
+  {% for item in dashboard.summary %}
+  <div><span>{{ item.label }}</span><strong>{{ item.value if item.value is not none else "—" }}{{ item.unit or "" }}</strong></div>
+  {% endfor %}
+  <div><span>Measured</span><strong>{{ run.finished_at }}</strong></div>
+</div>
+
+<section class="viz-dashboard" id="analysis-visual-dashboard" aria-label="Analysis visualizations">
+  {% for chart in dashboard.charts %}
+  <article class="viz-panel" data-chart-key="{{ chart.key }}" data-span="{{ chart.span }}" aria-labelledby="viz-title-{{ chart.key }}">
+    <header class="viz-panel-head">
+      <div>
+        <div class="viz-title-row">
+          <h2 id="viz-title-{{ chart.key }}">{{ chart.title }}</h2>
+          {% if chart.explanation %}
+          <button class="viz-info" type="button" data-open="viz-info-{{ chart.key }}" aria-label="Explain {{ chart.title }}" aria-haspopup="dialog" title="What this figure shows"><span aria-hidden="true">i</span></button>
+          {% endif %}
+        </div>
+        <p>{{ chart.description }}</p>
+        <p class="viz-method">{{ chart.method }}</p>
+      </div>
+      <div class="viz-controls" data-chart-controls></div>
+    </header>
+    {% if chart.stats %}
+    <div class="viz-stat-strip" aria-label="Figure statistics">
+      {% for stat in chart.stats %}
+      <div class="viz-stat">
+        <span>{{ stat.label }}</span>
+        <strong>{{ stat.value if stat.value is not none else "—" }}{{ stat.unit or "" }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="viz-canvas" data-chart-canvas aria-live="polite">
+      <p class="muted">Preparing visual…</p>
+    </div>
+    {% if chart.explanation %}
+    <div id="viz-info-{{ chart.key }}" class="modal viz-info-modal" hidden role="dialog" aria-modal="true" aria-labelledby="viz-info-title-{{ chart.key }}">
+      <div class="modal-panel viz-info-panel" role="document">
+        <div class="panel-head">
+          <h2 id="viz-info-title-{{ chart.key }}">How to read “{{ chart.title }}”</h2>
+          <button class="button ghost" type="button" data-close="viz-info-{{ chart.key }}" aria-label="Close explanation">Close</button>
+        </div>
+        <p class="viz-info-kind">{{ chart.explanation.kind }}</p>
+        <p class="viz-info-question">{{ chart.explanation.question }}</p>
+        <div class="viz-info-section">
+          <h3>What you are looking at</h3>
+          <p>{{ chart.explanation.context }}</p>
+        </div>
+        <h3>How to read it</h3>
+        <ol class="viz-info-list">
+          {% for point in chart.explanation.how %}<li>{{ point }}</li>{% endfor %}
+        </ol>
+        <p class="viz-info-example"><strong>For example.</strong> {{ chart.explanation.example }}</p>
+        {% if chart.explanation.terms %}
+        <h3>Key terms in this figure</h3>
+        <dl class="viz-info-terms">
+          {% for term in chart.explanation.terms %}<dt>{{ term.term }}</dt><dd>{{ term.meaning }}</dd>{% endfor %}
+        </dl>
+        {% endif %}
+        <p class="viz-info-caveat"><strong>Keep in mind.</strong> {{ chart.explanation.caveat }}</p>
+      </div>
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+
+<p class="dashboard-footnote">Whiskers are 95% Wilson intervals unless a panel labels owner-cluster bootstrap intervals; triangle markers flag eligible n &lt; 10. Sensitivity gaps are not confidence intervals. Percentages retain their metric-specific denominator. Missing and unselected observations are never converted to zero. Open <a href="/analysis/{{ run.id }}">Data tables</a> for exact counts and complete rankings.</p>
+<noscript><p class="flag warn">Interactive figures require JavaScript. The complete analysis remains available in <a href="/analysis/{{ run.id }}">Data tables</a>.</p></noscript>
+<script id="analysis-dashboard-data" type="application/json">{{ dashboard|tojson }}</script>
+<script src="/static/chart.umd.min.js"></script>
+<script src="/static/analysis-dashboard.js" defer></script>
+{% endif %}
+{% endblock %}

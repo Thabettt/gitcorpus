@@ -21,6 +21,7 @@ from lib.gh_client import (
     resource_for_url,
     short_message,
     token_fingerprint,
+    token_source,
 )
 from limiter.buckets import BucketLimiter
 
@@ -66,6 +67,18 @@ def test_load_tokens_returns_empty_list_when_neither_set(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKENS", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     assert load_tokens() == []
+
+
+def test_token_source_names_the_winning_variable(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKENS", "a,b,c,d")
+    monkeypatch.setenv("GITHUB_TOKEN", "single-token")
+    assert token_source() == "GITHUB_TOKENS"
+    monkeypatch.delenv("GITHUB_TOKENS")
+    assert token_source() == "GITHUB_TOKEN"
+    monkeypatch.delenv("GITHUB_TOKEN")
+    assert token_source() == ""
+    monkeypatch.setenv("GITHUB_TOKENS", "   ")
+    assert token_source() == ""
 
 
 def test_token_fingerprint_is_stable_sha256_prefix():
@@ -192,6 +205,59 @@ def test_create_client_pins_the_pool_and_ignores_environment_proxies(monkeypatch
 )
 def test_resource_for_url_maps_github_resources(url, resource):
     assert resource_for_url(url) == resource
+
+
+def test_request_with_retry_follows_same_host_get_redirect():
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/repos/octo/old/git/trees/main":
+            return httpx.Response(
+                301,
+                headers={"location": "/repos/octo/new/git/trees/main"},
+            )
+        return httpx.Response(200, json={"tree": []})
+
+    client = httpx.Client(
+        headers=build_headers("secret-token"),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        response = request_with_retry(
+            client,
+            "GET",
+            f"{API_BASE}/repos/octo/old/git/trees/main",
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    assert paths == [
+        "/repos/octo/old/git/trees/main",
+        "/repos/octo/new/git/trees/main",
+    ]
+
+
+def test_request_with_retry_refuses_cross_host_authenticated_redirect():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(301, headers={"location": "https://example.com/collect"})
+
+    client = httpx.Client(
+        headers=build_headers("secret-token"),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(RequestFailed, match="refusing to send credentials"):
+            request_with_retry(client, "GET", f"{API_BASE}/repos/octo/old")
+    finally:
+        client.close()
+
+    assert len(requests) == 1
+    assert requests[0].url.host == "api.github.com"
 
 
 def test_request_with_retry_deny_loop_raises_throttled_error_without_http():

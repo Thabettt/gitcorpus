@@ -51,7 +51,7 @@
           <span class="method-title">Local clone (git) — new</span>
           <ul class="method-pros">
             <li>No API quota and no tokens required — 17.7k repos scan in ≈1 h (measured).</li>
-            <li>Same evidence for 6 of 8 channels — 99.5% of detected repos recovered in validation against the API run.</li>
+            <li>Same evidence for every channel except <code>label</code> and <code>issue</code> — 99.5% of detected repos recovered in validation against the API run.</li>
             <li>Clones can be kept so interrupted scans resume without re-downloading.</li>
           </ul>
           <ul class="method-cons">
@@ -65,45 +65,47 @@
     </section>
     <section class="filter-section" id="detect-pack-section">
       <h2>Trace pack</h2>
-      <p class="muted">The frozen pattern set used for matching — agent heuristics plus the 63-tool roster. Packs are immutable once frozen, and every stored evidence row carries this version.</p>
+      <p class="muted">The immutable pattern set used for matching. Packs are independent: each one carries its own agents and supports its own channels, and the lists below show only what the selected pack can detect. Every stored evidence row carries this version.</p>
       <div class="field-grid">
         <label class="field" for="detect-pack">
           <span class="field-label">Pack version</span>
           <select class="field-input" id="detect-pack" name="pack_version">
-            {% for version in packs %}<option value="{{ version }}">{{ version }}</option>{% endfor %}
+            {% for pack in packs %}<option value="{{ pack.version }}"{{ ' selected' if pack.version == selected_pack }}>{{ pack.version }} · {{ pack.agent_count }} agents · {{ pack.channel_count }} channels · schema v{{ pack.schema_version }}</option>{% endfor %}
           </select>
         </label>
       </div>
+      <script type="application/json" id="detect-pack-options">{{ pack_options | tojson }}</script>
+      <script type="application/json" id="detect-channel-notes">{{ channel_notes | tojson }}</script>
     </section>
     <section class="filter-section" id="detect-agents-section">
       <div class="detect-section-head">
-        <h2>Agents ({{ roster | length }})</h2>
+        <h2>Agents (<span id="detect-agents-count">{{ agents | length }}</span>)</h2>
         <div class="checklist-tools">
           <input type="search" id="detect-agent-search" class="field-input checklist-search" aria-label="Search agents" placeholder="Search agents…">
           <button type="button" id="detect-agents-all" class="button ghost">Select all</button>
           <button type="button" id="detect-agents-none" class="button ghost">Select none</button>
         </div>
       </div>
-      <p class="muted">Only the selected agents are matched, counted, and exported. Selection narrows matching, not fetching — the same API calls run either way. Keep all checked to scan for every agent.</p>
+      <p class="muted">The selected pack’s roster. Only the selected agents are matched, counted, and exported; keeping all checked scans for every agent the pack knows. Selection narrows matching, not fetching — the same API calls run either way. Agents marked <em>legacy</em> are matched only through historical evidence.</p>
       <div class="checklist" id="detect-agents">
-        {% for agent in roster %}
-        <label class="checkbox"><input type="checkbox" name="agents" value="{{ agent }}" checked> <span>{{ agent }}</span></label>
+        {% for agent in agents %}
+        <label class="checkbox" data-agent="{{ agent.name }}"><input type="checkbox" name="agents" value="{{ agent.name }}"{{ ' checked' if agent.name in agents_checked }}> <span>{{ agent.name }}</span>{% if agent.category != 'active' %} <span class="muted">({{ 'legacy' if agent.category == 'legacy-only' else agent.category }})</span>{% endif %}</label>
         {% endfor %}
       </div>
     </section>
     <section class="filter-section" id="detect-channels-section">
       <div class="detect-section-head">
-        <h2>Channels</h2>
+        <h2>Channels (<span id="detect-channels-count">{{ channels | length }}</span>)</h2>
         <div class="checklist-tools">
           <button type="button" id="detect-channels-all" class="button ghost">Select all</button>
           <button type="button" id="detect-channels-none" class="button ghost">Select none</button>
         </div>
       </div>
-      <p class="muted">Independent heuristics, each run per repo and grouped in the results. Several channels share one API call; the per-repo cost is noted next to each.</p>
+      <p class="muted">The channels the selected pack supports — independent heuristics, each run per repo and grouped in the results. Several channels share one API call; the per-repo cost is noted next to each. Opt-in channels start unchecked.</p>
       <div class="checklist checklist-channels" id="detect-channels">
         {% for channel in channels %}
-        <label class="checkbox channel-row">
-          <input type="checkbox" name="channels" value="{{ channel }}" checked>
+        <label class="checkbox channel-row" data-channel="{{ channel }}">
+          <input type="checkbox" name="channels" value="{{ channel }}"{{ ' checked' if channel in channels_checked }}>
           <span class="channel-name">{{ channel }}</span>
           <span class="channel-note muted">{{ channel_notes.get(channel, "") }}</span>
         </label>
@@ -118,6 +120,11 @@
           <span class="field-label">Top-N repos</span>
           <input class="field-input" id="detect-limit" name="limit" type="number" min="1" placeholder="All {{ candidate_count }}">
           <span class="field-note muted">Blank = all {{ candidate_count }} frozen repos.</span>
+        </label>
+        <label class="field" for="detect-scan-fast" data-api-field>
+          <span class="field-label">Fast mode</span>
+          <input class="field-input" id="detect-scan-fast" type="checkbox" name="scan_mode" value="fast"{{ ' checked' if scan_mode == 'fast' }}>
+          <span class="field-note muted">API method only. Skips reading every workflow and compose file in each repo, which roughly halves REST calls on schema-v2 packs. Same agents and channels; only content rules on broad paths (for example PR-Agent's workflow and compose checks) are skipped, and the run is labelled fast.</span>
         </label>
         <label class="field" for="detect-clone-depth" data-git-field>
           <span class="field-label">Clone depth (last N commits)</span>
@@ -163,86 +170,162 @@
       }
     });
   }
-  var agentLabels = [];
-  function wireGroup(listId, allId, noneId) {
-    var list = document.getElementById(listId);
-    if (!list) {
-      return [];
+  function readJson(id) {
+    var node = document.getElementById(id);
+    if (!node) {
+      return {};
     }
-    var labels = Array.prototype.slice.call(list.querySelectorAll("label"));
-    function setAll(checked) {
-      labels.forEach(function (label) {
-        var input = label.querySelector("input[type=checkbox]");
-        if (!input.disabled) {
-          input.checked = checked;
-        }
-      });
-      notifyChanged();
+    try {
+      return JSON.parse(node.textContent || "{}");
+    } catch (error) {
+      return {};
     }
-    var selectAll = document.getElementById(allId);
-    var selectNone = document.getElementById(noneId);
-    if (selectAll) {
-      selectAll.addEventListener("click", function () {
-        setAll(true);
-      });
-    }
-    if (selectNone) {
-      selectNone.addEventListener("click", function () {
-        setAll(false);
-      });
-    }
-    return labels;
   }
-  agentLabels = wireGroup("detect-agents", "detect-agents-all", "detect-agents-none");
-  wireGroup("detect-channels", "detect-channels-all", "detect-channels-none");
+  var packData = readJson("detect-pack-options");
+  var channelNotes = readJson("detect-channel-notes");
+  var packSelect = document.getElementById("detect-pack");
+  var agentList = document.getElementById("detect-agents");
+  var channelList = document.getElementById("detect-channels");
+  var agentCount = document.getElementById("detect-agents-count");
+  var channelCount = document.getElementById("detect-channels-count");
   var search = document.getElementById("detect-agent-search");
-  if (search) {
-    search.addEventListener("input", function () {
-      var term = search.value.trim().toLowerCase();
-      agentLabels.forEach(function (label) {
-        label.hidden = term !== "" && label.textContent.toLowerCase().indexOf(term) === -1;
-      });
-    });
-  }
   var gitFields = document.querySelectorAll("[data-git-field]");
+  var apiFields = document.querySelectorAll("[data-api-field]");
   var gitRadio = document.getElementById("detect-source-git");
   var apiOnlyValues = { label: true, issue: true };
   var unavailableNote = " (unavailable with git detection — API-only channel)";
+  var categoryLabels = { "legacy-only": "legacy" };
+
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      node.setAttribute(key, attrs[key]);
+    });
+    if (text !== undefined) {
+      node.textContent = text;
+    }
+    return node;
+  }
+  // Rebuild both checklists from the selected pack only: nothing from another
+  // pack stays in the form, so nothing from another pack can be submitted.
+  function buildLists() {
+    var option = (packSelect && packData[packSelect.value]) || {
+      agents: [],
+      channels: [],
+      default_channels: []
+    };
+    if (agentList) {
+      agentList.textContent = "";
+      option.agents.forEach(function (agent) {
+        var label = el("label", { class: "checkbox", "data-agent": agent.name });
+        var input = el("input", { type: "checkbox", name: "agents", value: agent.name });
+        input.checked = true;
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(" "));
+        label.appendChild(el("span", {}, agent.name));
+        if (agent.category !== "active") {
+          label.appendChild(document.createTextNode(" "));
+          label.appendChild(
+            el(
+              "span",
+              { class: "muted" },
+              "(" + (categoryLabels[agent.category] || agent.category) + ")"
+            )
+          );
+        }
+        agentList.appendChild(label);
+      });
+    }
+    if (channelList) {
+      channelList.textContent = "";
+      option.channels.forEach(function (channel) {
+        var label = el("label", { class: "checkbox channel-row", "data-channel": channel });
+        var input = el("input", { type: "checkbox", name: "channels", value: channel });
+        input.checked = option.default_channels.indexOf(channel) !== -1;
+        label.appendChild(input);
+        label.appendChild(el("span", { class: "channel-name" }, channel));
+        label.appendChild(el("span", { class: "channel-note muted" }, channelNotes[channel] || ""));
+        channelList.appendChild(label);
+      });
+    }
+    if (agentCount) {
+      agentCount.textContent = String(option.agents.length);
+    }
+    if (channelCount) {
+      channelCount.textContent = String(option.channels.length);
+    }
+  }
+  function applySearch() {
+    if (!agentList) {
+      return;
+    }
+    var term = search ? search.value.trim().toLowerCase() : "";
+    Array.prototype.forEach.call(agentList.querySelectorAll("label"), function (label) {
+      label.hidden = term !== "" && label.textContent.toLowerCase().indexOf(term) === -1;
+    });
+  }
   function syncMethod() {
     var gitSelected = !!(gitRadio && gitRadio.checked);
     Array.prototype.forEach.call(gitFields, function (field) {
       field.hidden = !gitSelected;
     });
-    Array.prototype.forEach.call(
-      document.querySelectorAll("#detect-channels input[type=checkbox]"),
-      function (input) {
-        if (!apiOnlyValues[input.value]) {
-          return;
-        }
-        var label = input.closest("label");
-        var note = label.querySelector(".channel-note");
-        if (note && note.dataset.base === undefined) {
-          note.dataset.base = note.textContent;
-        }
-        if (gitSelected && !input.disabled) {
-          input.dataset.wasChecked = input.checked ? "1" : "0";
-          input.checked = false;
-          input.disabled = true;
-          if (note) {
-            note.textContent = note.dataset.base + unavailableNote;
-          }
-        } else if (input.disabled) {
-          input.disabled = false;
-          if (input.dataset.wasChecked !== undefined) {
-            input.checked = input.dataset.wasChecked === "1";
-          }
-          if (note) {
-            note.textContent = note.dataset.base;
-          }
-        }
-        label.classList.toggle("channel-api-only", gitSelected);
+    Array.prototype.forEach.call(apiFields, function (field) {
+      field.hidden = gitSelected;
+      var input = field.querySelector("input");
+      if (input) {
+        input.disabled = gitSelected;
       }
-    );
+    });
+    if (!channelList) {
+      return;
+    }
+    Array.prototype.forEach.call(channelList.querySelectorAll("label"), function (label) {
+      var input = label.querySelector("input[type=checkbox]");
+      if (!input || !apiOnlyValues[input.value]) {
+        return;
+      }
+      var note = label.querySelector(".channel-note");
+      var base = channelNotes[input.value] || "";
+      if (gitSelected && !input.disabled) {
+        input.dataset.wasChecked = input.checked ? "1" : "0";
+        input.checked = false;
+        input.disabled = true;
+      } else if (!gitSelected && input.disabled) {
+        input.disabled = false;
+        input.checked = input.dataset.wasChecked === "1";
+      }
+      if (note) {
+        note.textContent = gitSelected ? base + unavailableNote : base;
+      }
+      label.classList.toggle("channel-api-only", gitSelected);
+    });
+  }
+  function setAll(list, checked) {
+    if (!list) {
+      return;
+    }
+    Array.prototype.forEach.call(list.querySelectorAll("input[type=checkbox]"), function (input) {
+      if (!input.disabled) {
+        input.checked = checked;
+      }
+    });
+    notifyChanged();
+  }
+  [
+    ["detect-agents-all", agentList, true],
+    ["detect-agents-none", agentList, false],
+    ["detect-channels-all", channelList, true],
+    ["detect-channels-none", channelList, false]
+  ].forEach(function (entry) {
+    var button = document.getElementById(entry[0]);
+    if (button) {
+      button.addEventListener("click", function () {
+        setAll(entry[1], entry[2]);
+      });
+    }
+  });
+  if (search) {
+    search.addEventListener("input", applySearch);
   }
   Array.prototype.forEach.call(
     form ? form.querySelectorAll('input[name="source"]') : [],
@@ -250,6 +333,13 @@
       radio.addEventListener("change", syncMethod);
     }
   );
+  if (packSelect) {
+    packSelect.addEventListener("change", function () {
+      buildLists();
+      applySearch();
+      syncMethod();
+    });
+  }
   syncMethod();
 })();
 </script>

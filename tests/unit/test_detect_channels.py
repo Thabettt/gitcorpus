@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from detect.channels import detect_files, detect_history, detect_issues, detect_prs
+from detect.channels import FailureKind, detect_files, detect_history, detect_issues, detect_prs
 from detect.packs import Pack, Pattern
 from discover.pipeline import Deps
 
@@ -74,6 +74,41 @@ def test_detect_files_matches_tree_gitignore_and_probes_content():
     assert by_path[("Claude Code", "CLAUDE.md")].evidence["empty"] is False
 
 
+def test_detect_files_attributes_single_addressed_agent_in_agents_md():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/repos/octo/repo/git/trees/main":
+            return tree_response(["AGENTS.md"])
+        if request.url.path == "/repos/octo/repo/contents/.gitignore":
+            return httpx.Response(404)
+        if request.url.path == "/repos/octo/repo/contents/AGENTS.md":
+            return httpx.Response(200, text="# Claude Code Guidelines for X\n")
+        raise AssertionError(request.url)
+
+    result = detect_files(make_deps(handler), "octo/repo", PACK, ref="main")
+    by_channel = {(hit.agent, hit.channel): hit for hit in result.hits}
+    assert ("Generic", "file") in by_channel
+    content = by_channel[("Claude Code", "content")]
+    assert content.evidence["path"] == "AGENTS.md"
+    assert content.evidence["cue"] == "title"
+
+
+def test_detect_files_does_not_attribute_multi_agent_agents_md():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/repos/octo/repo/git/trees/main":
+            return tree_response(["AGENTS.md"])
+        if request.url.path == "/repos/octo/repo/contents/.gitignore":
+            return httpx.Response(404)
+        if request.url.path == "/repos/octo/repo/contents/AGENTS.md":
+            return httpx.Response(
+                200,
+                text="# Guidance\nRead by Claude Code, Cursor, or whatever comes next.\n",
+            )
+        raise AssertionError(request.url)
+
+    result = detect_files(make_deps(handler), "octo/repo", PACK, ref="main")
+    assert not [hit for hit in result.hits if hit.channel == "content"]
+
+
 def test_detect_files_truncated_tree_probes_literal_paths():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/repos/octo/repo/git/trees/main":
@@ -99,6 +134,52 @@ def test_detect_files_unavailable_repo():
     result = detect_files(make_deps(handler), "octo/gone", PACK, ref="main")
     assert result.status == "unavailable"
     assert result.hits == ()
+    assert result.failure_kind is FailureKind.PERMANENT
+
+
+def test_detect_files_follows_same_host_rename_redirects():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/repos/octo/old/git/trees/main":
+            return httpx.Response(
+                301,
+                headers={"location": "/repos/octo/new/git/trees/main"},
+            )
+        if request.url.path == "/repos/octo/new/git/trees/main":
+            return tree_response(["CLAUDE.md"])
+        if request.url.path == "/repos/octo/old/contents/.gitignore":
+            return httpx.Response(404)
+        if request.url.path == "/repos/octo/old/contents/CLAUDE.md":
+            return httpx.Response(200, text="# guidance\n")
+        raise AssertionError(request.url)
+
+    result = detect_files(make_deps(handler), "octo/old", PACK, ref="main")
+
+    assert result.status == "ok"
+    assert any(hit.agent == "Claude Code" and hit.channel == "file" for hit in result.hits)
+    assert seen[:2] == [
+        "/repos/octo/old/git/trees/main",
+        "/repos/octo/new/git/trees/main",
+    ]
+
+
+def test_detect_files_marks_failed_content_probe_as_retryable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/repos/octo/repo/git/trees/main":
+            return tree_response(["CLAUDE.md"])
+        if request.url.path == "/repos/octo/repo/contents/.gitignore":
+            return httpx.Response(404)
+        if request.url.path == "/repos/octo/repo/contents/CLAUDE.md":
+            return httpx.Response(401, json={"message": "Bad credentials"})
+        raise AssertionError(request.url)
+
+    result = detect_files(make_deps(handler), "octo/repo", PACK, ref="main")
+
+    assert result.status == "partial"
+    assert result.failure_kind is FailureKind.RETRYABLE
+    assert "content CLAUDE.md: HTTP 401" in (result.note or "")
 
 
 def history_handler(request: httpx.Request) -> httpx.Response:
@@ -310,6 +391,7 @@ def test_history_null_repository_is_unavailable():
 
     result = detect_history(make_deps(handler), "octo/gone", PACK)
     assert result["author"].status == "unavailable"
+    assert result["author"].failure_kind is FailureKind.PERMANENT
 
 
 def test_history_selection_scopes_matching():
@@ -327,7 +409,46 @@ def test_history_graphql_errors_with_null_data_is_partial():
     result = detect_history(make_deps(handler), "octo/repo", PACK)
     for key in ("author", "commit_trailer", "bot"):
         assert result[key].status == "partial"
+        assert result[key].failure_kind is FailureKind.RETRYABLE
     assert result["author"].note == "graphql errors"
+
+
+def test_history_graphql_not_found_is_permanent():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {"repository": None},
+                "errors": [
+                    {
+                        "type": "NOT_FOUND",
+                        "message": "Could not resolve to a Repository with the name 'octo/gone'.",
+                    }
+                ],
+            },
+        )
+
+    result = detect_history(make_deps(handler), "octo/gone", PACK)
+
+    assert result["author"].status == "unavailable"
+    assert result["author"].note == "repo not found"
+    assert result["author"].failure_kind is FailureKind.PERMANENT
+
+
+def test_history_retries_a_malformed_success_body(monkeypatch):
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, content=b'{"data":{"repository":"unterminated')
+        return history_handler(request)
+
+    monkeypatch.setattr("detect.channels.time.sleep", lambda _seconds: None)
+    result = detect_history(make_deps(handler), "octo/repo", PACK, limit=100)
+    assert result["author"].status == "ok"
+    assert calls == 2
 
 
 def pr_handler(request: httpx.Request) -> httpx.Response:
@@ -443,3 +564,46 @@ def test_detect_prs_graphql_errors_with_partial_data_is_partial():
     result = detect_prs(make_deps(handler), "octo/repo", PACK)
     assert result.status == "partial"
     assert result.note == "graphql errors"
+
+
+def test_detect_prs_falls_back_to_smaller_pages_without_losing_results():
+    requested: list[tuple[int, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        variables = body["variables"]
+        requested.append((variables["limit"], variables.get("after")))
+        if variables["limit"] == 100:
+            return httpx.Response(
+                200,
+                json={"data": None, "errors": [{"message": "query complexity exceeded"}]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "pullRequests": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": "cursor-1"},
+                            "nodes": [
+                                {
+                                    "number": 7,
+                                    "createdAt": "2026-01-03T00:00:00Z",
+                                    "headRefName": "cursor/fix",
+                                    "bodyText": "",
+                                    "author": {"login": "cursoragent"},
+                                    "labels": {"nodes": []},
+                                    "comments": {"nodes": []},
+                                    "commits": {"nodes": []},
+                                }
+                            ],
+                        }
+                    }
+                }
+            },
+        )
+
+    result = detect_prs(make_deps(handler), "octo/repo", PACK, limit=100)
+    assert result.status == "ok"
+    assert requested == [(100, None), (50, None)]
+    assert any(hit.evidence.get("pr") == 7 for hit in result.hits)

@@ -27,6 +27,7 @@ ALL_TABLES = {
     "trace_packs",
     "detection_evidence",
     "detection_repo_filters",
+    "analysis_snapshots",
 }
 
 RUN_COLUMNS: dict[str, bool] = {
@@ -63,6 +64,8 @@ RUN_ITEM_COLUMNS: dict[str, bool] = {
     "repo_id": True,
     "full_name": False,
     "stargazers": True,
+    "repo_created_at": True,
+    "commit_count": True,
     "pushed_at": True,
     "archived": True,
     "language": True,
@@ -115,7 +118,7 @@ def _indexdefs(engine: Engine) -> dict[str, str]:
 
 
 def test_single_alembic_head(alembic_config):
-    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0019"]
+    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0025"]
 
 
 def test_metadata_declares_exactly_the_expected_tables():
@@ -157,10 +160,13 @@ def test_run_items_types_primary_key_and_foreign_keys(migrated: Engine):
     assert isinstance(columns["full_name"]["type"], CITEXT)
     assert isinstance(columns["virtuals"]["type"], JSONB)
     assert isinstance(columns["stargazers"]["type"], Integer)
+    assert isinstance(columns["commit_count"]["type"], Integer)
     assert isinstance(columns["country_iso"]["type"], CHAR)
     assert columns["country_iso"]["type"].length == 2
     assert isinstance(columns["pushed_at"]["type"], postgresql.TIMESTAMP)
     assert columns["pushed_at"]["type"].timezone is True
+    assert isinstance(columns["repo_created_at"]["type"], postgresql.TIMESTAMP)
+    assert columns["repo_created_at"]["type"].timezone is True
     assert "'{}'" in (columns["virtuals"]["default"] or "")
     inspector = inspect(migrated)
     assert inspector.get_pk_constraint("run_items")["constrained_columns"] == ["id"]
@@ -224,7 +230,11 @@ def test_model_metadata_indexes_match_console_contract():
         "runs_kind_idx",
         "runs_source_idx",
     }
-    assert run_items == {"run_items_repo_idx", "run_items_stars_idx"}
+    assert run_items == {
+        "run_items_commit_count_idx",
+        "run_items_repo_idx",
+        "run_items_stars_idx",
+    }
     assert Base.metadata.tables["saved_filters"].indexes == set()
 
 

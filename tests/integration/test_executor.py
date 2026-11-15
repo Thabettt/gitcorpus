@@ -102,6 +102,8 @@ def _item(repo_id: int = 1, full_name: str = "octo/hello", **overrides) -> RunPa
         "repo_id": repo_id,
         "full_name": full_name,
         "stargazers": 10,
+        "repo_created_at": "2024-01-01T00:00:00+00:00",
+        "commit_count": 123,
         "pushed_at": "2026-09-30T12:00:00+00:00",
         "archived": False,
         "language": "Python",
@@ -119,6 +121,8 @@ def _expected_snapshot() -> dict[str, object]:
         "repo_id": 1,
         "full_name": "octo/hello",
         "stargazers": 10,
+        "repo_created_at": "2024-01-01T00:00:00+00:00",
+        "commit_count": 123,
         "pushed_at": "2026-09-30T12:00:00+00:00",
         "archived": False,
         "language": "Python",
@@ -170,6 +174,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
                 repo_id=3,
                 full_name="octo/extra",
                 stargazers=None,
+                repo_created_at=None,
+                commit_count=None,
                 pushed_at=None,
                 archived=None,
                 language=None,
@@ -200,7 +206,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
         rows = (
             connection.execute(
                 text(
-                    "SELECT run_id, repo_id, full_name, stargazers, pushed_at, archived, "
+                    "SELECT run_id, repo_id, full_name, stargazers, repo_created_at,"
+                    " commit_count, pushed_at, archived, "
                     "language, license_spdx, country_iso, geo_confidence, virtuals "
                     "FROM run_items ORDER BY repo_id"
                 )
@@ -214,6 +221,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "repo_id": 1,
             "full_name": "octo/hello",
             "stargazers": 10,
+            "repo_created_at": datetime(2024, 1, 1, tzinfo=UTC),
+            "commit_count": 123,
             "pushed_at": datetime(2026, 9, 30, 12, 0, tzinfo=UTC),
             "archived": False,
             "language": "Python",
@@ -227,6 +236,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "repo_id": 2,
             "full_name": "octo/world",
             "stargazers": None,
+            "repo_created_at": None,
+            "commit_count": None,
             "pushed_at": None,
             "archived": None,
             "language": None,
@@ -240,6 +251,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "repo_id": 3,
             "full_name": "octo/extra",
             "stargazers": None,
+            "repo_created_at": None,
+            "commit_count": None,
             "pushed_at": None,
             "archived": None,
             "language": None,
@@ -282,6 +295,8 @@ def test_execute_run_done_snapshots_rows_and_writes_bundle(db: Engine, tmp_path)
             "repo_id": 3,
             "full_name": "octo/extra",
             "stargazers": None,
+            "repo_created_at": None,
+            "commit_count": None,
             "pushed_at": None,
             "archived": None,
             "language": None,
@@ -845,9 +860,7 @@ def test_recover_orphaned_runs_clears_live_progress(db: Engine):
     assert status["status"] == "failed"
     with db.connect() as connection:
         row = connection.execute(
-            text(
-                "SELECT progress_phase, progress_done, progress_total " "FROM runs WHERE id = :id"
-            ),
+            text("SELECT progress_phase, progress_done, progress_total FROM runs WHERE id = :id"),
             {"id": run_id},
         ).one()
     assert tuple(row) == (None, None, None)

@@ -37,6 +37,7 @@ def test_settings_env_names_are_stable():
     assert SETTINGS_ENV["limiter_max_concurrent"] == "GITCORPUS_MAX_CONCURRENT"
     assert SETTINGS_ENV["discovery_concurrency"] == "GITCORPUS_DISCOVERY_CONCURRENCY"
     assert SETTINGS_ENV["detect_concurrency"] == "GITCORPUS_DETECT_CONCURRENCY"
+    assert SETTINGS_ENV["detect_token_mode"] == "GITCORPUS_DETECT_TOKEN_MODE"
 
 
 def test_discovery_concurrency_defaults_to_32():
@@ -45,6 +46,10 @@ def test_discovery_concurrency_defaults_to_32():
 
 def test_detect_concurrency_defaults_to_32():
     assert RunSettings().detect_concurrency == 32
+
+
+def test_detect_token_mode_defaults_to_single():
+    assert RunSettings().detect_token_mode == "single"
 
 
 def test_graphql_batch_size_defaults_to_29():
@@ -86,3 +91,10 @@ def test_env_detect_concurrency_is_clamped_to_the_form_bound(monkeypatch, raw):
 def test_env_detect_concurrency_within_bounds_is_kept(monkeypatch):
     monkeypatch.setenv("GITCORPUS_DETECT_CONCURRENCY", "48")
     assert load_run_settings(_EmptyEngine()).detect_concurrency == 48
+
+
+def test_env_detect_token_mode_accepts_only_known_values(monkeypatch):
+    monkeypatch.setenv("GITCORPUS_DETECT_TOKEN_MODE", "pool4")
+    assert load_run_settings(_EmptyEngine()).detect_token_mode == "pool4"
+    monkeypatch.setenv("GITCORPUS_DETECT_TOKEN_MODE", "round-robin")
+    assert load_run_settings(_EmptyEngine()).detect_token_mode == "single"
