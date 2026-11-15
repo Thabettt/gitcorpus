@@ -11,8 +11,8 @@
     <tbody>
       <tr class="{% if selected == 'api' %}estimate-selected{% endif %}">
         <td><strong>GitHub API</strong>{% if selected == 'api' %} — selected{% endif %}</td>
-        <td>{{ api.rest_calls }} REST + {{ api.graphql_calls }} GraphQL calls</td>
-        <td>≈{{ api.hours }} h (quota-bound)</td>
+        <td>{{ api.rest_calls }} REST + {{ api.graphql_calls }} GraphQL calls (≈{{ api.graphql_points }} points)</td>
+        <td>≈{{ api.hours }} h ({{ api.bound }}-bound, {{ api.tokens }} token{% if api.tokens != 1 %}s{% endif %}{% if api.scan_mode == 'fast' %}, fast mode{% endif %}){% if api.fast_mode %}<br><span class="muted">≈{{ api.fast_mode.hours }} h with fast mode</span>{% endif %}</td>
         <td>none</td>
       </tr>
       <tr class="{% if selected == 'git' %}estimate-selected{% endif %}">
@@ -26,9 +26,13 @@
   {% if api.deadline_exceeded %}
   <p class="flag warn">The API estimate exceeds the request deadline; an API run would stop partial. Local clone has no deadline constraint.</p>
   {% endif %}
+  {% if not api.pool_ready %}
+  <p class="flag warn">{% if api.token_mode == "pool4" %}Four-account API mode needs exactly four configured tokens{% else %}Single-token API mode needs at least one configured token{% endif %}; {{ api.configured_tokens }} are available. Change the mode under System → Limits or update the environment credentials.</p>
+  {% endif %}
   {% if git.warnings %}
   <p class="flag warn">Local clone: {{ git.warnings | join("; ") }}</p>
   {% endif %}
+  <p class="muted">API time is the slower of the hourly quota and response time (about {{ api.seconds_per_repo | int }} s per repo per worker, measured){% if api.fast_mode %}; this pack reads every workflow and compose file in full mode, which is what fast mode skips{% endif %}.</p>
   <p class="muted">Clone options: depth {{ git.depth }} commits · {{ "clones kept on disk" if git.keep else "clones deleted after each scan" }}.</p>
   <p class="muted">Git time assumes 4–12 s of transport and scan work per repo with at most 32 effective workers; repos with very large PR histories skew toward the high end. Sizes come from the corpus's stored repo sizes. Real times vary with machine performance and network conditions — a stable internet connection matters more than CPU speed.</p>
 </div>

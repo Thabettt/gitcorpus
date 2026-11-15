@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -212,6 +213,11 @@ class RunItem(Base):
             text("stargazers DESC NULLS LAST"),
             "repo_id",
         ),
+        Index("run_items_commit_count_idx", "run_id", "commit_count"),
+        CheckConstraint(
+            "commit_count IS NULL OR commit_count >= 0",
+            name="run_items_commit_count_nonnegative",
+        ),
         UniqueConstraint("run_id", "repo_id", name="run_items_run_repo_key"),
     )
 
@@ -224,6 +230,8 @@ class RunItem(Base):
     )
     full_name: Mapped[str] = mapped_column(CITEXT, nullable=False)
     stargazers: Mapped[int | None] = mapped_column(Integer)
+    repo_created_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    commit_count: Mapped[int | None] = mapped_column(Integer)
     pushed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     archived: Mapped[bool | None] = mapped_column(Boolean)
     language: Mapped[str | None] = mapped_column(Text)
@@ -232,6 +240,27 @@ class RunItem(Base):
     geo_confidence: Mapped[str | None] = mapped_column(Text)
     virtuals: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
     detection: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class AnalysisSnapshot(Base):
+    __tablename__ = "analysis_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "build_seconds >= 0 AND build_seconds < 86400",
+            name="analysis_snapshots_build_seconds_check",
+        ),
+    )
+
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False)
+    source_finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    generated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    build_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
 class Corpus(Base):
@@ -262,6 +291,8 @@ class TracePack(Base):
     exclusions: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[\"CONVENTIONS.md\"]'")
     )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    document: Mapped[dict | None] = mapped_column(JSONB)
     frozen_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -271,13 +302,23 @@ class DetectionEvidence(Base):
     __tablename__ = "detection_evidence"
     __table_args__ = (
         CheckConstraint(
-            "channel IN ('file','author','branch','label','bot','commit_trailer',"
-            "'pr_metadata','issue')",
+            "channel IN ('file','content','author','branch','label','bot','commit_trailer',"
+            "'pr_metadata','issue','hidden_ref')",
             name="detection_evidence_channel_check",
         ),
         Index("de_run_repo_idx", "run_id", "repo_id"),
         Index("de_run_agent_idx", "run_id", "agent"),
         Index("de_run_channel_idx", "run_id", "channel"),
+        Index("de_run_family_idx", "run_id", "family_id"),
+        Index("de_run_rule_idx", "run_id", "rule_id"),
+        Index(
+            "de_run_committed_file_repo_idx",
+            "run_id",
+            "repo_id",
+            postgresql_where=text(
+                "channel = 'file' AND COALESCE(evidence->>'source', 'tree') <> 'gitignore'"
+            ),
+        ),
         Index("de_repo_idx", "repo_id"),
     )
 
@@ -292,6 +333,21 @@ class DetectionEvidence(Base):
     pack_version: Mapped[str] = mapped_column(
         Text, ForeignKey("trace_packs.version"), nullable=False
     )
+    family_id: Mapped[str | None] = mapped_column(Text)
+    family_name: Mapped[str | None] = mapped_column(Text)
+    observed_as: Mapped[str | None] = mapped_column(Text)
+    variant: Mapped[str | None] = mapped_column(Text)
+    rule_id: Mapped[str | None] = mapped_column(Text)
+    rule_lifecycle: Mapped[str | None] = mapped_column(Text)
+    evidence_semantics: Mapped[str | None] = mapped_column(Text)
+    forge: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(Text)
+    provenance_ref: Mapped[str | None] = mapped_column(Text)
+    is_current: Mapped[bool | None] = mapped_column(Boolean)
+    is_historical: Mapped[bool | None] = mapped_column(Boolean)
+    metric_eligibility: Mapped[dict | None] = mapped_column(JSONB)
+    explanatory_note: Mapped[str | None] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -339,6 +395,10 @@ class AppSettings(Base):
             "detect_concurrency BETWEEN 1 AND 64",
             name="app_settings_detect_concurrency",
         ),
+        CheckConstraint(
+            "detect_token_mode IN ('single','pool4')",
+            name="app_settings_detect_token_mode",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
@@ -364,6 +424,9 @@ class AppSettings(Base):
     )
     detect_concurrency: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("32")
+    )
+    detect_token_mode: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'single'")
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")

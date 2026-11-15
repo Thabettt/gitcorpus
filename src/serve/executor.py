@@ -4,6 +4,7 @@ import csv
 import hashlib
 import itertools
 import json
+import logging
 import queue
 import re
 import threading
@@ -23,12 +24,16 @@ from lib.cancellation import RunCancelled
 from serve.countries import country_name
 from store.models import RunItem, Runs
 
+logger = logging.getLogger("gitcorpus.serve")
+
 
 @dataclass
 class RunPayloadItem:
     repo_id: int
     full_name: str
     stargazers: int | None = None
+    repo_created_at: str | None = None
+    commit_count: int | None = None
     pushed_at: str | None = None
     archived: bool | None = None
     language: str | None = None
@@ -97,6 +102,8 @@ def _snapshot_item(item: RunPayloadItem) -> dict:
         "repo_id": item.repo_id,
         "full_name": item.full_name,
         "stargazers": item.stargazers,
+        "repo_created_at": item.repo_created_at,
+        "commit_count": item.commit_count,
         "pushed_at": item.pushed_at,
         "archived": item.archived,
         "language": item.language,
@@ -239,7 +246,28 @@ EVIDENCE_CSV_HEADER = [
     "repo_id",
     "full_name",
     "agent",
+    "family_id",
+    "family_name",
+    "observed_as",
+    "variant",
+    "rule_id",
+    "rule_lifecycle",
+    "evidence_semantics",
     "channel",
+    "forge",
+    "role",
+    "confidence",
+    "provenance_ref",
+    "is_current",
+    "is_historical",
+    "repository_presence_eligible",
+    "current_presence_eligible",
+    "activity_eligible",
+    "authorship_eligible",
+    "generated_code_eligible",
+    "current_ratio_eligible",
+    "historical_attribution_eligible",
+    "explanatory_note",
     "detected_at",
     "commit_sha",
     "path",
@@ -300,10 +328,37 @@ def evidence_csv_row(row: Mapping[str, object]) -> list[str]:
         "repo_id": row.get("repo_id"),
         "full_name": row.get("full_name"),
         "agent": row.get("agent"),
+        "family_id": row.get("family_id"),
+        "family_name": row.get("family_name"),
+        "observed_as": row.get("observed_as"),
+        "variant": row.get("variant"),
+        "rule_id": row.get("rule_id"),
+        "rule_lifecycle": row.get("rule_lifecycle"),
+        "evidence_semantics": row.get("evidence_semantics"),
         "channel": row.get("channel"),
+        "forge": row.get("forge"),
+        "role": row.get("role"),
+        "confidence": row.get("confidence"),
+        "provenance_ref": row.get("provenance_ref"),
+        "is_current": row.get("is_current"),
+        "is_historical": row.get("is_historical"),
+        "explanatory_note": row.get("explanatory_note"),
         "country_iso": country_iso,
         "country": country_name(country_iso if isinstance(country_iso, str) else None),
     }
+    eligibility = row.get("metric_eligibility")
+    if isinstance(eligibility, Mapping):
+        flat.update(
+            {
+                "repository_presence_eligible": eligibility.get("repository_presence"),
+                "current_presence_eligible": eligibility.get("current_presence"),
+                "activity_eligible": eligibility.get("activity"),
+                "authorship_eligible": eligibility.get("authorship"),
+                "generated_code_eligible": eligibility.get("generated_code"),
+                "current_ratio_eligible": eligibility.get("current_commit_ratio"),
+                "historical_attribution_eligible": eligibility.get("historical_attribution"),
+            }
+        )
     for key, name in _FLAT_EVIDENCE_KEYS:
         if key in evidence:
             flat[name] = evidence[key]
@@ -480,6 +535,15 @@ def execute_run(
                     progress_started_at=None,
                 )
             )
+        if run["kind"] == "detect":
+            try:
+                from serve.analysis import refresh_analysis_snapshot
+
+                refresh_analysis_snapshot(engine, run_id)
+            except Exception:
+                # This cache is a rebuildable read optimization. Never turn a
+                # valid detection into a failed run when its projection fails.
+                logger.exception("analysis snapshot build failed for detection run %s", run_id)
     except RunCancelled:
         with engine.begin() as connection:
             connection.execute(
@@ -544,6 +608,11 @@ def reset_run_artifacts(engine: Engine, run_id: int) -> None:
         if connection.scalar(text("SELECT to_regclass('detection_repo_filters')")) is not None:
             connection.execute(
                 text("DELETE FROM detection_repo_filters WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+        if connection.scalar(text("SELECT to_regclass('analysis_snapshots')")) is not None:
+            connection.execute(
+                text("DELETE FROM analysis_snapshots WHERE run_id = :run_id"),
                 {"run_id": run_id},
             )
 

@@ -100,6 +100,7 @@ def valid_form(**overrides: str) -> dict[str, str]:
         "limiter_max_concurrent": "4",
         "discovery_concurrency": "32",
         "detect_concurrency": "32",
+        "detect_token_mode": "single",
     }
     data.update(overrides)
     return data
@@ -116,6 +117,10 @@ def test_settings_page_renders_current_values(clean, tmp_path, monkeypatch):
     assert 'name="adaptive"' in response.text
     assert "Discovery workers" in response.text
     assert "Detection workers" in response.text
+    assert 'name="detect_token_mode"' in response.text
+    assert "Single token" in response.text
+    assert "Four-account pool" in response.text
+    assert "1 token configured" in response.text
     assert "Run limits for new searches" in response.text
     assert "Part of System" in response.text
     assert "Search breadth (slices)" in response.text
@@ -130,6 +135,52 @@ def test_settings_page_never_renders_the_token(clean, tmp_path, monkeypatch):
     client = healthy_client(clean, tmp_path, monkeypatch)
     response = client.get("/settings")
     assert "super-secret-token-value" not in response.text
+
+
+def test_settings_page_names_the_credential_source_and_count(clean, tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKENS", "one,two,three,four")
+    monkeypatch.setenv("GITHUB_TOKEN", "shadowed-single-token")
+    client = make_client(
+        clean,
+        redis_ping=fakeredis.FakeRedis().ping,
+        runs_root=tmp_path,
+    )
+    body = client.get("/settings").text
+    assert "4 tokens configured" in body
+    assert "via <code>GITHUB_TOKENS</code>" in body
+    assert "Ready · 4 of 4" in body
+    assert "shadowed-single-token" not in body
+
+
+def test_pool4_with_only_single_token_explains_the_source(clean, tmp_path, monkeypatch):
+    update_run_settings(clean, {"detect_token_mode": "pool4"})
+    monkeypatch.setenv("GITHUB_TOKEN", "super-secret-token-value")
+    monkeypatch.delenv("GITHUB_TOKENS", raising=False)
+    client = make_client(
+        clean,
+        redis_ping=fakeredis.FakeRedis().ping,
+        runs_root=tmp_path,
+    )
+    body = client.get("/settings").text
+    assert "via <code>GITHUB_TOKEN</code>" in body
+    assert "Unavailable · 1 of 4" in body
+    assert "only sees a single <code>GITHUB_TOKEN</code>" in body
+    assert "super-secret-token-value" not in body
+
+
+def test_environment_pinned_mode_explains_why_controls_are_disabled(clean, tmp_path, monkeypatch):
+    monkeypatch.setenv("GITCORPUS_DETECT_TOKEN_MODE", "pool4")
+    monkeypatch.setenv("GITHUB_TOKENS", "one,two,three,four")
+    client = make_client(
+        clean,
+        redis_ping=fakeredis.FakeRedis().ping,
+        runs_root=tmp_path,
+    )
+    body = client.get("/settings").text
+    assert "locked by <code>GITCORPUS_DETECT_TOKEN_MODE</code>" in body
+    assert "Remove that environment" in body
+    assert re.search(r'name="detect_token_mode" value="single"\s+\s*disabled', body)
+    assert re.search(r'name="detect_token_mode" value="pool4"\s+checked\s+disabled', body)
 
 
 def test_post_saves_values_and_redirects(clean, tmp_path, monkeypatch):
@@ -150,6 +201,52 @@ def test_post_saves_values_and_redirects(clean, tmp_path, monkeypatch):
     assert saved.limiter_max_concurrent == 4
     assert saved.discovery_concurrency == 48
     assert saved.detect_concurrency == 64
+    assert saved.detect_token_mode == "single"
+
+
+def test_four_account_mode_requires_exactly_four_configured_tokens(clean, tmp_path, monkeypatch):
+    client = healthy_client(clean, tmp_path, monkeypatch)
+    token = csrf_token(client)
+    response = client.post(
+        "/settings",
+        data=valid_form(detect_token_mode="pool4"),
+        headers={"x-csrf-token": token},
+    )
+    assert response.status_code == 400
+    assert "exactly four" in response.text
+    assert "found 1" in response.text
+    assert load_run_settings(clean).detect_token_mode == "single"
+
+
+def test_four_account_mode_saves_when_four_tokens_exist(clean, tmp_path, monkeypatch):
+    client = healthy_client(clean, tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_TOKENS", "one,two,three,four")
+    token = csrf_token(client)
+    response = client.post(
+        "/settings",
+        data=valid_form(detect_token_mode="pool4"),
+        headers={"x-csrf-token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert load_run_settings(clean).detect_token_mode == "pool4"
+    body = client.get("/settings").text
+    assert "4 tokens configured" in body
+    assert "Ready · 4 of 4" in body
+
+
+def test_single_mode_uses_first_token_even_when_four_are_configured(clean, tmp_path, monkeypatch):
+    client = healthy_client(clean, tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_TOKENS", "one,two,three,four")
+    token = csrf_token(client)
+    response = client.post(
+        "/settings",
+        data=valid_form(detect_token_mode="single"),
+        headers={"x-csrf-token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert load_run_settings(clean).detect_token_mode == "single"
 
 
 def test_unchecked_adaptive_checkbox_saves_false(clean, tmp_path, monkeypatch):

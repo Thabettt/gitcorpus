@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select, text
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
-from detect.estimate import estimate
+from detect.estimate import MEASURED_SECONDS_PER_REPO, estimate, file_rest_calls
 from detect.git_orchestrator import (
     API_ONLY_CHANNELS,
     GitScanConfig,
@@ -23,10 +26,20 @@ from detect.git_orchestrator import (
     run_git_detection,
 )
 from detect.orchestrator import CHANNELS, DetectConfig, run_detection
-from detect.packs import load_frozen
+from detect.packs import OPT_IN_CHANNELS, load_frozen, pack_digest, pack_to_document
+from detect.token_pool import (
+    FIXED_API_TOKEN_COUNT,
+    TOKEN_MODE_POOL4,
+    TOKEN_MODE_SINGLE,
+    DetectionTokenPool,
+    token_mode_error,
+)
+from discover.pipeline import Deps
 from enrich.cloner import CloneMode, estimate_clone, free_disk_mb
+from lib import audit
 from lib.deadlines import clone_timeout_seconds
-from lib.gh_client import API_VERSION, load_tokens
+from lib.gh_client import API_VERSION, create_client, load_tokens, token_fingerprint
+from limiter.buckets import BucketLimiter
 from serve import errors
 from serve.detect_spec import DetectSpecError, detect_spec_to_dict, parse_detect_spec
 from serve.executor import RunExecutor, Runner, RunPayload, create_run
@@ -52,6 +65,54 @@ from store.settings import load_run_settings
 DETECTIONS_PAGE_SIZE = 15
 DETECTION_REPOS_PAGE_SIZE = 25
 DETECTION_REPO_EVIDENCE_CAP = 300
+
+
+class TracePackSummaryResponse(BaseModel):
+    version: str
+    schema_version: int
+    digest: str
+    active_families: int
+    legacy_only_families: int
+    pseudo_families: int
+    rules: int
+    rejections: int
+
+
+class TracePackResponse(TracePackSummaryResponse):
+    document: dict[str, Any]
+
+
+class DetectionEvidenceResponseItem(BaseModel):
+    repo_id: int
+    full_name: str | None
+    agent: str
+    family_id: str | None
+    family_name: str | None
+    observed_as: str | None
+    variant: str | None
+    rule_id: str | None
+    rule_lifecycle: str | None
+    evidence_semantics: str | None
+    channel: str
+    forge: str | None
+    role: str | None
+    confidence: str | None
+    provenance_ref: str | None
+    is_current: bool | None
+    is_historical: bool | None
+    metric_eligibility: dict[str, bool] | None
+    explanatory_note: str | None
+    evidence: dict[str, Any]
+    detected_at: datetime
+
+
+class DetectionEvidenceResponse(BaseModel):
+    run_id: int
+    pack_version: str
+    total: int
+    limit: int
+    offset: int
+    items: list[DetectionEvidenceResponseItem] = Field(default_factory=list)
 
 
 def detect_clone_root() -> str:
@@ -127,11 +188,70 @@ def _annotate_payload_countries(engine: Engine, payload: RunPayload) -> None:
             item.country_iso, item.geo_confidence = pair
 
 
+def _build_detection_token_pool(
+    engine: Engine,
+    tokens: list[str],
+    channels: frozenset[str],
+    *,
+    max_concurrent: int,
+    file_core_calls: float = 3.0,
+) -> DetectionTokenPool:
+    if len(tokens) != FIXED_API_TOKEN_COUNT:
+        raise ValueError(
+            f"API detection pooling requires exactly {FIXED_API_TOKEN_COUNT} GitHub tokens"
+        )
+    from serve.runner import _redis_or_fake
+
+    redis_client = _redis_or_fake()
+    per_token_concurrency = max(1, min(max_concurrent, 3))
+    limiter = (
+        BucketLimiter(redis_client, max_concurrent=per_token_concurrency)
+        if redis_client is not None
+        else None
+    )
+    audit_buffer = audit.AuditBuffer(engine)
+    dependencies: list[Deps] = []
+    try:
+        for token in tokens:
+            dependencies.append(
+                Deps(
+                    client=create_client(token),
+                    engine=engine,
+                    redis=redis_client,
+                    limiter=limiter,
+                    token_fp=token_fingerprint(token),
+                    audit_buffer=audit_buffer,
+                )
+            )
+        return DetectionTokenPool(
+            dependencies,
+            channels,
+            max_concurrency=per_token_concurrency,
+            file_core_calls=file_core_calls,
+        )
+    except Exception:
+        for deps in dependencies:
+            deps.client.close()
+        raise
+
+
+def _persist_detection_pool_stats(engine: Engine, run_id: int, stats: dict[str, object]) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            update(Runs)
+            .where(Runs.id == run_id, Runs.status == "running")
+            .values(result_summary={"token_pool": stats})
+        )
+
+
 def build_detect_runner(engine: Engine) -> Runner:
     def runner(run_id: int, spec_doc: dict) -> RunPayload:
         spec = parse_detect_spec(spec_doc)
         settings = load_run_settings(engine)
         pack = load_frozen(engine, spec.pack_version)
+        # A run only ever executes channels its own pack can feed, even when the
+        # stored spec predates per-pack channel validation.
+        spec = dataclasses.replace(spec, channels=spec.channels & frozenset(pack.channels()))
         if spec.source == "git":
             payload = run_git_detection(
                 engine,
@@ -151,22 +271,58 @@ def build_detect_runner(engine: Engine) -> Runner:
         else:
             from serve.runner import build_deps
 
-            deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
-            try:
-                payload = run_detection(
-                    deps,
-                    run_id,
-                    spec,
-                    pack,
-                    config=DetectConfig(
-                        deadline_seconds=float(settings.request_deadline_seconds),
-                        concurrency=min(
-                            settings.detect_concurrency, settings.limiter_max_concurrent
+            tokens = load_tokens()
+            token_error = token_mode_error(settings.detect_token_mode, len(tokens))
+            if token_error is not None:
+                raise ValueError(token_error)
+            if settings.detect_token_mode == TOKEN_MODE_SINGLE:
+                deps = build_deps(engine, max_concurrent=settings.limiter_max_concurrent)
+                try:
+                    payload = run_detection(
+                        deps,
+                        run_id,
+                        spec,
+                        pack,
+                        config=DetectConfig(
+                            deadline_seconds=float(settings.request_deadline_seconds),
+                            concurrency=min(
+                                settings.detect_concurrency, settings.limiter_max_concurrent
+                            ),
                         ),
+                    )
+                finally:
+                    deps.client.close()
+            elif settings.detect_token_mode == TOKEN_MODE_POOL4:
+                token_pool = _build_detection_token_pool(
+                    engine,
+                    tokens,
+                    spec.channels,
+                    max_concurrent=settings.limiter_max_concurrent,
+                    file_core_calls=file_rest_calls(
+                        structured_content=pack.schema_version >= 2,
+                        scan_mode=spec.scan_mode,
                     ),
                 )
-            finally:
-                deps.client.close()
+                try:
+                    token_pool.preflight()
+                    payload = run_detection(
+                        token_pool.primary,
+                        run_id,
+                        spec,
+                        pack,
+                        config=DetectConfig(
+                            deadline_seconds=float(settings.request_deadline_seconds),
+                            concurrency=min(settings.detect_concurrency, token_pool.worker_limit),
+                            pool_stats_reporter=lambda stats: _persist_detection_pool_stats(
+                                engine, run_id, stats
+                            ),
+                        ),
+                        token_pool=token_pool,
+                    )
+                finally:
+                    token_pool.close()
+            else:  # pragma: no cover - persisted and environment values are constrained
+                raise ValueError(f"unknown API detection token mode {settings.detect_token_mode!r}")
         try:
             _annotate_payload_countries(engine, payload)
         except Exception as exc:  # country enrichment must never fail a detection
@@ -244,11 +400,60 @@ def _pack_versions(engine: Engine) -> list[str]:
         ]
 
 
-def _latest_pack(engine: Engine):
-    versions = _pack_versions(engine)
-    if not versions:
-        return None
-    return load_frozen(engine, versions[0])
+def _pack_summary(pack) -> dict[str, object]:
+    return {
+        "version": pack.version,
+        "schema_version": pack.schema_version,
+        "digest": pack_digest(pack),
+        "active_families": sum(family.category == "active" for family in pack.families),
+        "legacy_only_families": sum(family.category == "legacy-only" for family in pack.families),
+        "pseudo_families": sum(family.category == "pseudo" for family in pack.families),
+        "rules": (
+            len(pack.rules)
+            if pack.schema_version >= 2
+            else sum(
+                len(channel)
+                for channel in (
+                    pack.authors,
+                    pack.files,
+                    pack.branches,
+                    pack.labels,
+                    pack.bots,
+                )
+            )
+        ),
+        "rejections": len(pack.rejections),
+    }
+
+
+def _pack_summaries(engine: Engine) -> list[dict[str, object]]:
+    return [_pack_summary(load_frozen(engine, version)) for version in _pack_versions(engine)]
+
+
+def _pack_option(pack) -> dict[str, object]:
+    """What the options page may offer for one pack: its own roster and channels.
+
+    Nothing here is shared across packs, so switching packs can never carry an
+    agent or a channel from one pack into a run of another.
+    """
+    categories = pack.roster_categories()
+    return {
+        "agents": [{"name": name, "category": categories[name]} for name in pack.roster()],
+        "channels": list(pack.channels()),
+        "default_channels": list(pack.default_channels()),
+    }
+
+
+def _pack_ui(engine: Engine) -> tuple[list[dict[str, object]], dict[str, dict[str, object]]]:
+    """Summaries plus the per-pack roster/channel map for every frozen pack."""
+    packs = [load_frozen(engine, version) for version in _pack_versions(engine)]
+    summaries = []
+    for pack in packs:
+        summary = _pack_summary(pack)
+        summary["agent_count"] = len(pack.roster())
+        summary["channel_count"] = len(pack.channels())
+        summaries.append(summary)
+    return summaries, {pack.version: _pack_option(pack) for pack in packs}
 
 
 def _candidate_count(engine: Engine, run_id: int) -> int:
@@ -273,15 +478,42 @@ def latest_detect_for_run(engine: Engine, run_id: int):
         )
 
 
-def _options_context(engine: Engine, run_id: int, *, errors_: list[str], hints: list[str]) -> dict:
-    pack = _latest_pack(engine)
+def _options_context(
+    engine: Engine,
+    run_id: int,
+    *,
+    errors_: list[str],
+    hints: list[str],
+    pack_version: str | None = None,
+    selected_agents: list[str] | None = None,
+    selected_channels: list[str] | None = None,
+    scan_mode: str = "full",
+) -> dict:
+    summaries, pack_options = _pack_ui(engine)
+    versions = [str(summary["version"]) for summary in summaries]
+    selected = pack_version if pack_version in pack_options else (versions[0] if versions else "")
+    option = pack_options.get(selected, {"agents": [], "channels": [], "default_channels": []})
+    agents = list(option["agents"])
+    channels = list(option["channels"])
+    names = {str(agent["name"]) for agent in agents}
+    agents_checked = names if selected_agents is None else names & set(selected_agents)
+    channels_checked = (
+        set(option["default_channels"])
+        if selected_channels is None
+        else set(channels) & set(selected_channels)
+    )
     return {
         "source": {"id": run_id, "eligible": True, "status": "done"},
-        "packs": _pack_versions(engine),
-        "roster": pack.roster() if pack is not None else (),
-        "channels": CHANNELS,
+        "packs": summaries,
+        "pack_options": pack_options,
+        "selected_pack": selected,
+        "agents": agents,
+        "agents_checked": agents_checked,
+        "channels": channels,
+        "channels_checked": channels_checked,
         "channel_notes": CHANNEL_NOTES,
         "candidate_count": _candidate_count(engine, run_id),
+        "scan_mode": scan_mode,
         "errors": errors_,
         "hints": hints,
     }
@@ -291,6 +523,10 @@ CHANNEL_NOTES = {
     "file": "Tree + .gitignore + content probes · 2+ REST calls",
     "author": "Commit author/committer identities · shares the history call",
     "branch": "PR head branches · shares the PR call",
+    "hidden_ref": (
+        "Opt-in checkpoint/recovery namespaces · up to 6 bounded REST calls or "
+        "targeted git metadata"
+    ),
     "label": "PR labels · shares the PR call",
     "bot": "Generic CI bots, QA evidence only · shares the history call",
     "commit_trailer": "Co-author / generated-by trailers · shares the history call",
@@ -344,6 +580,8 @@ def _detection_filter_state(request: Request) -> dict:
         "signal": params.get("signal") in ("1", "true", "on"),
         "agent": (params.get("agent") or "").strip(),
         "channel": (params.get("channel") or "").strip(),
+        "state": (params.get("state") or "").strip(),
+        "semantics": (params.get("semantics") or "").strip(),
     }
 
 
@@ -355,6 +593,10 @@ def _detection_filter_href(page: int, filters: dict) -> str:
         query["agent"] = filters["agent"]
     if filters["channel"]:
         query["channel"] = filters["channel"]
+    if filters["state"]:
+        query["state"] = filters["state"]
+    if filters["semantics"]:
+        query["semantics"] = filters["semantics"]
     return "?" + urlencode(query)
 
 
@@ -365,7 +607,11 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     filters = _detection_filter_state(request)
     agent_filter = filters["agent"]
     channel_filter = filters["channel"]
-    filtering = bool(filters["signal"] or agent_filter or channel_filter)
+    state_filter = filters["state"]
+    semantics_filter = filters["semantics"]
+    filtering = bool(
+        filters["signal"] or agent_filter or channel_filter or state_filter or semantics_filter
+    )
 
     evidence_clauses: list[str] = []
     evidence_params: dict[str, object] = {"run": run_id}
@@ -375,21 +621,22 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     if channel_filter:
         evidence_clauses.append("channel = :channel")
         evidence_params["channel"] = channel_filter
-    facet_clauses: list[str] = []
-    facet_params: dict[str, object] = {"run": run_id}
-    if agent_filter:
-        facet_clauses.append("agent = :agent")
-        facet_params["agent"] = agent_filter
-    if channel_filter:
-        facet_clauses.append("channel = :channel")
-        facet_params["channel"] = channel_filter
+    if state_filter == "current":
+        evidence_clauses.append("is_current IS TRUE")
+    elif state_filter == "historical":
+        evidence_clauses.append("is_historical IS TRUE")
+    elif state_filter:
+        evidence_clauses.append("rule_lifecycle = :state")
+        evidence_params["state"] = state_filter
+    if semantics_filter:
+        evidence_clauses.append("evidence_semantics = :semantics")
+        evidence_params["semantics"] = semantics_filter
     if filters["signal"]:
-        facet_clauses.append(
-            "EXISTS (SELECT 1 FROM detection_repo_filters s"
-            " WHERE s.run_id = detection_repo_filters.run_id"
-            " AND s.repo_id = detection_repo_filters.repo_id AND s.channel <> 'bot')"
+        evidence_clauses.append("channel <> 'bot'")
+        evidence_clauses.append(
+            "COALESCE((metric_eligibility->>'repository_presence')::boolean, true)"
         )
-    facet_where = "".join(f" AND {clause}" for clause in facet_clauses)
+    evidence_filter_where = "".join(f" AND {clause}" for clause in evidence_clauses)
 
     unfiltered_total = _item_count(engine, run_id)
     if filtering:
@@ -398,11 +645,11 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 connection.execute(
                     text(
                         "SELECT count(*) FROM ("
-                        " SELECT DISTINCT repo_id FROM detection_repo_filters"
-                        f" WHERE run_id = :run{facet_where}"
+                        " SELECT DISTINCT repo_id FROM detection_evidence"
+                        f" WHERE run_id = :run{evidence_filter_where}"
                         ") m JOIN run_items i ON i.run_id = :run AND i.repo_id = m.repo_id"
                     ),
-                    facet_params,
+                    evidence_params,
                 ).scalar_one()
             )
     else:
@@ -417,14 +664,14 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                     text(
                         "SELECT i.repo_id, i.full_name, i.stargazers, i.detection"
                         " FROM ("
-                        " SELECT DISTINCT repo_id FROM detection_repo_filters"
-                        f" WHERE run_id = :run{facet_where}"
+                        " SELECT DISTINCT repo_id FROM detection_evidence"
+                        f" WHERE run_id = :run{evidence_filter_where}"
                         ") m JOIN run_items i ON i.run_id = :run AND i.repo_id = m.repo_id"
                         " ORDER BY i.stargazers DESC NULLS LAST, i.repo_id"
                         " OFFSET :offset LIMIT :limit"
                     ),
                     {
-                        **facet_params,
+                        **evidence_params,
                         "offset": (page_number - 1) * DETECTION_REPOS_PAGE_SIZE,
                         "limit": DETECTION_REPOS_PAGE_SIZE,
                     },
@@ -470,6 +717,28 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 {"run": run_id},
             )
         ]
+        filter_states = [
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT rule_lifecycle FROM detection_evidence"
+                    " WHERE run_id = :run AND rule_lifecycle IS NOT NULL"
+                    " ORDER BY rule_lifecycle"
+                ),
+                {"run": run_id},
+            )
+        ]
+        filter_semantics = [
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT evidence_semantics FROM detection_evidence"
+                    " WHERE run_id = :run AND evidence_semantics IS NOT NULL"
+                    " ORDER BY evidence_semantics"
+                ),
+                {"run": run_id},
+            )
+        ]
         repo_ids = [item["repo_id"] for item in item_rows if item["repo_id"] is not None]
         totals: dict[int, int] = {}
         evidence_rows: list = []
@@ -491,8 +760,12 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
             evidence_rows = list(
                 connection.execute(
                     text(
-                        "SELECT repo_id, agent, channel, evidence FROM ("
-                        " SELECT repo_id, agent, channel, evidence,"
+                        "SELECT repo_id, agent, channel, evidence, family_name, observed_as,"
+                        " rule_lifecycle, evidence_semantics, role, is_current, is_historical,"
+                        " explanatory_note FROM ("
+                        " SELECT repo_id, agent, channel, evidence, family_name, observed_as,"
+                        " rule_lifecycle, evidence_semantics, role, is_current, is_historical,"
+                        " explanatory_note,"
                         " row_number() OVER (PARTITION BY repo_id ORDER BY agent, channel, id)"
                         " AS rank FROM detection_evidence"
                         f" {evidence_where}"
@@ -511,7 +784,17 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
         shown = 0
         for evidence in by_repo.get(item["repo_id"], []):
             grouped.setdefault(evidence["channel"], []).append(
-                {"agent": evidence["agent"], "summary": _evidence_summary(evidence["evidence"])}
+                {
+                    "agent": evidence["family_name"] or evidence["agent"],
+                    "observed_as": evidence["observed_as"],
+                    "lifecycle": evidence["rule_lifecycle"],
+                    "semantics": evidence["evidence_semantics"],
+                    "role": evidence["role"],
+                    "is_current": evidence["is_current"],
+                    "is_historical": evidence["is_historical"],
+                    "note": evidence["explanatory_note"],
+                    "summary": _evidence_summary(evidence["evidence"]),
+                }
             )
             shown += 1
         total = int(totals.get(item["repo_id"], 0))
@@ -555,6 +838,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
                 "windows": windows,
                 "git_mode": git_mode,
+                "fast_mode": spec.get("scan_mode") == "fast",
                 "repos": repos,
                 "page": page_number,
                 "pages": pages,
@@ -562,6 +846,8 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "repos_label": repos_label,
                 "filter_agents": filter_agents,
                 "filter_channels": filter_channels,
+                "filter_states": filter_states,
+                "filter_semantics": filter_semantics,
                 "filters": {"active": filtering, **filters},
                 "prev_href": (
                     _detection_filter_href(page_number - 1, filters) if page_number > 1 else None
@@ -586,6 +872,96 @@ def register_detect(
     clone_disk_free: Callable[[str], float] | None = None,
     clone_root: str = "clones",
 ) -> None:
+    @application.get("/api/trace-packs", response_model=list[TracePackSummaryResponse])
+    def trace_pack_api():
+        return _pack_summaries(engine_factory())
+
+    @application.get("/api/trace-packs/{version}", response_model=TracePackResponse)
+    def trace_pack_detail_api(version: str):
+        try:
+            pack = load_frozen(engine_factory(), version)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="trace pack not found") from exc
+        return {**_pack_summary(pack), "document": pack_to_document(pack)}
+
+    @application.get(
+        "/api/detections/{run_id}/evidence",
+        response_model=DetectionEvidenceResponse,
+    )
+    def detection_evidence_api(
+        run_id: int,
+        limit: int = Query(100, ge=1, le=1_000),
+        offset: int = Query(0, ge=0),
+        family_id: str | None = None,
+        lifecycle: str | None = None,
+        semantics: str | None = None,
+        channel: str | None = None,
+        forge: str | None = None,
+        current: bool | None = None,
+        historical: bool | None = None,
+    ):
+        engine = engine_factory()
+        with engine.connect() as connection:
+            run = (
+                connection.execute(select(Runs.kind, Runs.filter_spec).where(Runs.id == run_id))
+                .mappings()
+                .one_or_none()
+            )
+            if run is None or run["kind"] != "detect":
+                raise HTTPException(status_code=404, detail="detection run not found")
+            clauses = ["e.run_id = :run"]
+            params: dict[str, object] = {"run": run_id, "limit": limit, "offset": offset}
+            for name, value, column in (
+                ("family_id", family_id, "e.family_id"),
+                ("lifecycle", lifecycle, "e.rule_lifecycle"),
+                ("semantics", semantics, "e.evidence_semantics"),
+                ("channel", channel, "e.channel"),
+                ("forge", forge, "e.forge"),
+            ):
+                if value:
+                    clauses.append(f"{column} = :{name}")
+                    params[name] = value
+            if current is not None:
+                clauses.append("e.is_current IS NOT DISTINCT FROM :current")
+                params["current"] = current
+            if historical is not None:
+                clauses.append("e.is_historical IS NOT DISTINCT FROM :historical")
+                params["historical"] = historical
+            where = " AND ".join(clauses)
+            total = int(
+                connection.scalar(
+                    text(f"SELECT count(*) FROM detection_evidence e WHERE {where}"), params
+                )
+                or 0
+            )
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT e.repo_id, i.full_name, e.agent, e.family_id, e.family_name,"
+                        " e.observed_as, e.variant, e.rule_id, e.rule_lifecycle,"
+                        " e.evidence_semantics, e.channel, e.forge, e.role, e.confidence,"
+                        " e.provenance_ref, e.is_current, e.is_historical, e.metric_eligibility,"
+                        " e.explanatory_note, e.evidence, e.detected_at"
+                        " FROM detection_evidence e LEFT JOIN run_items i"
+                        " ON i.run_id = e.run_id AND i.repo_id = e.repo_id"
+                        f" WHERE {where} ORDER BY e.repo_id, e.agent, e.channel, e.id"
+                        " OFFSET :offset LIMIT :limit"
+                    ),
+                    params,
+                )
+                .mappings()
+                .all()
+            )
+        spec = run["filter_spec"] if isinstance(run["filter_spec"], dict) else {}
+        return {
+            "run_id": run_id,
+            "pack_version": str(spec.get("pack_version") or ""),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": [dict(row) for row in rows],
+        }
+
     @application.get("/detections", response_class=HTMLResponse)
     def detections_page(request: Request):
         engine = engine_factory()
@@ -771,6 +1147,11 @@ def register_detect(
         if not await validate_csrf(request):
             return errors.csrf_error_page(request)
         form = await request.form()
+        submitted_pack = str(form.get("pack_version") or "").strip()
+        submitted_agents = [str(value) for value in form.getlist("agents") if str(value).strip()]
+        submitted_channels = [
+            str(value) for value in form.getlist("channels") if str(value).strip()
+        ]
         raw_limit = str(form.get("limit") or "").strip()
         limit: int | None = None
         if raw_limit:
@@ -778,6 +1159,7 @@ def register_detect(
                 limit = int(raw_limit)
             except ValueError:
                 limit = 0
+        submitted_scan_mode = "fast" if str(form.get("scan_mode") or "") == "fast" else "full"
         raw_depth = str(form.get("clone_depth") or "").strip()
         clone_depth: int | None = None
         if raw_depth:
@@ -789,10 +1171,9 @@ def register_detect(
             "version": 1,
             "kind": "detect",
             "source_run_id": run_id,
-            "pack_version": str(form.get("pack_version") or "").strip(),
-            "agents": [str(value) for value in form.getlist("agents") if str(value).strip()]
-            or None,
-            "channels": [str(value) for value in form.getlist("channels") if str(value).strip()],
+            "pack_version": submitted_pack,
+            "agents": submitted_agents or None,
+            "channels": submitted_channels,
             "limit": limit,
             "windows": {"commits": 100, "prs": 100, "issues": 100},
             "source": str(form.get("source") or "api").strip(),
@@ -800,20 +1181,48 @@ def register_detect(
                 "depth": clone_depth if clone_depth is not None else 100,
                 "keep": form.get("clone_keep") is not None,
             },
+            "scan_mode": submitted_scan_mode,
         }
         engine = engine_factory()
+
+        def form_context(errors_: list[str], hints: list[str]) -> dict:
+            return {
+                **_options_context(
+                    engine,
+                    run_id,
+                    errors_=errors_,
+                    hints=hints,
+                    pack_version=submitted_pack,
+                    selected_agents=submitted_agents,
+                    selected_channels=submitted_channels,
+                    scan_mode=submitted_scan_mode,
+                ),
+                "csrf_token": request.state.csrf_token,
+            }
+
         try:
             spec = parse_detect_spec(doc)
         except DetectSpecError as exc:
             return templates.TemplateResponse(
                 request,
                 "detect_options.html",
-                {
-                    **_options_context(
-                        engine, run_id, errors_=list(exc.errors), hints=list(exc.hints)
-                    ),
-                    "csrf_token": request.state.csrf_token,
-                },
+                form_context(errors_=list(exc.errors), hints=list(exc.hints)),
+                status_code=400,
+            )
+        settings = load_run_settings(engine)
+        configured_tokens = len(load_tokens())
+        configured_error = token_mode_error(settings.detect_token_mode, configured_tokens)
+        if spec.source == "api" and configured_error is not None:
+            return templates.TemplateResponse(
+                request,
+                "detect_options.html",
+                form_context(
+                    errors_=[configured_error],
+                    hints=[
+                        "Choose the matching API token mode under System → Limits, then "
+                        "configure the required environment credentials."
+                    ],
+                ),
                 status_code=400,
             )
         row = await run_in_threadpool(_run_row, engine, run_id)
@@ -834,18 +1243,13 @@ def register_detect(
             return templates.TemplateResponse(
                 request,
                 "detect_options.html",
-                {
-                    **_options_context(
-                        engine,
-                        run_id,
-                        errors_=["source run has no saved results to detect"],
-                        hints=[
-                            "Detection needs a finished search with saved results;"
-                            " run a search first or pick another."
-                        ],
-                    ),
-                    "csrf_token": request.state.csrf_token,
-                },
+                form_context(
+                    errors_=["source run has no saved results to detect"],
+                    hints=[
+                        "Detection needs a finished search with saved results;"
+                        " run a search first or pick another."
+                    ],
+                ),
                 status_code=400,
             )
         try:
@@ -854,15 +1258,7 @@ def register_detect(
             return templates.TemplateResponse(
                 request,
                 "detect_options.html",
-                {
-                    **_options_context(
-                        engine,
-                        run_id,
-                        errors_=[f"unknown pack version {spec.pack_version!r}"],
-                        hints=[],
-                    ),
-                    "csrf_token": request.state.csrf_token,
-                },
+                form_context(errors_=[f"unknown pack version {spec.pack_version!r}"], hints=[]),
                 status_code=400,
             )
         if spec.agents is not None:
@@ -871,23 +1267,35 @@ def register_detect(
                 return templates.TemplateResponse(
                     request,
                     "detect_options.html",
-                    {
-                        **_options_context(
-                            engine,
-                            run_id,
-                            errors_=[
-                                f"unknown agents for pack {spec.pack_version!r}:"
-                                f" {', '.join(unknown)}"
-                            ],
-                            hints=[
-                                "Pick agents from the selected pack's roster; the options"
-                                " list may belong to a different pack version."
-                            ],
-                        ),
-                        "csrf_token": request.state.csrf_token,
-                    },
+                    form_context(
+                        errors_=[
+                            f"unknown agents for pack {spec.pack_version!r}: {', '.join(unknown)}"
+                        ],
+                        hints=[
+                            "Pick agents from the selected pack's roster; the options"
+                            " list may belong to a different pack version."
+                        ],
+                    ),
                     status_code=400,
                 )
+            if spec.agents == frozenset(pack.roster()):
+                # The whole roster means "every agent this pack knows"; storing
+                # it as null keeps the run identical to an unfiltered scan.
+                spec = dataclasses.replace(spec, agents=None)
+        unsupported = sorted(set(spec.channels) - set(pack.channels()))
+        if unsupported:
+            return templates.TemplateResponse(
+                request,
+                "detect_options.html",
+                form_context(
+                    errors_=[
+                        f"channels not supported by pack {spec.pack_version!r}:"
+                        f" {', '.join(unsupported)}"
+                    ],
+                    hints=[f"Pack {spec.pack_version} supports: {', '.join(pack.channels())}."],
+                ),
+                status_code=400,
+            )
         new_id = await run_in_threadpool(
             create_run,
             engine,
@@ -918,13 +1326,26 @@ def register_detect(
         raw_channels = request.query_params.getlist("channels")
         if len(raw_channels) == 1 and "," in raw_channels[0]:
             raw_channels = raw_channels[0].split(",")
-        channels = [channel for channel in raw_channels if channel in CHANNELS] or list(CHANNELS)
+        # Price only what the chosen pack can run: a channel outside the pack
+        # is never executed, so it must not inflate the estimate either.
+        pack_version = (request.query_params.get("pack_version") or "").strip()
+        structured_content = False
+        try:
+            frozen_pack = load_frozen(engine, pack_version)
+            pack_channels = list(frozen_pack.channels())
+            structured_content = frozen_pack.schema_version >= 2
+        except KeyError:
+            pack_channels = list(CHANNELS)
+        scan_mode = "fast" if request.query_params.get("scan_mode") == "fast" else "full"
+        channels = [channel for channel in raw_channels if channel in pack_channels] or [
+            channel for channel in pack_channels if channel not in OPT_IN_CHANNELS
+        ]
         selected = (request.query_params.get("source") or "api").strip()
         if selected == "git":
             # The API-only channels are disabled in the form while git is
             # selected; the API estimate still prices a full API run.
             for channel in API_ONLY_CHANNELS:
-                if channel not in channels:
+                if channel in pack_channels and channel not in channels:
                     channels.append(channel)
         raw_limit = request.query_params.get("limit", "").strip()
         raw_depth = request.query_params.get("clone_depth", "").strip()
@@ -934,12 +1355,41 @@ def register_detect(
         limit_value = int(raw_limit) if raw_limit.isdigit() and int(raw_limit) > 0 else None
         repos = min(candidates, limit_value) if limit_value is not None else candidates
         settings = load_run_settings(engine)
+        configured_tokens = len(load_tokens())
+        pooled_mode = settings.detect_token_mode == TOKEN_MODE_POOL4
+        estimate_tokens = FIXED_API_TOKEN_COUNT if pooled_mode else 1
+        estimate_concurrency = (
+            min(
+                settings.detect_concurrency,
+                FIXED_API_TOKEN_COUNT * min(settings.limiter_max_concurrent, 3),
+            )
+            if pooled_mode
+            else min(settings.detect_concurrency, settings.limiter_max_concurrent)
+        )
         api_estimate = estimate(
             repos,
             channels,
-            tokens=max(1, len(load_tokens())),
-            concurrency=min(settings.detect_concurrency, settings.limiter_max_concurrent),
+            tokens=estimate_tokens,
+            concurrency=estimate_concurrency,
             deadline_seconds=float(settings.request_deadline_seconds),
+            structured_content=structured_content,
+            scan_mode=scan_mode,
+            seconds_per_repo=MEASURED_SECONDS_PER_REPO,
+        )
+        if structured_content and scan_mode == "full":
+            api_estimate["fast_mode"] = estimate(
+                repos,
+                channels,
+                tokens=estimate_tokens,
+                concurrency=estimate_concurrency,
+                structured_content=True,
+                scan_mode="fast",
+                seconds_per_repo=MEASURED_SECONDS_PER_REPO,
+            )
+        api_estimate["configured_tokens"] = configured_tokens
+        api_estimate["token_mode"] = settings.detect_token_mode
+        api_estimate["pool_ready"] = (
+            token_mode_error(settings.detect_token_mode, configured_tokens) is None
         )
         free_mb = (
             clone_disk_free("clones") if clone_disk_free is not None else free_disk_mb("clones")

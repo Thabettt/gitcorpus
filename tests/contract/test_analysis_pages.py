@@ -7,16 +7,19 @@ import json
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import insert, text
 
+from serve.adoption_metrics import commit_depth, creation_cohorts, language_adoption, star_tiers
 from serve.analysis import (
     ANALYSIS_METRICS,
+    analysis_context,
     backfill_countries,
     backfill_countries_exhaustive,
 )
 from serve.app import create_app
 from serve.countries import country_name
-from serve.executor import EVIDENCE_CSV_HEADER
+from serve.executor import EVIDENCE_CSV_HEADER, create_run
+from store.models import DetectionEvidence, RunItem
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -52,7 +55,7 @@ def make_client(engine):
         create_app(
             engine=engine,
             runner_factory=runner_factory,
-            detect_runner_factory=lambda _engine: (lambda run_id, spec: None),
+            detect_runner_factory=lambda _engine: lambda run_id, spec: None,
             runs_root="runs",
             clone_root="clones",
             redis_ping=lambda: True,
@@ -72,8 +75,10 @@ def seed_source_run(engine) -> int:
         ).scalar_one()
         connection.execute(
             text(
-                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers, country_iso,"
-                " geo_confidence) VALUES (:run, 1, 'octo/one', 10, 'DE', 'name')"
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers,"
+                " repo_created_at, commit_count, language, country_iso, geo_confidence)"
+                " VALUES (:run, 1, 'octo/one', 10, '2024-01-01T00:00:00Z', 42,"
+                " 'Rust', 'DE', 'name')"
             ),
             {"run": run_id},
         )
@@ -136,8 +141,10 @@ def seed_detect_run(engine, source_id: int) -> int:
         ).scalar_one()
         connection.execute(
             text(
-                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers, detection)"
-                " VALUES (:run, 1, 'octo/one', 10, CAST(:detection AS jsonb))"
+                "INSERT INTO run_items (run_id, repo_id, full_name, stargazers,"
+                " repo_created_at, commit_count, language, detection)"
+                " VALUES (:run, 1, 'octo/one', 10, '2024-01-01T00:00:00Z', 42,"
+                " 'Rust', CAST(:detection AS jsonb))"
             ),
             {"run": run_id, "detection": json.dumps(detection)},
         )
@@ -213,6 +220,7 @@ def test_country_backfill_syncs_saved_rows_even_with_no_pending_owners(clean_db)
     )
     source = seed_source_run(engine)
     detect_id = seed_detect_run(engine, source)
+    assert analysis_context(engine, detect_id, ("adoption",)) is not None
 
     result = backfill_countries(engine, detect_id, fetch=False)
 
@@ -227,7 +235,12 @@ def test_country_backfill_syncs_saved_rows_even_with_no_pending_owners(clean_db)
             ),
             {"run": detect_id},
         ).one()
+        snapshots = connection.execute(
+            text("SELECT count(*) FROM analysis_snapshots WHERE run_id = :run"),
+            {"run": detect_id},
+        ).scalar_one()
     assert tuple(row) == ("DE", "name")
+    assert snapshots == 0
 
 
 def test_country_backfill_resolves_stored_locations_into_saved_rows(clean_db):
@@ -435,6 +448,285 @@ def test_analysis_metric_selection_narrows_the_report(clean):
     assert 'id="analysis-agent-share"' not in response.text
 
 
+def test_dashboard_from_existing_data_renders_new_metrics(clean):
+    assert [metric.key for metric in ANALYSIS_METRICS] == [
+        "agent_share",
+        "generic_markers",
+        "agents_by_country",
+        "adoption",
+        "adoption_by_country",
+        "size_vs_adoption",
+        "agent_debut",
+        "fingerprint_debut",
+        "country_wealth",
+        "birth_cohort",
+        "star_tiers",
+        "commit_depth",
+        "language_adoption",
+    ]
+    source = seed_source_run(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+
+    response = client.get(
+        f"/analysis/{detect_id}",
+        params=[
+            ("metric", "birth_cohort"),
+            ("metric", "star_tiers"),
+            ("metric", "commit_depth"),
+            ("metric", "language_adoption"),
+            ("metrics_present", "1"),
+        ],
+    )
+
+    assert response.status_code == 200
+    for section in (
+        "analysis-birth-cohort",
+        "analysis-star-tiers",
+        "analysis-commit-depth",
+        "analysis-language-adoption",
+    ):
+        assert f'id="{section}"' in response.text
+    assert "10–99" in response.text
+    assert "Unknown" in response.text
+
+
+def test_visual_dashboard_renders_all_twelve_authoritative_metrics(clean):
+    source = seed_source_run(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+
+    response = client.get(f"/analysis/{detect_id}/dashboard")
+
+    assert response.status_code == 200
+    assert 'id="analysis-visual-dashboard"' in response.text
+    assert 'id="analysis-dashboard-data"' in response.text
+    assert 'src="/static/analysis-dashboard.js"' in response.text
+    for key in (
+        "agent-share",
+        "agents-country",
+        "adoption",
+        "country-adoption",
+        "size-adoption",
+        "agent-debuts",
+        "fingerprints",
+        "country-wealth",
+        "creation-cohorts",
+        "star-tiers",
+        "commit-depth",
+        "language-adoption",
+        "diagnostic-evidence-robustness",
+        "diagnostic-observation-coverage",
+        "diagnostic-owner-cluster",
+        "diagnostic-robust-debut",
+        "diagnostic-adoption-intensity",
+        "diagnostic-multi-agent-co-use",
+    ):
+        assert f'data-chart-key="{key}"' in response.text
+        assert f'data-open="viz-info-{key}"' in response.text
+        assert f'id="viz-info-{key}"' in response.text
+
+    assert "How to read" in response.text
+    assert "What you are looking at" in response.text
+    assert "Key terms in this figure" in response.text
+    assert "For example." in response.text
+    assert "Keep in mind." in response.text
+
+
+def test_analysis_report_exposes_all_six_authoritative_diagnostics(clean):
+    source = seed_source_run(clean)
+    detect_id = seed_detect_run(clean, source)
+    client = make_client(clean)
+
+    response = client.get(f"/analysis/{detect_id}")
+
+    assert response.status_code == 200
+    for section in (
+        "analysis-diagnostic-evidence",
+        "analysis-diagnostic-coverage",
+        "analysis-diagnostic-owner",
+        "analysis-diagnostic-debut",
+        "analysis-diagnostic-intensity",
+        "analysis-diagnostic-co-use",
+    ):
+        assert f'id="{section}"' in response.text
+    assert "Broad–strict gap" in response.text
+    assert "Users and Organizations are separate" in response.text
+
+
+def test_stratified_metrics_use_explicit_eligible_denominators(clean_db):
+    engine = clean_db(
+        owners=[{"id": 1, "login": "octo", "type": "User"}],
+        repos=[
+            {
+                "id": repo_id,
+                "node_id": f"n{repo_id}",
+                "full_name": f"octo/r{repo_id}",
+                "owner_id": 1,
+                "name": f"r{repo_id}",
+                "visibility": "public",
+            }
+            for repo_id in range(1, 8)
+        ],
+    )
+    source = create_run(engine, {"q": "test"}, api_version="2022-11-28")
+    detect = create_run(
+        engine,
+        {"kind": "detect", "source_run_id": source},
+        api_version="2022-11-28",
+        kind="detect",
+        source_run_id=source,
+    )
+    source_rows = [
+        (1, 0, "2024-01-01T00:00:00Z", 10, "Python"),
+        (2, 5, "2025-02-01T00:00:00Z", 50, "Python"),
+        (3, 20, "2025-05-01T00:00:00Z", 200, "Rust"),
+        (4, 20, "2025-05-01T00:00:00Z", 200, "Rust"),
+        (5, None, None, None, None),
+        (6, 20, "2025-05-01T00:00:00Z", 200, "Rust"),
+        (7, 20, "2025-05-01T00:00:00Z", 200, "Rust"),
+    ]
+    documents = {
+        1: {
+            "agents": ["Claude Code"],
+            "channels": {"file": "ok", "commit_trailer": "ok"},
+            "unavailable": False,
+            "commit_ratio": 0.2,
+            "history_coverage": 1.0,
+            "history_complete": True,
+        },
+        2: {
+            "agents": [],
+            "channels": {"file": "ok", "commit_trailer": "ok"},
+            "unavailable": False,
+            "commit_ratio": 0.0,
+            "history_coverage": 1.0,
+            "history_complete": True,
+        },
+        3: {
+            "agents": ["Codex"],
+            "channels": {"commit_trailer": "ok"},
+            "unavailable": False,
+            "commit_ratio": 0.05,
+            "history_coverage": 0.5,
+            "history_complete": False,
+        },
+        4: {
+            "agents": ["Claude Code"],
+            "channels": {"file": "ok", "commit_trailer": "ok"},
+            "unavailable": True,
+            "commit_ratio": 0.5,
+            "history_coverage": 0.5,
+            "history_complete": False,
+        },
+        5: {
+            "agents": ["Aider"],
+            "channels": {"file": "ok"},
+            "unavailable": False,
+            "commit_ratio": None,
+            "history_coverage": None,
+            "history_complete": None,
+        },
+        6: {
+            "agents": [],
+            "channels": {"file": "ok", "commit_trailer": "ok"},
+            "unavailable": False,
+            "commit_ratio": 0.0,
+            "history_coverage": 1.0,
+            "history_complete": True,
+        },
+        7: {
+            "agents": [],
+            "channels": {"file": "partial", "commit_trailer": "ok"},
+            "unavailable": False,
+            "commit_ratio": 0.0,
+            "history_coverage": 1.0,
+            "history_complete": True,
+        },
+    }
+    with engine.begin() as connection:
+        connection.execute(
+            insert(RunItem),
+            [
+                {
+                    "run_id": source,
+                    "repo_id": repo_id,
+                    "full_name": f"octo/r{repo_id}",
+                    "stargazers": stars,
+                    "repo_created_at": created,
+                    "commit_count": commits,
+                    "language": language,
+                }
+                for repo_id, stars, created, commits, language in source_rows
+            ],
+        )
+        connection.execute(
+            insert(RunItem),
+            [
+                {
+                    "run_id": detect,
+                    "repo_id": repo_id,
+                    "full_name": f"octo/r{repo_id}",
+                    # Leave metadata empty to verify frozen source fallback.
+                    "detection": documents[repo_id],
+                }
+                for repo_id, *_rest in source_rows
+            ],
+        )
+        connection.execute(
+            text(
+                "INSERT INTO trace_packs (version, authors, files, branches, labels)"
+                " VALUES ('metrics-pack', '[]', '[]', '[]', '[]')"
+            )
+        )
+        connection.execute(
+            insert(DetectionEvidence),
+            [
+                {
+                    "run_id": detect,
+                    "repo_id": repo_id,
+                    "agent": agent,
+                    "channel": "file",
+                    "evidence": {"path": path, "source": "tree"},
+                    "pack_version": "metrics-pack",
+                }
+                for repo_id, agent, path in (
+                    (1, "Claude Code", "CLAUDE.md"),
+                    (5, "Aider", ".aider.conf.yml"),
+                )
+            ],
+        )
+
+    stars = {row["bucket"]: row for row in star_tiers(engine, detect)}
+    assert stars["10–99"]["repos"] == 4
+    assert stars["10–99"]["readable"] == 2
+    assert stars["10–99"]["adoption"] == {
+        "count": 1,
+        "eligible": 2,
+        "percent": 50.0,
+        "ci_low": 9.5,
+        "ci_high": 90.5,
+    }
+    assert stars["Unknown"]["adoption"]["count"] == 1
+
+    commits = {row["bucket"]: row for row in commit_depth(engine, detect)}
+    assert commits["100–499"]["recent_adoption"]["count"] == 1
+    assert commits["100–499"]["recent_adoption"]["eligible"] == 2
+    assert commits["100–499"]["median_coverage"] == 75.0
+    assert commits["100–499"]["full_history"] == 1
+    assert commits["Unknown"]["repos"] == 1
+
+    cohorts = {row["cohort"]: row for row in creation_cohorts(engine, detect)["rows"]}
+    assert cohorts["Existing before cutoff"]["adoption"]["percent"] == 100.0
+    assert cohorts["2025-Q2"]["adoption"]["percent"] == 50.0
+
+    languages = {row["language"]: row for row in language_adoption(engine, detect)}
+    assert languages["Rust"]["adoption"]["eligible"] == 2
+    assert languages["Rust"]["adoption"]["percent"] == 50.0
+    assert languages["Python"]["top_agent"] == "Claude Code"
+    assert languages["Unknown"]["file_adoption"]["percent"] == 100.0
+
+
 def test_analysis_rejects_a_find_run(clean):
     source = seed_source_run(clean)
     client = make_client(clean)
@@ -447,6 +739,7 @@ def test_analysis_rejects_a_find_run(clean):
 def test_exports_include_country_names(clean):
     source = seed_source_run(clean)
     detect_id = seed_detect_run(clean, source)
+    backfill_countries(clean, detect_id, fetch=False)
     client = make_client(clean)
 
     search_csv = client.get(f"/runs/{source}/export?format=csv").content.decode("utf-8-sig")

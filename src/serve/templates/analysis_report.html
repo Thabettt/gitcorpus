@@ -1,4 +1,18 @@
 {% extends "base.html" %}
+{% macro analysis_rate(rate) -%}
+  {% if rate.percent is not none %}
+    {{ rate.percent }}%
+    <span class="muted">{{ rate.count }}/{{ rate.eligible }} · 95% CI {{ rate.ci_low }}–{{ rate.ci_high }}</span>
+  {% else %}—{% endif %}
+{%- endmacro %}
+{% macro coverage_rate(rate) -%}
+  {% if rate.applicable is defined and not rate.applicable %}
+    <span class="muted">n/a</span>
+  {% elif rate.percent is not none %}
+    {{ rate.percent }}%
+    <span class="muted">{{ rate.count }}/{{ rate.eligible }}</span>
+  {% else %}—{% endif %}
+{%- endmacro %}
 {% block title %}Analysis · {% if run %}detection #{{ run.number }}{% else %}not found{% endif %} · gitcorpus{% endblock %}
 {% block body %}
 {% if not run %}
@@ -26,6 +40,10 @@
     <span>started {{ run.created_at }}</span>
     <span>finished {{ run.finished_at }}</span>
     <span class="mono">{{ run.hash_short }}</span>
+  </div>
+  <div class="analysis-view-switch" aria-label="Analysis view">
+    <a href="/analysis/{{ run.id }}/dashboard">Dashboard</a>
+    <a href="/analysis/{{ run.id }}" aria-current="page">Data tables</a>
   </div>
 
   {% if backfill %}
@@ -87,16 +105,21 @@
   </div>
 </section>
 
-{% if selected %}
+{% if selected or diagnostics %}
 {% set counts = {
   'agent_share': results.agent_share|length if 'agent_share' in results else none,
+  'generic_markers': results.generic_markers.markers|length if 'generic_markers' in results else none,
   'agents_by_country': results.agents_by_country|length if 'agents_by_country' in results else none,
   'adoption': results.adoption.levels|length if 'adoption' in results else none,
   'adoption_by_country': results.adoption_by_country|length if 'adoption_by_country' in results else none,
   'size_vs_adoption': results.size_vs_adoption.buckets|length if 'size_vs_adoption' in results else none,
   'agent_debut': results.agent_debut|length if 'agent_debut' in results else none,
   'fingerprint_debut': results.fingerprint_debut|length if 'fingerprint_debut' in results else none,
-  'country_wealth': results.country_wealth.rows|length if 'country_wealth' in results else none
+  'country_wealth': results.country_wealth.rows|length if 'country_wealth' in results else none,
+  'birth_cohort': results.birth_cohort.rows|length if 'birth_cohort' in results else none,
+  'star_tiers': results.star_tiers|length if 'star_tiers' in results else none,
+  'commit_depth': results.commit_depth|length if 'commit_depth' in results else none,
+  'language_adoption': results.language_adoption|length if 'language_adoption' in results else none
 } %}
 <nav class="report-tabs" id="analysis-tabs" role="tablist" aria-label="Analysis sections">
   {% for metric in metrics %}
@@ -106,6 +129,14 @@
     {% if count is not none %}<span class="report-tab-count">{{ count }}</span>{% endif %}
   </button>
   {% endfor %}
+  {% if diagnostics %}
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-evidence" data-target="analysis-diagnostic-evidence" aria-controls="analysis-diagnostic-evidence" aria-selected="false" tabindex="-1">Evidence robustness</button>
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-coverage" data-target="analysis-diagnostic-coverage" aria-controls="analysis-diagnostic-coverage" aria-selected="false" tabindex="-1">Observation coverage</button>
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-owner" data-target="analysis-diagnostic-owner" aria-controls="analysis-diagnostic-owner" aria-selected="false" tabindex="-1">Owner robustness</button>
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-debut" data-target="analysis-diagnostic-debut" aria-controls="analysis-diagnostic-debut" aria-selected="false" tabindex="-1">Robust debuts</button>
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-intensity" data-target="analysis-diagnostic-intensity" aria-controls="analysis-diagnostic-intensity" aria-selected="false" tabindex="-1">Intensity distribution</button>
+  <button class="report-tab" type="button" role="tab" id="tab-diagnostic-co-use" data-target="analysis-diagnostic-co-use" aria-controls="analysis-diagnostic-co-use" aria-selected="false" tabindex="-1">Multi-agent co-use</button>
+  {% endif %}
 </nav>
 
 <div class="report-sections" id="analysis-sections">
@@ -131,6 +162,38 @@
       </tbody>
     </table>
   </div>
+</section>
+{% endif %}
+
+{% if 'generic_markers' in results %}
+<section class="panel analysis-section" id="analysis-generic-markers" role="tabpanel" aria-labelledby="tab-generic_markers" tabindex="0">
+  <div class="panel-head"><div><h2>Shared markers and content fallbacks</h2><p class="muted">Shared evidence such as AGENTS.md, “AI Assistant” author identities, and “ai-generated” labels is recorded here and never counted as an agent. The second table lists agents inferred from a shared file when, and only when, the file addresses exactly one named agent.</p></div></div>
+  <div class="cards">
+    <article class="card"><h3>Repositories with shared markers</h3><p>{{ results.generic_markers.repos_with_markers }}</p></article>
+    <article class="card"><h3>Content-only attributions</h3><p>{{ results.generic_markers.content_attribution|sum(attribute='repos') }}</p></article>
+  </div>
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Shared marker</th><th scope="col">Source</th><th scope="col" class="num">Repos</th></tr></thead>
+      <tbody>
+      {% for row in results.generic_markers.markers %}
+        <tr><td class="mono">{{ row.marker }}</td><td>{{ row.kind }}</td><td class="num">{{ row.repos }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if results.generic_markers.content_attribution %}
+  <div class="table-scroll sticky-head">
+    <table class="data-table">
+      <thead><tr><th scope="col">Agent</th><th scope="col" class="num">Repos attributed from content</th></tr></thead>
+      <tbody>
+      {% for row in results.generic_markers.content_attribution %}
+        <tr><td>{{ row.agent }}</td><td class="num">{{ row.repos }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 </section>
 {% endif %}
 
@@ -238,10 +301,10 @@
   <div class="panel-head"><div><h2>Agent debuts</h2><p class="muted">Earliest observed date in the run’s detection window for each agent, and the earliest repository creation date among repos that carry it. The observed signal can only be later than the true first use because detection is windowed.</p></div></div>
   <div class="table-scroll sticky-head">
     <table class="data-table">
-      <thead><tr><th scope="col">Agent</th><th scope="col">Earliest observed signal</th><th scope="col">Earliest repo created</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Dated repos</th></tr></thead>
+      <thead><tr><th scope="col">Agent</th><th scope="col">P0 observed</th><th scope="col">P10 observed</th><th scope="col">Median observed</th><th scope="col">Earliest repo created</th><th scope="col" class="num">Dated coverage</th></tr></thead>
       <tbody>
       {% for row in results.agent_debut %}
-        <tr><td>{{ row.agent }}</td><td>{{ row.earliest_signal or "—" }}</td><td>{{ row.earliest_repo_created or "—" }}</td><td class="num">{{ row.repos }}</td><td class="num">{{ row.dated_repos }}</td></tr>
+        <tr><td>{{ row.agent }}</td><td>{{ row.signal_p0 or row.earliest_signal or "—" }}</td><td>{{ row.signal_p10 or "—" }}</td><td>{{ row.signal_p50 or "—" }}</td><td>{{ row.earliest_repo_created or "—" }}</td><td class="num">{{ coverage_rate(row.dated_coverage) }}</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -274,15 +337,117 @@
 </section>
 {% endif %}
 
+{% if 'birth_cohort' in results %}
+<section class="panel analysis-section" id="analysis-birth-cohort" role="tabpanel" aria-labelledby="tab-birth_cohort" tabindex="0">
+  <div class="panel-head"><div><h2>Creation cohorts</h2><p class="muted">Cross-sectional observed use in repositories created before {{ results.birth_cohort.cutoff }} and in later creation quarters. This is not a time-to-adoption or causal trend. Eligible repos completed every selected detection channel successfully.</p></div></div>
+  <div class="table-scroll sticky-head"><table class="data-table">
+    <thead><tr><th scope="col">Created</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Eligible</th><th scope="col" class="num">Any signal</th><th scope="col" class="num">Committed config</th><th scope="col" class="num">Recent commit use</th><th scope="col" class="num">Median intensity</th></tr></thead>
+    <tbody>{% for row in results.birth_cohort.rows %}
+      <tr>
+        <td>{{ row.cohort }}{% if row.small_sample %} <span class="pill warn">small n</span>{% endif %}</td>
+        <td class="num">{{ row.repos }}</td><td class="num">{{ row.readable }}</td>
+        <td class="num">{{ analysis_rate(row.adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.file_adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.recent_adoption) }}</td>
+        <td class="num">{{ row.median_ratio if row.median_ratio is not none else "—" }}%</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted">Committed config uses only successful file scans and excludes paths seen only in <span class="mono">.gitignore</span>. Recent commit use uses only repos with an eligible inspected commit denominator. Median intensity is conditional on recent commit adopters.</p>
+</section>
+{% endif %}
+
+{% if 'star_tiers' in results %}
+<section class="panel analysis-section" id="analysis-star-tiers" role="tabpanel" aria-labelledby="tab-star_tiers" tabindex="0">
+  <div class="panel-head"><div><h2>Stars vs agent use</h2><p class="muted">Observed adoption across frozen logarithmic star tiers. Stars are a popularity stratum, not an exposure denominator; these associations are descriptive and unadjusted. Eligible repos completed every selected channel successfully.</p></div></div>
+  <div class="table-scroll sticky-head"><table class="data-table">
+    <thead><tr><th scope="col">Stars</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Eligible</th><th scope="col" class="num">Any signal</th><th scope="col" class="num">Committed config</th><th scope="col" class="num">Recent commit use</th><th scope="col" class="num">Median intensity</th></tr></thead>
+    <tbody>{% for row in results.star_tiers %}
+      <tr>
+        <td>{{ row.bucket }}{% if row.small_sample %} <span class="pill warn">small n</span>{% endif %}</td>
+        <td class="num">{{ row.repos }}</td><td class="num">{{ row.readable }}</td>
+        <td class="num">{{ analysis_rate(row.adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.file_adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.recent_adoption) }}</td>
+        <td class="num">{{ row.median_ratio if row.median_ratio is not none else "—" }}%</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted">Every percentage shows numerator/eligible denominator and a 95% Wilson interval. Unknown stars remain visible rather than being dropped.</p>
+</section>
+{% endif %}
+
+{% if 'commit_depth' in results %}
+<section class="panel analysis-section" id="analysis-commit-depth" role="tabpanel" aria-labelledby="tab-commit_depth" tabindex="0">
+  <div class="panel-head"><div><h2>Commits vs agent use</h2><p class="muted">Observed adoption by frozen default-branch lifetime commit count. Lifetime commits define the stratum; recent intensity uses only inspected eligible commits, never lifetime commits as a false denominator. Eligible repos completed every selected channel successfully.</p></div></div>
+  <div class="table-scroll sticky-head"><table class="data-table">
+    <thead><tr><th scope="col">Lifetime commits</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Eligible</th><th scope="col" class="num">Any signal</th><th scope="col" class="num">Committed config</th><th scope="col" class="num">Recent commit use</th><th scope="col" class="num">Median intensity</th><th scope="col" class="num">History coverage</th></tr></thead>
+    <tbody>{% for row in results.commit_depth %}
+      <tr>
+        <td>{{ row.bucket }}{% if row.small_sample %} <span class="pill warn">small n</span>{% endif %}</td>
+        <td class="num">{{ row.repos }}</td><td class="num">{{ row.readable }}</td>
+        <td class="num">{{ analysis_rate(row.adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.file_adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.recent_adoption) }}</td>
+        <td class="num">{{ row.median_ratio if row.median_ratio is not none else "—" }}%</td>
+        <td class="num">
+          {% if row.median_coverage is not none %}median {{ row.median_coverage }}%<br><span class="muted">full {{ row.full_history }}/{{ row.coverage_observed }}</span>{% else %}—{% endif %}
+        </td>
+      </tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted">Unknown commit counts and missing history coverage remain explicit. “Full” means the inspected history window reached the frozen total commit count; it does not mean every non-default branch was scanned.</p>
+</section>
+{% endif %}
+
+{% if 'language_adoption' in results %}
+<section class="panel analysis-section" id="analysis-language-adoption" role="tabpanel" aria-labelledby="tab-language_adoption" tabindex="0">
+  <div class="panel-head"><div><h2>Language vs agent use</h2><p class="muted">Observed adoption by the primary language frozen in the source search. Language is a stratum, not a causal explanation; Unknown and small cells remain visible. Eligible repos completed every selected channel successfully.</p></div></div>
+  <div class="table-scroll sticky-head"><table class="data-table">
+    <thead><tr><th scope="col">Language</th><th scope="col" class="num">Repos</th><th scope="col" class="num">Eligible</th><th scope="col" class="num">Any signal</th><th scope="col" class="num">Committed config</th><th scope="col" class="num">Recent commit use</th><th scope="col" class="num">Median intensity</th><th scope="col">Top agent</th></tr></thead>
+    <tbody>{% for row in results.language_adoption %}
+      <tr>
+        <td>{{ row.language }}{% if row.small_sample %} <span class="pill warn">small n</span>{% endif %}</td>
+        <td class="num">{{ row.repos }}</td><td class="num">{{ row.readable }}</td>
+        <td class="num">{{ analysis_rate(row.adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.file_adoption) }}</td>
+        <td class="num">{{ analysis_rate(row.recent_adoption) }}</td>
+        <td class="num">{{ row.median_ratio if row.median_ratio is not none else "—" }}%</td>
+        <td>{% if row.top_agent %}{{ row.top_agent }} <span class="muted">{{ row.top_agent_share.count }}/{{ row.top_agent_share.eligible }}</span>{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
 {% if 'country_wealth' in results %}
 <section class="panel analysis-section" id="analysis-country-wealth" role="tabpanel" aria-labelledby="tab-country_wealth" tabindex="0">
   <div class="panel-head"><div><h2>Country wealth vs agent use</h2><p class="muted">GDP per capita and income group against repo-weighted adoption. This compares country aggregates, not individual developers or repositories, so it cannot support claims about any one person.</p></div></div>
   <div class="cards">
     <article class="card"><h3>Pearson r</h3><p>{{ results.country_wealth.correlation if results.country_wealth.correlation is not none else "—" }}</p></article>
+    <article class="card"><h3>Spearman ρ</h3><p>{{ results.country_wealth.spearman if results.country_wealth.spearman is not none else "—" }}</p></article>
+    <article class="card"><h3>Adoption pp per GDP doubling</h3><p>{{ results.country_wealth.slope_pp_per_doubling if results.country_wealth.slope_pp_per_doubling is not none else "—" }}</p></article>
     <article class="card"><h3>Countries in fit</h3><p>{{ results.country_wealth.points }}</p></article>
     <article class="card"><h3>Minimum readable repos</h3><p>{{ results.country_wealth.min_repos }}</p></article>
   </div>
-  <p class="muted">{{ results.country_wealth.source }} Correlation uses log10 GDP per capita and adoption fraction for countries with at least {{ results.country_wealth.min_repos }} readable repos; it is descriptive, not causal.</p>
+  <p class="muted">{{ results.country_wealth.source }} Coefficients use log2 GDP per capita and repo-weighted adoption for countries with at least {{ results.country_wealth.min_repos }} readable repos. Countries receive equal weight. Bootstrap and leave-one-country-out results are descriptive, not causal.</p>
+  {% set wealth_stats = results.country_wealth.statistics %}
+  {% if wealth_stats.bootstrap %}
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Robustness statistic</th><th scope="col" class="num">Estimate</th><th scope="col" class="num">Bootstrap 95% interval</th><th scope="col" class="num">Leave-one-country-out range</th></tr></thead>
+    <tbody>
+      <tr><td>Pearson r</td><td class="num">{{ wealth_stats.pearson }}</td><td class="num">{{ wealth_stats.bootstrap.statistics.pearson.low }}–{{ wealth_stats.bootstrap.statistics.pearson.high }}</td><td class="num">{{ wealth_stats.leave_one_out.pearson.low }}–{{ wealth_stats.leave_one_out.pearson.high }}</td></tr>
+      <tr><td>Spearman ρ</td><td class="num">{{ wealth_stats.spearman }}</td><td class="num">{{ wealth_stats.bootstrap.statistics.spearman.low }}–{{ wealth_stats.bootstrap.statistics.spearman.high }}</td><td class="num">{{ wealth_stats.leave_one_out.spearman.low }}–{{ wealth_stats.leave_one_out.spearman.high }}</td></tr>
+      <tr><td>Percentage points per doubling</td><td class="num">{{ wealth_stats.slope_pp_per_doubling }}</td><td class="num">{{ wealth_stats.bootstrap.statistics.slope.low }}–{{ wealth_stats.bootstrap.statistics.slope.high }}</td><td class="num">{{ wealth_stats.leave_one_out.slope_pp_per_doubling.low }}–{{ wealth_stats.leave_one_out.slope_pp_per_doubling.high }}</td></tr>
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% if wealth_stats.influential_countries %}
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Most influential country</th><th scope="col" class="num">Cook’s distance</th><th scope="col" class="num">Threshold</th><th scope="col" class="num">Δ Pearson if omitted</th><th scope="col" class="num">Δ slope if omitted</th></tr></thead>
+    <tbody>{% for row in wealth_stats.influential_countries %}<tr><td>{{ row.country }} <span class="muted mono">{{ row.country_iso }}</span>{% if row.influential %} <span class="pill warn">influential</span>{% endif %}</td><td class="num">{{ row.cooks_distance }}</td><td class="num">{{ row.threshold }}</td><td class="num">{{ row.delta_pearson }}</td><td class="num">{{ row.delta_slope }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
   <div class="table-scroll sticky-head">
     <table class="data-table">
       <thead><tr><th scope="col">Income group</th><th scope="col" class="num">Countries</th><th scope="col" class="num">Readable repos</th><th scope="col" class="num">With agent</th><th scope="col" class="num">Adoption</th></tr></thead>
@@ -310,6 +475,99 @@
       </tbody>
     </table>
   </div>
+</section>
+{% endif %}
+
+{% if diagnostics %}
+{% set evidence = diagnostics.evidence_robustness %}
+<section class="panel analysis-section" id="analysis-diagnostic-evidence" role="tabpanel" aria-labelledby="tab-diagnostic-evidence" tabindex="0">
+  <div class="panel-head"><div><h2>Evidence robustness</h2><p class="muted">Broad and strict estimates use the same complete-channel-eligible repositories. The difference is a definition-sensitivity gap, not a confidence interval.</p></div></div>
+  <div class="cards">
+    <article class="card"><h3>Complete eligible repositories</h3><p>{{ evidence.eligible }}</p></article>
+    <article class="card"><h3>Broad–strict gap</h3><p>{{ evidence.sensitivity_gap_pp if evidence.sensitivity_gap_pp is not none else "—" }} <span class="muted">percentage points</span></p></article>
+    <article class="card"><h3>Corroborated among broad</h3><p>{{ analysis_rate(evidence.corroboration_among_broad) }}</p></article>
+  </div>
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Evidence definition</th><th scope="col">Operational rule</th><th scope="col" class="num">Estimate</th></tr></thead>
+    <tbody>
+      <tr><td>Broad</td><td>At least one non-bot evidence facet</td><td class="num">{{ analysis_rate(evidence.definitions.broad) }}</td></tr>
+      <tr><td>Behavioral</td><td>Author, commit-trailer, or pull-request metadata evidence</td><td class="num">{{ coverage_rate(evidence.definitions.behavioral) }}</td></tr>
+      <tr><td>Corroborated</td><td>Evidence in at least two channel families</td><td class="num">{{ coverage_rate(evidence.definitions.corroborated) }}</td></tr>
+      <tr><td>Strict</td><td>Behavioral or corroborated evidence</td><td class="num">{{ coverage_rate(evidence.definitions.strict) }}</td></tr>
+      <tr><td>Structural only</td><td>Committed file/config evidence without behavioral evidence</td><td class="num">{{ coverage_rate(evidence.definitions.structural_only) }}</td></tr>
+    </tbody>
+  </table></div>
+  {% if evidence.broad_without_document or evidence.document_without_broad %}<p class="flag warn">Evidence/document reconciliation: {{ evidence.broad_without_document }} broad-evidence repos lack a document agent set; {{ evidence.document_without_broad }} document-detected repos lack a compact non-bot evidence facet.</p>{% endif %}
+</section>
+
+{% set coverage = diagnostics.observation_coverage %}
+<section class="panel analysis-section" id="analysis-diagnostic-coverage" role="tabpanel" aria-labelledby="tab-diagnostic-coverage" tabindex="0">
+  <div class="panel-head"><div><h2>Observation and eligibility coverage</h2><p class="muted">Every cell is eligible repositories divided by all repositories in that stratum. “n/a” means the required channel was not selected or the detection run did not record that measure — never zero coverage.</p></div></div>
+  <div class="analysis-scroll">
+  {% for dimension in coverage.dimensions %}
+    <details class="evidence-repo"{% if loop.first %} open{% endif %}>
+      <summary>{{ dimension.label }} · {{ dimension.rows|length }} strata</summary>
+      <div class="evidence-body"><div class="table-scroll"><table class="data-table">
+        <thead><tr><th scope="col">{{ dimension.label }}</th><th scope="col" class="num">Repos</th>{% for measure in coverage.measures %}<th scope="col" class="num">{{ measure.label }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in dimension.rows %}<tr><td>{{ row.label }}</td><td class="num">{{ row.repos }}</td>{% for measure in coverage.measures %}<td class="num">{{ coverage_rate(row.coverage[measure.key]) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table></div></div>
+    </details>
+  {% endfor %}
+  </div>
+</section>
+
+{% set owner_cluster = diagnostics.owner_cluster %}
+<section class="panel analysis-section" id="analysis-diagnostic-owner" role="tabpanel" aria-labelledby="tab-diagnostic-owner" tabindex="0">
+  <div class="panel-head"><div><h2>Owner-cluster robustness</h2><p class="muted">Owner adoption and repository adoption use the same complete eligible owner clusters. GitHub Users and Organizations are never pooled.</p></div></div>
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Account type</th><th scope="col" class="num">Eligible owners</th><th scope="col" class="num">Eligible repos</th><th scope="col" class="num">Repo-weighted adoption</th><th scope="col" class="num">Owner-weighted adoption</th><th scope="col" class="num">Repos / owner</th><th scope="col" class="num">Top 1 / top 5 concentration</th></tr></thead>
+    <tbody>{% for row in owner_cluster.account_types %}<tr>
+      <td>{{ row.account_type }}</td><td class="num">{{ row.eligible_owners }}</td><td class="num">{{ row.eligible_repos }}</td>
+      <td class="num">{{ analysis_rate(row.repo_weighted_adoption) }}{% if row.cluster_bootstrap %}<br><span class="muted">cluster CI {{ row.cluster_bootstrap.repo_weighted.low }}–{{ row.cluster_bootstrap.repo_weighted.high }}</span>{% endif %}</td>
+      <td class="num">{{ analysis_rate(row.owner_weighted_adoption) }}{% if row.cluster_bootstrap %}<br><span class="muted">cluster CI {{ row.cluster_bootstrap.owner_weighted.low }}–{{ row.cluster_bootstrap.owner_weighted.high }}</span>{% endif %}</td>
+      <td class="num">mean {{ row.repos_per_owner.mean or "—" }}<br><span class="muted">median {{ row.repos_per_owner.median or "—" }} · max {{ row.repos_per_owner.maximum or "—" }}</span></td>
+      <td class="num">{{ row.eligible_repo_concentration.top_1_percent or "—" }}% / {{ row.eligible_repo_concentration.top_5_percent or "—" }}%</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% set debut = diagnostics.robust_debut %}
+<section class="panel analysis-section" id="analysis-diagnostic-debut" role="tabpanel" aria-labelledby="tab-diagnostic-debut" tabindex="0">
+  <div class="panel-head"><div><h2>Robust observed debuts</h2><p class="muted">P0, P10, and P50 use {{ debut.quantile_method }} over one bounded observed signal date per repository. They are not claims about true first use.</p></div></div>
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Agent</th><th scope="col">P0</th><th scope="col">P10</th><th scope="col">P50</th><th scope="col" class="num">Dated coverage</th><th scope="col" class="num">Contributing repos</th></tr></thead>
+    <tbody>{% for row in debut.rows %}<tr><td>{{ row.agent }}</td><td>{{ row.signal_p0 or "—" }}</td><td>{{ row.signal_p10 or "—" }}</td><td>{{ row.signal_p50 or "—" }}</td><td class="num">{{ analysis_rate(row.dated_coverage) }}</td><td class="num">{{ row.repos }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% set intensity = diagnostics.adoption_intensity %}
+<section class="panel analysis-section" id="analysis-diagnostic-intensity" role="tabpanel" aria-labelledby="tab-diagnostic-intensity" tabindex="0">
+  <div class="panel-head"><div><h2>Adoption-intensity distributions</h2><p class="muted">Percentiles condition on recent adopters with a valid inspected-commit denominator. Zero recent use is reported separately. Pervasive means commit ratio ≥ {{ intensity.pervasive_threshold_percent }}%.</p></div></div>
+  <div class="cards">
+    <article class="card"><h3>P25 / median / P75</h3><p>{{ intensity.overall.p25 or "—" }} / {{ intensity.overall.p50 or "—" }} / {{ intensity.overall.p75 or "—" }}%</p></article>
+    <article class="card"><h3>P90</h3><p>{{ intensity.overall.p90 or "—" }}%</p></article>
+    <article class="card"><h3>Zero recent use</h3><p>{{ analysis_rate(intensity.overall.zero_recent) }}</p></article>
+    <article class="card"><h3>Pervasive among adopters</h3><p>{{ analysis_rate(intensity.overall.pervasive) }}</p></article>
+  </div>
+  <div class="analysis-scroll">{% for dimension in intensity.dimensions %}<details class="evidence-repo"><summary>{{ dimension.key|replace('_', ' ')|title }} · {{ dimension.rows|length }} strata</summary><div class="evidence-body"><div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Stratum</th><th scope="col" class="num">Observed history</th><th scope="col" class="num">Recent adopters</th><th scope="col" class="num">P25</th><th scope="col" class="num">P50</th><th scope="col" class="num">P75</th><th scope="col" class="num">P90</th><th scope="col" class="num">Zero recent</th><th scope="col" class="num">Pervasive</th></tr></thead>
+    <tbody>{% for row in dimension.rows %}<tr><td>{{ row.label }}</td><td class="num">{{ row.history_observed }}</td><td class="num">{{ row.recent_adopters }}</td><td class="num">{{ row.p25 if row.p25 is not none else "—" }}%</td><td class="num">{{ row.p50 if row.p50 is not none else "—" }}%</td><td class="num">{{ row.p75 if row.p75 is not none else "—" }}%</td><td class="num">{{ row.p90 if row.p90 is not none else "—" }}%</td><td class="num">{{ analysis_rate(row.zero_recent) }}</td><td class="num">{{ analysis_rate(row.pervasive) }}</td></tr>{% endfor %}</tbody>
+  </table></div></div></details>{% endfor %}</div>
+</section>
+
+{% set co_use = diagnostics.multi_agent_co_use %}
+<section class="panel analysis-section" id="analysis-diagnostic-co-use" role="tabpanel" aria-labelledby="tab-diagnostic-co-use" tabindex="0">
+  <div class="panel-head"><div><h2>Multi-agent co-use</h2><p class="muted">Repository bands use each repository’s distinct observed agent set. Owner sets are the union across every repository owned by that account in this frozen detection run; Users and Organizations are separate.</p></div></div>
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th scope="col">Agents per repository</th><th scope="col" class="num">Repositories</th><th scope="col" class="num">Share of detected</th><th scope="col" class="num">Share of complete frame</th></tr></thead>
+    <tbody>{% for row in co_use.repositories.bands %}<tr><td>{{ row.band }}</td><td class="num">{{ row.repos }}</td><td class="num">{{ analysis_rate(row.share_detected) }}</td><td class="num">{{ analysis_rate(row.share_complete_frame) }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <div class="analysis-scroll">{% for account in co_use.owners %}<details class="evidence-repo"{% if loop.first %} open{% endif %}><summary>{{ account.account_type }} · {{ account.owners_with_agents }} with agents · {{ account.owners_without_agents }} with none</summary><div class="evidence-body">
+    {% for band in account.bands %}<details class="evidence-repo"><summary>{{ band.band }} agents · {{ band.owners }} owners</summary><div class="evidence-body"><div class="table-scroll"><table class="data-table">
+      <thead><tr><th scope="col">Rank</th><th scope="col">Exact canonical agent set</th><th scope="col" class="num">Owners</th><th scope="col" class="num">Within band</th><th scope="col" class="num">All agent-using owners</th></tr></thead>
+      <tbody>{% for row in band.rankings %}<tr><td class="num">{{ loop.index }}</td><td>{{ row.set_key }}</td><td class="num">{{ row.count }}</td><td class="num">{{ row.share_in_band }}%</td><td class="num">{{ row.share_of_agent_owners }}%</td></tr>{% else %}<tr><td colspan="5" class="muted">No owners in this band.</td></tr>{% endfor %}</tbody>
+    </table></div></div></details>{% endfor %}
+  </div></details>{% endfor %}</div>
 </section>
 {% endif %}
 

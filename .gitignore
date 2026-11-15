@@ -13,6 +13,7 @@ dist/
 .mypy_cache/
 .commandcode/
 .playwright-mcp/
+.impeccable/
 .coverage
 coverage.xml
 htmlcov/
@@ -41,6 +42,7 @@ docs/superpowers/prompts/2026-10-03-overnight-queue-prompt.md
 # Proposal HTML deliverables (local-only, never committed)
 methodology-proposal.html
 methodology-proposal-researched.html
+methodology_proposal*.html
 
 # Generated reports (operator data, never committed)
 docs/findings/2026-10-18-runs-master-report.md

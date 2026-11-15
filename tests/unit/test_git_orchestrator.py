@@ -1103,6 +1103,21 @@ def test_run_git_detection_streams_detections_from_the_database(clean_db, tmp_pa
         "pack_version",
         "run_id",
         "detected_at",
+        "family_id",
+        "family_name",
+        "observed_as",
+        "variant",
+        "rule_id",
+        "rule_lifecycle",
+        "evidence_semantics",
+        "forge",
+        "role",
+        "confidence",
+        "provenance_ref",
+        "is_current",
+        "is_historical",
+        "metric_eligibility",
+        "explanatory_note",
     }
     assert isinstance(sample["evidence"], dict)
     assert sample["run_id"] == detect_run

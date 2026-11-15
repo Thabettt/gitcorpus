@@ -18,6 +18,7 @@ def form(**overrides: str) -> dict[str, str]:
         "limiter_max_concurrent": "10",
         "discovery_concurrency": "32",
         "detect_concurrency": "32",
+        "detect_token_mode": "single",
     }
     values.update(overrides)
     return values
@@ -28,6 +29,7 @@ def test_parse_accepts_valid_form():
     assert parsed["max_hydrate"] == 200
     assert parsed["graphql_batch"] is True
     assert parsed["adaptive"] is True
+    assert parsed["detect_token_mode"] == "single"
 
 
 def test_unchecked_checkbox_is_false():
@@ -74,6 +76,13 @@ def test_detect_concurrency_out_of_bounds_is_rejected(value):
 
 def test_detect_concurrency_accepts_64():
     assert parse_settings_form(form(detect_concurrency="64"))["detect_concurrency"] == 64
+
+
+def test_detect_token_mode_accepts_only_single_or_pool4():
+    assert parse_settings_form(form(detect_token_mode="pool4"))["detect_token_mode"] == "pool4"
+    with pytest.raises(SettingsError) as excinfo:
+        parse_settings_form(form(detect_token_mode="round-robin"))
+    assert any("detect_token_mode" in error for error in excinfo.value.errors)
 
 
 def test_hydrate_above_candidates_is_rejected():

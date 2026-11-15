@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import threading
+import time
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -10,10 +12,16 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import bindparam, text, update
+from sqlalchemy import bindparam, delete, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 from starlette.concurrency import run_in_threadpool
 
+from serve.adoption_metrics import (
+    all_stratified_metrics,
+)
+from serve.analysis_dashboard import build_dashboard
+from serve.analysis_diagnostics import build_diagnostics, wealth_association
 from serve.countries import (
     UNKNOWN_COUNTRY,
     country_name,
@@ -24,10 +32,15 @@ from serve.countries import (
 )
 from serve.pages import _stamp, validate_csrf
 from serve.pages import _templates as templates
+from store.models import AnalysisSnapshot
 
 ANALYSIS_PAGE_SIZE = 400
 FINGERPRINT_LIMIT = 5
 WEALTH_MIN_REPOS = 10
+ANALYSIS_SNAPSHOT_VERSION = "analysis-2026-11-11-v6"
+
+_SNAPSHOT_LOCKS: dict[int, threading.Lock] = {}
+_SNAPSHOT_LOCKS_GUARD = threading.Lock()
 
 _INCOME_ORDER = {
     "High income": 0,
@@ -60,6 +73,11 @@ ANALYSIS_METRICS: tuple[Metric, ...] = (
         "agent_share",
         "Agent share",
         "Repos with each agent, as a share of every scanned repo and of readable repos.",
+    ),
+    Metric(
+        "generic_markers",
+        "Shared markers",
+        "AGENTS.md and similar shared evidence, kept visible but excluded from every agent count.",
     ),
     Metric(
         "agents_by_country",
@@ -96,6 +114,26 @@ ANALYSIS_METRICS: tuple[Metric, ...] = (
         "country_wealth",
         "Country wealth vs agent use",
         "GDP per capita and income group against adoption rate.",
+    ),
+    Metric(
+        "birth_cohort",
+        "Creation cohorts",
+        "Cross-sectional agent use in the installed base and in post-cutoff creation quarters.",
+    ),
+    Metric(
+        "star_tiers",
+        "Stars vs agent use",
+        "Adoption and median commit ratio across star-count tiers.",
+    ),
+    Metric(
+        "commit_depth",
+        "Commits vs agent use",
+        "Adoption by frozen default-branch commit count, with recent-window coverage.",
+    ),
+    Metric(
+        "language_adoption",
+        "Language vs agent use",
+        "Adoption by primary language with the top agent in each language.",
     ),
 )
 
@@ -218,9 +256,10 @@ def _totals(engine: Engine, run_id: int) -> dict[str, Any]:
         "SELECT count(*) AS scanned,"
         " count(*) FILTER (WHERE COALESCE((detection->>'unavailable')::boolean, false))"
         "   AS unavailable,"
-        " count(*) FILTER"
-        "   (WHERE jsonb_array_length(COALESCE(detection->'agents', '[]'::jsonb)) > 0)"
-        "   AS with_agent,"
+        " count(*) FILTER (WHERE EXISTS ("
+        "   SELECT 1 FROM jsonb_array_elements_text("
+        "     COALESCE(detection->'agents', '[]'::jsonb)) AS g(agent)"
+        "   WHERE g.agent <> 'Generic')) AS with_agent,"
         " count(*) FILTER (WHERE detection->>'failure_class' IS NOT NULL) AS failed,"
         " count(*) FILTER (WHERE detection IS NULL) AS missing_document"
         " FROM run_items WHERE run_id = :run",
@@ -286,7 +325,7 @@ def _agent_share(engine: Engine, run_id: int, totals: dict[str, Any]) -> list[di
         " CROSS JOIN LATERAL jsonb_array_elements_text("
         "   COALESCE(i.detection->'agents', '[]'::jsonb)"
         " ) AS a(agent)"
-        " WHERE i.run_id = :run"
+        " WHERE i.run_id = :run AND a.agent <> 'Generic'"
         " GROUP BY a.agent"
         " ORDER BY repos DESC, a.agent",
         {"run": run_id},
@@ -310,7 +349,9 @@ def _country_rows(engine: Engine, run_id: int) -> list[dict[str, Any]]:
         " SELECT COALESCE(i.country_iso, o.country_iso, '??') AS country_iso,"
         "   i.repo_id,"
         "   COALESCE((i.detection->>'unavailable')::boolean, false) AS unavailable,"
-        "   jsonb_array_length(COALESCE(i.detection->'agents', '[]'::jsonb)) > 0 AS with_agent"
+        "   EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+        "     COALESCE(i.detection->'agents', '[]'::jsonb)) AS g(agent)"
+        "     WHERE g.agent <> 'Generic') AS with_agent"
         " FROM run_items i"
         " LEFT JOIN repos r ON r.id = i.repo_id"
         " LEFT JOIN owners o ON o.id = r.owner_id"
@@ -363,7 +404,7 @@ def _agents_by_country(
         " CROSS JOIN LATERAL jsonb_array_elements_text("
         "   COALESCE(i.detection->'agents', '[]'::jsonb)"
         " ) AS a(agent)"
-        " WHERE i.run_id = :run"
+        " WHERE i.run_id = :run AND a.agent <> 'Generic'"
         " GROUP BY 1, 2",
         {"run": run_id},
     )
@@ -430,7 +471,9 @@ def _size_vs_adoption(
         engine,
         f"WITH base AS ("
         f" SELECT i.repo_id, {bucket_sql} AS bucket, {order_sql} AS bucket_order,"
-        "   jsonb_array_length(COALESCE(i.detection->'agents', '[]'::jsonb)) > 0 AS with_agent,"
+        "   EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+        "     COALESCE(i.detection->'agents', '[]'::jsonb)) AS g(agent)"
+        "     WHERE g.agent <> 'Generic') AS with_agent,"
         "   COALESCE((i.detection->>'unavailable')::boolean, false) AS unavailable"
         " FROM run_items i"
         " LEFT JOIN repos r ON r.id = i.repo_id"
@@ -450,7 +493,7 @@ def _size_vs_adoption(
         " CROSS JOIN LATERAL jsonb_array_elements_text("
         "   COALESCE(i.detection->'agents', '[]'::jsonb)"
         " ) AS a(agent)"
-        " WHERE i.run_id = :run"
+        " WHERE i.run_id = :run AND a.agent <> 'Generic'"
         f") SELECT bucket, min(bucket_order) AS bucket_order, agent, count(*) AS repos"
         " FROM base GROUP BY bucket, agent",
         {"run": run_id},
@@ -502,7 +545,7 @@ def _agent_debut(engine: Engine, run_id: int) -> list[dict[str, Any]]:
         " CROSS JOIN LATERAL jsonb_array_elements_text("
         "   COALESCE(i.detection->'agents', '[]'::jsonb)"
         " ) AS a(agent)"
-        " WHERE i.run_id = :run"
+        " WHERE i.run_id = :run AND a.agent <> 'Generic'"
         " GROUP BY a.agent"
         " ORDER BY earliest_signal NULLS LAST, repos DESC, a.agent",
         {"run": run_id},
@@ -540,15 +583,22 @@ def _fingerprint_debut(engine: Engine, run_id: int, limit: int = FINGERPRINT_LIM
             f" SELECT e.agent, e.repo_id, {expression} AS fingerprint"
             " FROM detection_evidence e"
             " WHERE e.run_id = :run AND e.channel = :channel"
-            ") SELECT fp.agent, fp.fingerprint, count(DISTINCT fp.repo_id) AS repos,"
+            "), grouped AS ("
+            " SELECT fp.agent, fp.fingerprint, count(DISTINCT fp.repo_id) AS repos,"
             " min(r.created_at) AS earliest_repo_created,"
             " min(NULLIF(i.detection->>'first_signal_at', '')::timestamptz) AS earliest_signal"
             " FROM fp"
             " LEFT JOIN repos r ON r.id = fp.repo_id"
             " LEFT JOIN run_items i ON i.run_id = :run AND i.repo_id = fp.repo_id"
             " WHERE fp.fingerprint IS NOT NULL AND fp.fingerprint <> ''"
-            " GROUP BY fp.agent, fp.fingerprint",
-            {"run": run_id, "channel": channel},
+            " GROUP BY fp.agent, fp.fingerprint"
+            "), ranked AS ("
+            " SELECT grouped.*, row_number() OVER ("
+            "   PARTITION BY agent ORDER BY repos DESC, fingerprint"
+            " ) AS fingerprint_rank FROM grouped"
+            ") SELECT agent, fingerprint, repos, earliest_repo_created, earliest_signal"
+            " FROM ranked WHERE fingerprint_rank <= :limit",
+            {"run": run_id, "channel": channel, "limit": limit},
         )
         for row in rows:
             grouped[str(row["agent"])].append(
@@ -627,15 +677,23 @@ def _country_wealth(engine: Engine, run_id: int, countries: list[dict[str, Any]]
                 "income_group": income_group(iso) or "Unknown",
             }
         )
-    points = [
-        (math.log10(row["gdp_pc"]), row["adoption_readable"] / 100)
+    fit_rows = [
+        {
+            "x": math.log2(row["gdp_pc"]),
+            "y": float(row["adoption_readable"]),
+            "label": row["country"],
+            "country_iso": row["country_iso"],
+        }
         for row in rows
         if row["gdp_pc"]
         and row["gdp_pc"] > 0
         and row["adoption_readable"] is not None
         and row["readable"] >= WEALTH_MIN_REPOS
     ]
-    correlation = _pearson(points)
+    statistics = wealth_association(fit_rows, seed=run_id)
+    influence = {row["country_iso"]: row for row in statistics.get("influential_countries", [])}
+    for row in rows:
+        row["influence"] = influence.get(row["country_iso"])
     return {
         "rows": sorted(
             rows,
@@ -645,11 +703,204 @@ def _country_wealth(engine: Engine, run_id: int, countries: list[dict[str, Any]]
             ),
         ),
         "income_groups": _income_groups(rows),
-        "correlation": round(correlation, 3) if correlation is not None else None,
-        "points": len(points),
+        "correlation": statistics["pearson"],
+        "spearman": statistics["spearman"],
+        "slope_pp_per_doubling": statistics["slope_pp_per_doubling"],
+        "statistics": statistics,
+        "points": len(fit_rows),
         "min_repos": WEALTH_MIN_REPOS,
         "source": wealth_source(),
     }
+
+
+def _generic_markers(engine: Engine, run_id: int) -> dict[str, Any]:
+    """Shared conventions kept visible but excluded from every agent count.
+
+    ``Generic`` evidence (``AGENTS.md``, ``AI Assistant``, ``ai-generated``)
+    describes a shared practice rather than a product.  The dashboard shows it
+    separately so the adoption denominators cannot be inflated by it.
+    """
+
+    rows = _mappings(
+        engine,
+        "SELECT marker, count(DISTINCT i.repo_id) AS repos"
+        " FROM run_items i"
+        " CROSS JOIN LATERAL jsonb_array_elements_text("
+        "   CASE WHEN jsonb_typeof(i.detection->'generic_markers') = 'array'"
+        "   THEN i.detection->'generic_markers' ELSE '[]'::jsonb END) AS m(marker)"
+        " WHERE i.run_id = :run"
+        " GROUP BY marker ORDER BY repos DESC, marker",
+        {"run": run_id},
+    )
+    with engine.connect() as connection:
+        repos_with_markers = int(
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM run_items i WHERE i.run_id = :run"
+                    " AND jsonb_array_length(CASE WHEN jsonb_typeof("
+                    "   i.detection->'generic_markers') = 'array'"
+                    "   THEN i.detection->'generic_markers' ELSE '[]'::jsonb END) > 0"
+                ),
+                {"run": run_id},
+            ).scalar()
+            or 0
+        )
+    markers = []
+    for row in rows:
+        marker = str(row["marker"])
+        kind = marker.split(":", 1)[0] if ":" in marker else "file"
+        markers.append(
+            {
+                "marker": marker,
+                "kind": kind if kind in {"author", "label"} else "file",
+                "repos": int(row["repos"] or 0),
+            }
+        )
+    content = _mappings(
+        engine,
+        "SELECT agent, count(DISTINCT repo_id) AS repos"
+        " FROM detection_evidence"
+        " WHERE run_id = :run AND channel = 'content'"
+        " GROUP BY agent ORDER BY repos DESC, agent",
+        {"run": run_id},
+    )
+    return {
+        "markers": markers,
+        "repos_with_markers": repos_with_markers,
+        "content_attribution": [
+            {"agent": row["agent"], "repos": int(row["repos"] or 0)} for row in content
+        ],
+    }
+
+
+def _analysis_payload(engine: Engine, run_id: int) -> dict[str, Any]:
+    """Compute the complete authoritative payload once for both analysis views."""
+
+    totals = _totals(engine, run_id)
+    countries = _country_rows(engine, run_id)
+    agent_share = _agent_share(engine, run_id, totals)
+    dataset, strata = all_stratified_metrics(engine, run_id)
+    diagnostics = build_diagnostics(dataset)
+    agents_by_country = _agents_by_country(engine, run_id, [dict(row) for row in countries])
+    results: dict[str, Any] = {
+        "agent_share": agent_share,
+        "agents_by_country": agents_by_country,
+        "adoption": {**totals, "levels": _adoption_levels(engine, run_id)},
+        "generic_markers": _generic_markers(engine, run_id),
+        "adoption_by_country": countries,
+        "size_vs_adoption": _size_vs_adoption(engine, run_id, agent_share),
+        "agent_debut": diagnostics["robust_debut"]["rows"],
+        "fingerprint_debut": _fingerprint_debut(engine, run_id),
+        "country_wealth": _country_wealth(engine, run_id, countries),
+        **strata,
+    }
+    return {
+        "totals": totals,
+        "country": _country_totals(engine, run_id),
+        "results": results,
+        "diagnostics": diagnostics,
+    }
+
+
+def _snapshot_lock(run_id: int) -> threading.Lock:
+    with _SNAPSHOT_LOCKS_GUARD:
+        return _SNAPSHOT_LOCKS.setdefault(run_id, threading.Lock())
+
+
+def _saved_snapshot(
+    engine: Engine, run: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if run["status"] not in ("done", "partial"):
+        return None
+    with engine.connect() as connection:
+        row = (
+            connection.execute(
+                select(AnalysisSnapshot).where(AnalysisSnapshot.run_id == int(run["id"]))
+            )
+            .mappings()
+            .one_or_none()
+        )
+    if row is None:
+        return None
+    if row["schema_version"] != ANALYSIS_SNAPSHOT_VERSION:
+        return None
+    if row["source_finished_at"] != run["finished_at"]:
+        return None
+    payload = row["payload"]
+    if not isinstance(payload, dict):
+        return None
+    return payload, {
+        "status": "hit",
+        "version": row["schema_version"],
+        "generated_at": _stamp(row["generated_at"]),
+        "build_seconds": round(float(row["build_seconds"]), 3),
+    }
+
+
+def analysis_payload(
+    engine: Engine,
+    run: dict[str, Any],
+    *,
+    force: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the current full payload, building and persisting it at most once."""
+
+    if not force and (saved := _saved_snapshot(engine, run)) is not None:
+        return saved
+    run_id = int(run["id"])
+    with _snapshot_lock(run_id):
+        if not force and (saved := _saved_snapshot(engine, run)) is not None:
+            return saved
+        started = time.perf_counter()
+        payload = _analysis_payload(engine, run_id)
+        elapsed = time.perf_counter() - started
+        generated = datetime.now(UTC)
+        if run["status"] in ("done", "partial"):
+            statement = pg_insert(AnalysisSnapshot).values(
+                run_id=run_id,
+                schema_version=ANALYSIS_SNAPSHOT_VERSION,
+                source_finished_at=run["finished_at"],
+                generated_at=generated,
+                build_seconds=elapsed,
+                payload=payload,
+            )
+            statement = statement.on_conflict_do_update(
+                index_elements=[AnalysisSnapshot.run_id],
+                set_={
+                    "schema_version": statement.excluded.schema_version,
+                    "source_finished_at": statement.excluded.source_finished_at,
+                    "generated_at": statement.excluded.generated_at,
+                    "build_seconds": statement.excluded.build_seconds,
+                    "payload": statement.excluded.payload,
+                },
+            )
+            with engine.begin() as connection:
+                connection.execute(statement)
+        return payload, {
+            "status": "built" if run["status"] in ("done", "partial") else "uncached",
+            "version": ANALYSIS_SNAPSHOT_VERSION,
+            "generated_at": _stamp(generated),
+            "build_seconds": round(elapsed, 3),
+        }
+
+
+def refresh_analysis_snapshot(engine: Engine, run_id: int) -> dict[str, Any] | None:
+    run = _run_row(engine, run_id)
+    if run is None or run["kind"] != "detect" or run["status"] not in ("done", "partial"):
+        return None
+    _payload, metadata = analysis_payload(engine, run, force=True)
+    return metadata
+
+
+def invalidate_analysis_snapshot(engine: Engine, *run_ids: int) -> int:
+    identifiers = list(dict.fromkeys(int(run_id) for run_id in run_ids))
+    if not identifiers:
+        return 0
+    with engine.begin() as connection:
+        result = connection.execute(
+            delete(AnalysisSnapshot).where(AnalysisSnapshot.run_id.in_(identifiers))
+        )
+    return int(result.rowcount or 0)
 
 
 def analysis_context(
@@ -658,29 +909,9 @@ def analysis_context(
     run = _run_row(engine, run_id)
     if run is None or run["kind"] != "detect":
         return None
-    totals = _totals(engine, run_id)
-    countries = _country_rows(engine, run_id)
-    agent_share = _agent_share(engine, run_id, totals)
-    results: dict[str, Any] = {}
-    if "agent_share" in selected:
-        results["agent_share"] = agent_share
-    if "agents_by_country" in selected:
-        results["agents_by_country"] = _agents_by_country(engine, run_id, countries)
-    if "adoption" in selected:
-        results["adoption"] = {
-            **totals,
-            "levels": _adoption_levels(engine, run_id),
-        }
-    if "adoption_by_country" in selected:
-        results["adoption_by_country"] = countries
-    if "size_vs_adoption" in selected:
-        results["size_vs_adoption"] = _size_vs_adoption(engine, run_id, agent_share)
-    if "agent_debut" in selected:
-        results["agent_debut"] = _agent_debut(engine, run_id)
-    if "fingerprint_debut" in selected:
-        results["fingerprint_debut"] = _fingerprint_debut(engine, run_id)
-    if "country_wealth" in selected:
-        results["country_wealth"] = _country_wealth(engine, run_id, countries)
+    payload, snapshot = analysis_payload(engine, run)
+    totals = payload["totals"]
+    results = {key: payload["results"][key] for key in selected}
     spec = run.get("filter_spec") or {}
     return {
         "run": {
@@ -697,8 +928,10 @@ def analysis_context(
         "metrics": [metric for metric in ANALYSIS_METRICS if metric.key in selected],
         "all_metrics": ANALYSIS_METRICS,
         "totals": totals,
-        "country": _country_totals(engine, run_id),
+        "country": payload["country"],
         "results": results,
+        "diagnostics": payload["diagnostics"],
+        "analysis_snapshot": snapshot,
     }
 
 
@@ -743,6 +976,8 @@ def _sync_run_item_countries(engine: Engine, *run_ids: int) -> int:
                 {"run": run_id},
             ).rowcount
             total += int(updated or 0)
+    if total:
+        invalidate_analysis_snapshot(engine, *run_ids)
     return total
 
 
@@ -1140,6 +1375,27 @@ def register_analysis(application: FastAPI, *, engine_factory) -> None:
             {
                 **context,
                 "backfill": _backfill_notice(request),
+                "csrf_token": request.state.csrf_token,
+            },
+        )
+
+    @application.get("/analysis/{run_id}/dashboard", response_class=HTMLResponse)
+    def analysis_dashboard(request: Request, run_id: int):
+        engine = engine_factory()
+        context = analysis_context(engine, run_id, _ALL_METRIC_KEYS)
+        if context is None:
+            return templates.TemplateResponse(
+                request,
+                "analysis_dashboard.html",
+                {"run": None, "dashboard": None},
+                status_code=404,
+            )
+        return templates.TemplateResponse(
+            request,
+            "analysis_dashboard.html",
+            {
+                **context,
+                "dashboard": build_dashboard(context),
                 "csrf_token": request.state.csrf_token,
             },
         )

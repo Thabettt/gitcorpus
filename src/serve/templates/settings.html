@@ -18,10 +18,49 @@
   </ul>
   {% endif %}
   <p class="badge">
-    GitHub token: <strong>{{ "present" if token_present else "missing" }}</strong>
+    GitHub credentials: <strong>{{ "present" if token_present else "missing" }}</strong>
+    · {{ token_count }} token{% if token_count != 1 %}s{% endif %} configured{% if token_source %} · via <code>{{ token_source }}</code>{% endif %}
   </p>
   <form method="post" action="/settings">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <section class="filter-section">
+      <h2>API detection credentials</h2>
+      <p class="muted">Choose whether API detection uses the first available token or the fixed
+        four-account pool. Token values stay in the environment and are never displayed or stored.</p>
+      {% if "detect_token_mode" in pinned %}
+      <p class="flag warn" role="status">
+        This control is locked by <code>GITCORPUS_DETECT_TOKEN_MODE</code>. Remove that environment
+        variable and restart the server to change modes here.
+      </p>
+      {% endif %}
+      <fieldset class="method-grid token-mode-grid">
+        <legend class="sr-only">API detection token mode</legend>
+        <label class="method-card">
+          <input type="radio" name="detect_token_mode" value="single"
+                 {% if values["detect_token_mode"] == "single" %}checked{% endif %}
+                 {% if "detect_token_mode" in pinned %}disabled{% endif %}>
+          <span class="method-title">Single token</span>
+          <span class="muted">Uses the first configured token. Best for small runs and local testing.</span>
+          <span class="badge">{% if token_count >= 1 %}Ready{% else %}Needs at least 1 token{% endif %}</span>
+        </label>
+        <label class="method-card">
+          <input type="radio" name="detect_token_mode" value="pool4"
+                 {% if values["detect_token_mode"] == "pool4" %}checked{% endif %}
+                 {% if "detect_token_mode" in pinned %}disabled{% endif %}>
+          <span class="method-title">Four-account pool</span>
+          <span class="muted">Uses exactly four tokens, then verifies four distinct GitHub identities before each run.</span>
+          <span class="badge">{% if pool4_ready %}Ready · 4 of 4{% else %}Unavailable · {{ token_count }} of 4{% endif %}</span>
+        </label>
+      </fieldset>
+      {% if values["detect_token_mode"] == "pool4" and not pool4_ready %}
+      <p class="flag warn" role="status">Four-account mode is selected, but exactly four tokens are required before an API detection can start.</p>
+      {% elif values["detect_token_mode"] == "single" and token_count < 1 %}
+      <p class="flag warn" role="status">Single-token mode is selected, but no GitHub token is configured.</p>
+      {% endif %}
+      {% if values["detect_token_mode"] == "pool4" and token_source == "GITHUB_TOKEN" %}
+      <p class="flag warn" role="status">This server process only sees a single <code>GITHUB_TOKEN</code>. Put four keys in <code>GITHUB_TOKENS</code> and restart the server.</p>
+      {% endif %}
+    </section>
     <section class="filter-section">
       <h2>Search limits</h2>
       <p class="muted">The ranges shown are safety limits — the most you may enter. The

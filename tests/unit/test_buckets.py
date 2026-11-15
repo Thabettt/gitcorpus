@@ -184,6 +184,48 @@ def test_reconcile_anchors_the_window_to_the_response_reset(redis):
     assert limiter.acquire("search", "token-a", now=40.0).allowed is True
 
 
+def _headers(remaining: int, reset: float) -> dict[str, str]:
+    return {"x-ratelimit-remaining": str(remaining), "x-ratelimit-reset": str(reset)}
+
+
+def test_reconcile_ignores_a_header_from_a_window_that_already_reset(redis):
+    limiter = BucketLimiter(redis, specs={"core": (5000, 3600.0)}, max_concurrent=100)
+    limiter.update_from_headers("core", "token-a", _headers(400, 3600.0), now=3000.0)
+    # GitHub resets at t=3600; a fresh response opens the next window.
+    limiter.update_from_headers("core", "token-a", _headers(4999, 7200.0), now=3601.0)
+    # A request that was in flight across the reset reports the old window.
+    limiter.update_from_headers("core", "token-a", _headers(392, 3600.0), now=3602.0)
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"1"
+    assert limiter.acquire("core", "token-a", now=3603.0).allowed is True
+
+
+def test_stale_header_does_not_park_the_token_until_the_next_reset(redis):
+    """Regression: run 165 idled 13:46 -> 14:40 with ~4,600 calls left."""
+    limiter = BucketLimiter(redis, specs={"core": (5000, 3600.0)}, max_concurrent=100)
+    limiter.update_from_headers("core", "token-a", _headers(4999, 7200.0), now=3601.0)
+    limiter.update_from_headers("core", "token-a", _headers(392, 3600.0), now=3602.0)
+    for _ in range(1000):
+        assert limiter.acquire("core", "token-a", now=3700.0).allowed is True
+        limiter.release("core", "token-a")
+
+
+def test_reconcile_ignores_a_header_older_than_the_window_already_seen(redis):
+    limiter = BucketLimiter(redis, specs={"core": (5000, 3600.0)}, max_concurrent=100)
+    limiter.update_from_headers("core", "token-a", _headers(4900, 7200.0), now=100.0)
+    # Local clock behind GitHub: the old window's reset still looks future.
+    limiter.update_from_headers("core", "token-a", _headers(10, 3600.0), now=100.0)
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"100"
+
+
+def test_a_new_github_window_replaces_an_inflated_local_count(redis):
+    limiter = BucketLimiter(redis, specs={"core": (5000, 3600.0)}, max_concurrent=100)
+    limiter.update_from_headers("core", "token-a", _headers(300, 3600.0), now=3000.0)
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"4700"
+    limiter.update_from_headers("core", "token-a", _headers(4990, 7200.0), now=3590.0)
+    assert redis.hget("gitcorpus:rl:core:token-a", "count") == b"10"
+    assert redis.hget("gitcorpus:rl:core:token-a", "window_end") == b"7200"
+
+
 def test_reconcile_uses_the_header_limit_over_the_spec(redis):
     limiter = BucketLimiter(redis, specs={"core": (5, 60.0)})
     limiter.update_from_headers(
