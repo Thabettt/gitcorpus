@@ -784,6 +784,38 @@ def test_detect_spec_rejects_unknown_scan_mode_and_fast_git():
     assert any("only to API" in error for error in git_fast.value.errors)
 
 
+def test_detect_spec_parses_hybrid_source_and_rejects_fast_hybrid():
+    base = {
+        "version": 1,
+        "kind": "detect",
+        "source_run_id": 7,
+        "pack_version": "test-pack",
+        "agents": None,
+        "channels": ["file", "label", "pr_metadata"],
+        "limit": None,
+        "windows": {"commits": 100, "prs": 100, "issues": 100},
+        "source": "hybrid",
+    }
+    spec = parse_detect_spec(base)
+    assert spec.source == "hybrid"
+    assert parse_detect_spec(detect_spec_to_dict(spec)) == spec
+    with pytest.raises(DetectSpecError) as hybrid_fast:
+        parse_detect_spec({**base, "scan_mode": "fast"})
+    assert any("only to API" in error for error in hybrid_fast.value.errors)
+
+
+def test_options_page_and_estimate_offer_hybrid(clean):
+    client = make_client(clean)
+    source = seed_find_run(clean)
+    seed_pack(clean)
+    page = client.get(f"/detections/from/{source}")
+    assert 'id="detect-source-hybrid"' in page.text
+    assert "Hybrid (git + PR metadata)" in page.text
+    estimate = client.get(f"/partials/detections/{source}/estimate?source=hybrid&limit=10")
+    assert "Hybrid (git + PR metadata)</strong> — selected" in estimate.text
+    assert "Local clone (git)</strong> — selected" not in estimate.text
+
+
 def test_options_page_presents_both_detection_methods(clean):
     client = make_client(clean)
     source = seed_find_run(clean)
@@ -878,7 +910,7 @@ def test_options_page_moves_clone_fields_into_scope_and_disables_api_only_channe
     assert body.index('id="detect-scope-section"') < body.index("data-git-field>")
     assert body.count("data-git-field>") == 2
     assert body.index("data-git-field>") < body.index('id="detect-estimate"')
-    assert "unavailable with git detection" in body
+    assert "unavailable with this detection method" in body
     assert "apiOnlyValues" in body
 
 

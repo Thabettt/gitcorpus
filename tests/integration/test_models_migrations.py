@@ -28,6 +28,7 @@ TABLES = {
     "trace_packs",
     "detection_evidence",
     "detection_repo_filters",
+    "detection_checkpoints",
     "analysis_snapshots",
 }
 
@@ -205,6 +206,12 @@ EXPECTED_COLUMNS: dict[str, dict[str, bool]] = {
         "agent": False,
         "channel": False,
     },
+    "detection_checkpoints": {
+        "run_id": False,
+        "repo_id": False,
+        "clean": False,
+        "contribution": False,
+    },
     "analysis_snapshots": {
         "run_id": False,
         "schema_version": False,
@@ -228,6 +235,12 @@ EXPECTED_INDEXES = {
     "de_run_committed_file_repo_idx": "detection_evidence",
     "de_run_family_idx": "detection_evidence",
     "de_run_rule_idx": "detection_evidence",
+    "de_run_lifecycle_repo_idx": "detection_evidence",
+    "de_run_semantics_repo_idx": "detection_evidence",
+    "de_run_current_repo_idx": "detection_evidence",
+    "de_run_historical_repo_idx": "detection_evidence",
+    "de_run_agent_channel_repo_idx": "detection_evidence",
+    "de_run_channel_repo_idx": "detection_evidence",
 }
 
 
@@ -475,6 +488,18 @@ def test_indexes_exist_with_partial_predicates(migrated: Engine):
     assert defs["fnh_repo_idx"].endswith("(repo_id, seen_at)")
     assert defs["shards_state_idx"].endswith("(state, tier)")
     assert defs["audit_ts_idx"].endswith("(ts)")
+    assert defs["de_run_lifecycle_repo_idx"].endswith("(run_id, rule_lifecycle, repo_id)")
+    assert defs["de_run_semantics_repo_idx"].endswith("(run_id, evidence_semantics, repo_id)")
+    assert defs["de_run_current_repo_idx"].endswith(
+        "(run_id, repo_id) WHERE (is_current IS TRUE)"
+    )
+    assert defs["de_run_historical_repo_idx"].endswith(
+        "(run_id, repo_id) WHERE (is_historical IS TRUE)"
+    )
+    assert defs["de_run_agent_channel_repo_idx"].endswith("(run_id, agent, channel, repo_id)")
+    assert defs["de_run_channel_repo_idx"].endswith("(run_id, channel, repo_id)")
+    assert "de_run_agent_idx" not in defs
+    assert "de_run_channel_idx" not in defs
 
 
 def test_storage_parameters(migrated: Engine):

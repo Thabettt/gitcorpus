@@ -72,8 +72,8 @@ def parse_detect_spec(doc: Mapping[str, object]) -> DetectOptions:
             else:
                 errors.append(f"windows.{key} must be an integer between 1 and 1000")
     spec_source = doc.get("source", "api")
-    if spec_source not in ("api", "git"):
-        errors.append("source must be 'api' or 'git'")
+    if spec_source not in ("api", "git", "hybrid"):
+        errors.append("source must be 'api', 'git' or 'hybrid'")
         spec_source = "api"
     clone_depth = 100
     clone_keep = False

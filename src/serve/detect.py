@@ -59,6 +59,7 @@ from serve.repo_import import (
     import_repos_as_run,
     parse_repo_file,
 )
+from store.bounded import bounded
 from store.models import RunItem, Runs, TracePack
 from store.settings import load_run_settings
 
@@ -252,22 +253,40 @@ def build_detect_runner(engine: Engine) -> Runner:
         # A run only ever executes channels its own pack can feed, even when the
         # stored spec predates per-pack channel validation.
         spec = dataclasses.replace(spec, channels=spec.channels & frozenset(pack.channels()))
-        if spec.source == "git":
-            payload = run_git_detection(
-                engine,
-                run_id,
-                spec,
-                pack,
-                config=GitScanConfig(
-                    depth=spec.clone_depth,
-                    keep=spec.clone_keep,
-                    timeout=clone_timeout_seconds(),
-                    workers=settings.detect_concurrency,
-                    processes=4,
-                    scan_root=detect_clone_root(),
-                    pr_gate_permits=pr_gate_permits_from_env(),
-                ),
-            )
+        if spec.source in ("git", "hybrid"):
+            pr_deps: list = []
+            if spec.source == "hybrid":
+                from serve.runner import build_deps
+
+                hybrid_tokens = load_tokens()
+                if not hybrid_tokens:
+                    raise ValueError("hybrid detection needs a GitHub token for PR metadata")
+                # One GraphQL point per repo: each token covers ~5,000 repos/hour,
+                # so every configured token shares the PR-metadata load.
+                pr_deps = [
+                    build_deps(engine, token=token, max_concurrent=settings.limiter_max_concurrent)
+                    for token in hybrid_tokens[:FIXED_API_TOKEN_COUNT]
+                ]
+            try:
+                payload = run_git_detection(
+                    engine,
+                    run_id,
+                    spec,
+                    pack,
+                    config=GitScanConfig(
+                        depth=spec.clone_depth,
+                        keep=spec.clone_keep,
+                        timeout=clone_timeout_seconds(),
+                        workers=settings.detect_concurrency,
+                        processes=4,
+                        scan_root=detect_clone_root(),
+                        pr_gate_permits=pr_gate_permits_from_env(),
+                    ),
+                    pr_deps=pr_deps,
+                )
+            finally:
+                for deps in pr_deps:
+                    deps.client.close()
         else:
             from serve.runner import build_deps
 
@@ -600,6 +619,33 @@ def _detection_filter_href(page: int, filters: dict) -> str:
     return "?" + urlencode(query)
 
 
+_SKIP_SCAN_COLUMNS = frozenset({"rule_lifecycle", "evidence_semantics"})
+
+
+def _distinct_evidence_values(connection, run_id: int, column: str) -> list[str]:
+    """Distinct non-null values of ``column`` in one run's evidence, sorted.
+
+    A plain ``SELECT DISTINCT`` reads every evidence row of the run (or, when
+    the planner guesses wrong, the whole table) — tens of seconds on a large
+    run, on every page view. This walks the ``(run_id, column, repo_id)`` index
+    one value at a time instead (a skip scan), so the cost is one index probe
+    per distinct value, independent of how much evidence the run holds.
+    """
+    if column not in _SKIP_SCAN_COLUMNS:
+        raise ValueError(f"no skip-scan index for {column!r}")
+    statement = text(
+        "WITH RECURSIVE walk(value) AS ("
+        f" (SELECT {column} FROM detection_evidence"
+        f"  WHERE run_id = :run AND {column} IS NOT NULL ORDER BY {column} LIMIT 1)"
+        " UNION ALL"
+        f" SELECT (SELECT {column} FROM detection_evidence"
+        f"  WHERE run_id = :run AND {column} > walk.value ORDER BY {column} LIMIT 1)"
+        " FROM walk WHERE walk.value IS NOT NULL"
+        ") SELECT value FROM walk WHERE value IS NOT NULL"
+    )
+    return [str(row[0]) for row in connection.execute(statement, {"run": run_id})]
+
+
 def detect_detail_response(request: Request, engine: Engine, row) -> HTMLResponse:
     run_id = int(row["id"])
     raw_page = request.query_params.get("page", "").strip()
@@ -717,28 +763,8 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 {"run": run_id},
             )
         ]
-        filter_states = [
-            str(row[0])
-            for row in connection.execute(
-                text(
-                    "SELECT DISTINCT rule_lifecycle FROM detection_evidence"
-                    " WHERE run_id = :run AND rule_lifecycle IS NOT NULL"
-                    " ORDER BY rule_lifecycle"
-                ),
-                {"run": run_id},
-            )
-        ]
-        filter_semantics = [
-            str(row[0])
-            for row in connection.execute(
-                text(
-                    "SELECT DISTINCT evidence_semantics FROM detection_evidence"
-                    " WHERE run_id = :run AND evidence_semantics IS NOT NULL"
-                    " ORDER BY evidence_semantics"
-                ),
-                {"run": run_id},
-            )
-        ]
+        filter_states = _distinct_evidence_values(connection, run_id, "rule_lifecycle")
+        filter_semantics = _distinct_evidence_values(connection, run_id, "evidence_semantics")
         repo_ids = [item["repo_id"] for item in item_rows if item["repo_id"] is not None]
         totals: dict[int, int] = {}
         evidence_rows: list = []
@@ -817,7 +843,8 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     windows = spec.get("windows") or {"commits": 100, "prs": 100, "issues": 100}
     clone = spec.get("clone") or {}
     depth = clone.get("depth")
-    git_mode = spec.get("source") == "git"
+    git_mode = spec.get("source") in ("git", "hybrid")
+    hybrid_mode = spec.get("source") == "hybrid"
     if git_mode and isinstance(depth, int) and not isinstance(depth, bool):
         windows = {**windows, "commits": depth, "prs": depth}
     first_repo = (page_number - 1) * DETECTION_REPOS_PAGE_SIZE + 1
@@ -838,6 +865,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
                 "ratio_label": _ratio_label(result_summary.get("commit_ratio")),
                 "windows": windows,
                 "git_mode": git_mode,
+                "hybrid_mode": hybrid_mode,
                 "fast_mode": spec.get("scan_mode") == "fast",
                 "repos": repos,
                 "page": page_number,
@@ -1309,7 +1337,10 @@ def register_detect(
 
     @application.get("/detections/{run_id}", response_class=HTMLResponse)
     def detect_page(request: Request, run_id: int):
-        engine = engine_factory()
+        # Bounded: this page's evidence queries scale with the run, and the
+        # status poll reloads it, so a slow query must fail fast rather than
+        # pile up and exhaust the shared pool.
+        engine = bounded(engine_factory())
         row = _run_row(engine, run_id)
         if row is None or row["kind"] != "detect":
             return templates.TemplateResponse(
@@ -1341,7 +1372,7 @@ def register_detect(
             channel for channel in pack_channels if channel not in OPT_IN_CHANNELS
         ]
         selected = (request.query_params.get("source") or "api").strip()
-        if selected == "git":
+        if selected in ("git", "hybrid"):
             # The API-only channels are disabled in the form while git is
             # selected; the API estimate still prices a full API run.
             for channel in API_ONLY_CHANNELS:
@@ -1428,7 +1459,7 @@ def register_detect(
 
     @application.get("/partials/detections/{run_id}/status", response_class=HTMLResponse)
     def detect_status_partial(request: Request, run_id: int):
-        engine = engine_factory()
+        engine = bounded(engine_factory())
         row = _run_row(engine, run_id)
         if row is None:
             return HTMLResponse("run not found", status_code=404)

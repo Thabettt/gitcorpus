@@ -597,19 +597,32 @@ def recover_orphaned_runs(engine: Engine) -> int:
     return int(result.rowcount or 0)
 
 
-def reset_run_artifacts(engine: Engine, run_id: int) -> None:
+_KEPT_REPOS = "SELECT repo_id FROM detection_checkpoints WHERE run_id = :run_id AND clean"
+
+
+def reset_run_artifacts(engine: Engine, run_id: int, *, keep_finished: bool = False) -> None:
+    """Clear a run's results before it re-runs.
+
+    ``keep_finished`` (detection resume) keeps every repository with a clean
+    checkpoint, its run item, evidence and facets, so the re-run only scans
+    the repositories that failed, came back partial, or never ran. Anything
+    without a clean checkpoint is cleared exactly as a full reset would.
+    """
     with engine.begin() as connection:
-        connection.execute(delete(RunItem).where(RunItem.run_id == run_id))
-        if connection.scalar(text("SELECT to_regclass('detection_evidence')")) is not None:
-            connection.execute(
-                text("DELETE FROM detection_evidence WHERE run_id = :run_id"),
-                {"run_id": run_id},
-            )
-        if connection.scalar(text("SELECT to_regclass('detection_repo_filters')")) is not None:
-            connection.execute(
-                text("DELETE FROM detection_repo_filters WHERE run_id = :run_id"),
-                {"run_id": run_id},
-            )
+        keep = (
+            keep_finished
+            and connection.scalar(text("SELECT to_regclass('detection_checkpoints')")) is not None
+        )
+        scope = f" AND repo_id NOT IN ({_KEPT_REPOS})" if keep else ""
+        connection.execute(
+            text(f"DELETE FROM run_items WHERE run_id = :run_id{scope}"), {"run_id": run_id}
+        )
+        for table in ("detection_evidence", "detection_repo_filters", "detection_checkpoints"):
+            if connection.scalar(text(f"SELECT to_regclass('{table}')")) is not None:
+                connection.execute(
+                    text(f"DELETE FROM {table} WHERE run_id = :run_id{scope}"),
+                    {"run_id": run_id},
+                )
         if connection.scalar(text("SELECT to_regclass('analysis_snapshots')")) is not None:
             connection.execute(
                 text("DELETE FROM analysis_snapshots WHERE run_id = :run_id"),
