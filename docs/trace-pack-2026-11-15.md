@@ -109,7 +109,7 @@ A trial discovery run over 60 public repos from the run-101 corpus (`--depth 100
 
 ```bash
 PYTHONPATH=<checkout>/src python scripts/build_trace_pack_2026_11_15.py \
-  --baseline packs/patterns \
+  --baseline packs/sources/2026-10-19 \
   --previous packs/sources/2026-11-14/catalogue.json \
   --out packs/sources/2026-11-15/catalogue.json \
   --mapping packs/sources/2026-11-15/baseline-mapping.csv

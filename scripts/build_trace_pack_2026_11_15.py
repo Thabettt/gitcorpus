@@ -22,8 +22,8 @@ of the papers' heuristic set remains pack 2026-10-19.
 Usage::
 
     python scripts/build_trace_pack_2026_11_15.py \
-        --baseline packs/patterns \
-        --previous ../../packs/sources/2026-11-14/catalogue.json \
+        --baseline packs/sources/2026-10-19 \
+        --previous packs/sources/2026-11-14/catalogue.json \
         --out packs/sources/2026-11-15/catalogue.json \
         --mapping packs/sources/2026-11-15/baseline-mapping.csv
 """

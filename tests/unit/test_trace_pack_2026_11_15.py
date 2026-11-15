@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PACK = ROOT / "packs" / "2026-11-15.json"
 MAPPING = ROOT / "packs" / "sources" / "2026-11-15" / "baseline-mapping.csv"
-BASELINE = ROOT / "packs" / "patterns"
+BASELINE = ROOT / "packs" / "sources" / "2026-10-19"
 
 
 def _pack_doc() -> dict:
