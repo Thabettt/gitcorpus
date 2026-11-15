@@ -393,18 +393,28 @@ def create_app(
     def engine_for() -> Engine:
         return cast(Engine, loaders.get("engine", build_engine))
 
+    def background_engine_for() -> Engine:
+        # Find/detect runs get their own pool so page traffic can never take
+        # every connection and stall a running scan's writes (nor can a scan
+        # starve the pages). A caller-supplied engine is shared as before.
+        if engine is not None:
+            return engine_for()
+        return cast(Engine, loaders.get("background_engine", build_engine))
+
     def runner_for() -> Runner:
         def build() -> Runner:
             if runner_factory is not None:
-                return runner_factory(engine_for())
+                return runner_factory(background_engine_for())
 
             def runner(run_id: int, filter_spec: dict) -> RunPayload:
                 from serve.filter_spec import parse_filter_spec
                 from serve.runner import run_filter, runner_config_from
                 from store.settings import load_run_settings
 
-                settings = load_run_settings(engine_for())
-                deps = build_deps(engine_for(), max_concurrent=settings.limiter_max_concurrent)
+                settings = load_run_settings(background_engine_for())
+                deps = build_deps(
+                    background_engine_for(), max_concurrent=settings.limiter_max_concurrent
+                )
                 try:
                     return run_filter(
                         deps,
@@ -422,16 +432,16 @@ def create_app(
     def detect_runner_for() -> Runner:
         def build() -> Runner:
             if detect_runner_factory is not None:
-                return detect_runner_factory(engine_for())
+                return detect_runner_factory(background_engine_for())
             from serve.detect import build_detect_runner
 
-            return build_detect_runner(engine_for())
+            return build_detect_runner(background_engine_for())
 
         return cast(Runner, loaders.get("detect_runner", build))
 
     def executor_for() -> RunExecutor:
         def build() -> RunExecutor:
-            return RunExecutor(engine_for(), runs_root=runs_root)
+            return RunExecutor(background_engine_for(), runs_root=runs_root)
 
         return cast(RunExecutor, loaders.get("executor", build))
 
@@ -880,7 +890,9 @@ def create_app(
             submit_runner = runner_for()
 
         def reset_and_queue() -> None:
-            reset_run_artifacts(engine, run_id)
+            # A detection resume keeps every repository that already finished
+            # cleanly and rescans only the rest; other run kinds start over.
+            reset_run_artifacts(engine, run_id, keep_finished=row.get("kind") == "detect")
             with engine.begin() as connection:
                 connection.execute(
                     update(Runs)

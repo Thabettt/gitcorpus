@@ -21,6 +21,12 @@
         <td>≈{{ git.hours_low }}–{{ git.hours_high }} h at up to {{ git.workers }} workers</td>
         <td>{% if git.keep %}≈{{ git.estimated_mb }} MB kept on disk{% else %}&lt;1 GB peak (each clone deleted after its scan){% endif %}</td>
       </tr>
+      <tr class="{% if selected == 'hybrid' %}estimate-selected{% endif %}">
+        <td><strong>Hybrid (git + PR metadata)</strong>{% if selected == 'hybrid' %} — selected{% endif %}</td>
+        <td>Git cost above + {{ repos }} GraphQL calls (≈{{ repos }} points, spread over {{ api.configured_tokens }} token{% if api.configured_tokens != 1 %}s{% endif %})</td>
+        <td>Same as local clone while the tokens keep pace (≈5,000 repos/hour each; PR metadata is fetched in parallel)</td>
+        <td>Same as local clone</td>
+      </tr>
     </tbody>
   </table>
   {% if api.deadline_exceeded %}

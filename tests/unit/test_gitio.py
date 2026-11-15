@@ -1197,6 +1197,10 @@ def test_parse_merge_branches_handles_pr_local_and_fork_forms():
         ("remote: You have exceeded a secondary rate limit", "transient"),
         ("fatal: Unable to create '.../.git/index.lock': File exists", "local"),
         ("fatal: destination path 'x' already exists and is not an empty directory", "local"),
+        ("fatal: expected 'acknowledgments', received 'packfile'", "transient"),
+        ("fatal: expected ‘acknowledgments’", "transient"),
+        ("fatal: protocol error: bad pack header", "transient"),
+        ("fatal: the remote end hung up unexpectedly", "transient"),
         ("something unexpected happened", "fatal"),
     ],
 )
@@ -1489,3 +1493,52 @@ def test_fetch_pr_refs_with_reserved_gate_still_honours_prefetched_refs(tmp_path
     )
     assert [call[0] for call in fake.calls] == ["fetch"]
     assert (gate.acquires, gate.releases) == (0, 0)
+
+
+_NEGOTIATION_STDERR = "fatal: expected 'acknowledgments', received 'ERR upload-pack: timeout'"
+
+
+def test_fetch_pr_refs_skips_negotiation_after_an_acknowledgments_desync(monkeypatch, tmp_path):
+    monkeypatch.setattr(gitio, "_PR_FETCH_CHUNK_REFS", 2)
+    lines = "".join(f"sha{n}\trefs/pull/{n}/head\n" for n in (1, 2, 3, 4, 5))
+
+    def handler(args):
+        if args[0] == "ls-remote":
+            return lines
+        if args[0] == "fetch":
+            raise GitError(list(args), 128, _NEGOTIATION_STDERR)
+        if args[:2] == ("-c", "fetch.negotiationAlgorithm=noop") and args[2] == "fetch":
+            return ""
+        return None
+
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    assert len(fetch_pr_refs(fake, depth=100)) == 5
+    fetches = [call for call in fake.calls if "fetch" in call]
+    # First chunk: negotiated attempt fails, noop retry succeeds; the later
+    # chunks go straight to noop instead of failing the same way first.
+    assert [call[0] for call in fetches] == ["fetch", "-c", "-c", "-c"]
+    assert fake.stdins[-3:] == [
+        b"refs/pull/1/head\nrefs/pull/2/head\n",
+        b"refs/pull/3/head\nrefs/pull/4/head\n",
+        b"refs/pull/5/head\n",
+    ]
+    assert (tmp_path / ".git" / ".gitcorpus-pr-refs.json").exists()
+
+
+def test_fetch_pr_refs_does_not_retry_ordinary_failures_without_negotiation(tmp_path):
+    def handler(args):
+        if args[0] == "ls-remote":
+            return _LS_REMOTE_OUTPUT
+        if args[0] == "fetch":
+            raise GitError(list(args), 128, "fatal: unable to access: Failed to connect")
+        return None
+
+    fake = FakeRepo(handler, dest=_repo_dir(tmp_path))
+    with pytest.raises(GitError):
+        fetch_pr_refs(fake, depth=100)
+    assert not any(call[0] == "-c" for call in fake.calls)
+
+
+def test_is_negotiation_failure_matches_only_protocol_desyncs():
+    assert gitio.is_negotiation_failure(GitError(["git"], 128, _NEGOTIATION_STDERR))
+    assert not gitio.is_negotiation_failure(GitError(["git"], 128, "fatal: early EOF"))

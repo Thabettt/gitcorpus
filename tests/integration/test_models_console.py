@@ -27,6 +27,7 @@ ALL_TABLES = {
     "trace_packs",
     "detection_evidence",
     "detection_repo_filters",
+    "detection_checkpoints",
     "analysis_snapshots",
 }
 
@@ -118,7 +119,7 @@ def _indexdefs(engine: Engine) -> dict[str, str]:
 
 
 def test_single_alembic_head(alembic_config):
-    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0025"]
+    assert ScriptDirectory.from_config(alembic_config).get_heads() == ["0027"]
 
 
 def test_metadata_declares_exactly_the_expected_tables():

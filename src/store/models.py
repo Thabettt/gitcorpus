@@ -307,10 +307,24 @@ class DetectionEvidence(Base):
             name="detection_evidence_channel_check",
         ),
         Index("de_run_repo_idx", "run_id", "repo_id"),
-        Index("de_run_agent_idx", "run_id", "agent"),
-        Index("de_run_channel_idx", "run_id", "channel"),
+        Index("de_run_agent_channel_repo_idx", "run_id", "agent", "channel", "repo_id"),
+        Index("de_run_channel_repo_idx", "run_id", "channel", "repo_id"),
         Index("de_run_family_idx", "run_id", "family_id"),
         Index("de_run_rule_idx", "run_id", "rule_id"),
+        Index("de_run_lifecycle_repo_idx", "run_id", "rule_lifecycle", "repo_id"),
+        Index("de_run_semantics_repo_idx", "run_id", "evidence_semantics", "repo_id"),
+        Index(
+            "de_run_current_repo_idx",
+            "run_id",
+            "repo_id",
+            postgresql_where=text("is_current IS TRUE"),
+        ),
+        Index(
+            "de_run_historical_repo_idx",
+            "run_id",
+            "repo_id",
+            postgresql_where=text("is_historical IS TRUE"),
+        ),
         Index(
             "de_run_committed_file_repo_idx",
             "run_id",
@@ -363,6 +377,24 @@ class DetectionRepoFilter(Base):
     repo_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("repos.id"), primary_key=True)
     agent: Mapped[str] = mapped_column(Text, primary_key=True)
     channel: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class DetectionCheckpoint(Base):
+    """One finished repository of a detection run, kept so a resume can skip it.
+
+    ``clean`` marks a scan with no partial or unavailable channel; only clean
+    repositories survive a resume. ``contribution`` is the repository's share
+    of the run summary, which cannot be rebuilt from the stored document.
+    """
+
+    __tablename__ = "detection_checkpoints"
+
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    repo_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("repos.id"), primary_key=True)
+    clean: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    contribution: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
 class SavedFilter(Base):

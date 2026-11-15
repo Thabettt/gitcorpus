@@ -105,6 +105,7 @@ CleanDbFactory = Callable[..., Engine]
 
 FULL_TRUNCATE_TABLES = (
     "analysis_snapshots",
+    "detection_checkpoints",
     "detection_repo_filters",
     "detection_evidence",
     "trace_packs",
