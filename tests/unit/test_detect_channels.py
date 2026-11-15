@@ -134,7 +134,7 @@ def test_detect_files_unavailable_repo():
     result = detect_files(make_deps(handler), "octo/gone", PACK, ref="main")
     assert result.status == "unavailable"
     assert result.hits == ()
-    assert result.failure_kind is FailureKind.PERMANENT
+    assert result.failure_kind is FailureKind.NOT_FOUND
 
 
 def test_detect_files_follows_same_host_rename_redirects():
@@ -391,7 +391,7 @@ def test_history_null_repository_is_unavailable():
 
     result = detect_history(make_deps(handler), "octo/gone", PACK)
     assert result["author"].status == "unavailable"
-    assert result["author"].failure_kind is FailureKind.PERMANENT
+    assert result["author"].failure_kind is FailureKind.NOT_FOUND
 
 
 def test_history_selection_scopes_matching():
@@ -413,7 +413,7 @@ def test_history_graphql_errors_with_null_data_is_partial():
     assert result["author"].note == "graphql errors"
 
 
-def test_history_graphql_not_found_is_permanent():
+def test_history_graphql_not_found_is_identity_scoped():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -432,7 +432,7 @@ def test_history_graphql_not_found_is_permanent():
 
     assert result["author"].status == "unavailable"
     assert result["author"].note == "repo not found"
-    assert result["author"].failure_kind is FailureKind.PERMANENT
+    assert result["author"].failure_kind is FailureKind.NOT_FOUND
 
 
 def test_history_retries_a_malformed_success_body(monkeypatch):

@@ -53,6 +53,9 @@ _RETRYABLE_HTTP_STATUSES = frozenset({401, 403, 408, 409, 425, 429, 500, 502, 50
 class FailureKind(StrEnum):
     PERMANENT = "permanent"
     RETRYABLE = "retryable"
+    # GitHub answers 404 / NOT_FOUND both for a missing repository and for one the
+    # calling account cannot see, so another identity may still be able to read it.
+    NOT_FOUND = "not_found"
 
 
 @dataclass(frozen=True)
@@ -398,7 +401,7 @@ def detect_files(
             return ChannelResult(
                 status="unavailable",
                 note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
+                failure_kind=FailureKind.NOT_FOUND,
             )
         return ChannelResult(
             status="partial",
@@ -607,7 +610,7 @@ def _graphql(
                     payload,
                     "unavailable",
                     "repo not found",
-                    FailureKind.PERMANENT,
+                    FailureKind.NOT_FOUND,
                 )
             last_note = "graphql errors"
             if not _retryable_graphql_errors(payload):
@@ -745,7 +748,7 @@ def detect_history(
             key: ChannelResult(
                 status="unavailable",
                 note="repo not found",
-                failure_kind=FailureKind.PERMANENT,
+                failure_kind=FailureKind.NOT_FOUND,
             )
             for key in ("author", "commit_trailer", "bot")
         }
@@ -1165,7 +1168,7 @@ def detect_prs(
         return ChannelResult(
             status=status,
             note=note,
-            failure_kind=FailureKind.PERMANENT,
+            failure_kind=FailureKind.NOT_FOUND,
         )
     if gql_status != "ok":
         status, note = "partial", gql_note
@@ -1327,7 +1330,7 @@ def detect_issues(
         return ChannelResult(
             status="unavailable",
             note="repo not found",
-            failure_kind=FailureKind.PERMANENT,
+            failure_kind=FailureKind.NOT_FOUND,
         )
     entries: list[dict] = list(extra_entries)
     created_at: dict[object, str] = {}
