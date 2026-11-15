@@ -123,7 +123,7 @@ A rule with documentation but no observations is `provisional`. One observed in 
 - **Paths:** any depth by default for product-owned directories and files; root-only only with a documented reason. Directory probes (`.claude/`) must satisfy directory rules (`kind: directory`).
 
 ### Step 4: a frozen, labelled validation set
-- A stratified random sample per (family × channel) cell: n=30 for the top ~10 families by prevalence, n=8 for the rest, the census paper's design. Hand-label true positive, false positive or uncertain. For file rules, add a second label: *configuration genuine* vs *evidence of use*.
+- A stratified random sample of n=60 per stratum. The top ~10 families by prevalence get one stratum per (family × channel); all other families are pooled into one stratum per channel. Hand-label true positive, false positive or uncertain. For file rules, add a second label: *configuration genuine* vs *evidence of use*. (Correction: an earlier draft copied the census paper's n=30/n=8. With those sizes the 0.90 lower-bound gate below can never be met: 30/30 gives 0.886. 59/60 gives 0.911.)
 - **Negative controls:** humans named Claude/Devin/Cody; `cursor[bot]` review comments; repos that only *document* an agent (docs mentioning `CLAUDE.md`); forks; template repos.
 - Report precision with Wilson 95% intervals. Gate: a rule ships as `strong` only if the lower bound is at least 0.90. Otherwise it is `corroborating` (it counts only alongside another channel) or rejected.
 - Commit the labels with the pack version, so any number in a paper traces back to labelled data.

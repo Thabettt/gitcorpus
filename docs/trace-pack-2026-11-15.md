@@ -75,11 +75,28 @@ Every rule carries `provenance.validation`:
 Protocol, with tooling in [`scripts/trace_pack_validation_sample.py`](../scripts/trace_pack_validation_sample.py):
 
 1. Run detection with this pack on the target corpus.
-2. `draw --run <id>`: a stratified sample with one stratum per (family × channel), n=30 for the ten most prevalent families and n=8 otherwise, one row per repository. Ignored-only file mentions are a separate stratum.
+2. `draw --run <id>`: a stratified sample of 60 rows per stratum, one row per repository. The ten most prevalent families each get one stratum per channel. All other families are pooled into one stratum per channel, so they get a channel-level precision. Ignored-only file mentions are a separate stratum. Sixty is the smallest round size that can clear the bar with one false positive (59/60 gives a lower bound of 0.911); 30/30 reaches only 0.886.
 3. Two raters label each row TP / FP / unsure / 404 independently, then adjudicate. File rows also get *configuration genuine* vs *evidence of use*.
 4. Add negative controls: humans named Claude, Devin or Cody; `cursor[bot]` review-only repos; repos that only document an agent; forks; templates.
 5. `score --sheet`: per-stratum precision with Wilson 95% intervals. A cell is `strong` only if the lower bound is at least 0.90. Otherwise its rules move to `corroborating` or into the ledger in the next version.
-6. Commit the labelled sheet under `packs/validation/2026-11-15/` and record the results in each rule's `provenance.validation` in the next pack version.
+6. Commit the labelled sheet under `packs/validation/2026-11-15/`. Then `score --sheet … --out scores.json` and `apply --catalogue packs/sources/2026-11-15/catalogue.json --scores scores.json --version 2026-11-16 --out packs/sources/2026-11-16/catalogue.json`. That writes measured precision into each sampled rule's `provenance.validation`, sets `strong` or `corroborating` from the interval, and prints every confidence change. It always writes a new version; frozen packs never change.
+
+Discovery for the next version: `scripts/trace_pack_discovery.py --pack packs/2026-11-15.json --run <id>` light-clones a sample of the run's public repos and lists what the pack leaves unmatched: co-author trailers (email reduced to its domain), `[bot]` identities, dot-paths, upper-case instruction files and branch prefixes. Rows are ranked by repo count, as leads for the next research pass.
+
+## Leads for the next version (first discovery pass)
+
+A trial discovery run over 60 public repos from the run-101 corpus (`--depth 100`) found these unmatched candidates in two or more repos. None is a rule yet; each needs documentation or observed evidence, then validation:
+
+| Candidate | Repos | Likely meaning |
+|---|---:|---|
+| `SKILL.md` | 31 | Agent Skills format shared by several agents; likely `Generic` or adjacent, like `AGENTS.md` |
+| `.agents/` | 12 | Shared agent folder, e.g. `.agents/skills`; likely `Generic` |
+| `agent/` branch prefix | 10 | Unknown; check which tool creates `agent/…` branches before attributing |
+| `.claude-plugin/` | 6 | Claude Code plugin manifest; Claude Code configuration |
+| `.mcp.json` | 6 | MCP server config used by several agents; adjacent |
+| `.codex-plugin/` | 3 | Codex plugin manifest; Codex configuration |
+| `Sisyphus <…@sisyphuslabs.ai>` co-author | 2 | Agent co-author identity; research the product |
+| `capy-ai[bot]` co-author | 2 | Capy coding agent bot; research the product |
 
 ## Before freezing
 

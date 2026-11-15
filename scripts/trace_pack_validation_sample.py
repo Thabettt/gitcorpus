@@ -3,15 +3,19 @@
 Design (docs/findings/2026-11-15-trace-pack-audit.md §5 step 4; after the census
 paper, arXiv 2606.24429, and the Agentic Much? protocol, arXiv 2601.18341 §4.1.3):
 
-* one stratum per (family, channel) cell that produced positive evidence;
-* n = 30 for cells of the ten most prevalent families, n = 8 for the rest
-  (the whole cell when it is smaller);
+* the ten most prevalent families get one stratum per (family, channel);
+* every other family is pooled into one stratum per channel (``other|<channel>``),
+  so small families get a channel-level precision instead of untestable cells;
+* n = 60 rows per stratum (the whole stratum when smaller), one row per
+  repository (per repository and family when pooled);
 * two independent raters label every row TP / FP / unsure / 404, then adjudicate;
 * file rows get a second label: configuration genuine vs evidence of use.
 
-Precision per cell is reported with a Wilson 95% interval; a rule is ``strong``
-only when the lower bound is at least 0.90. The labelled CSV is committed next to
-the pack version it validates.
+Precision per stratum is reported with a Wilson 95% interval; a rule is
+``strong`` only when the lower bound is at least 0.90. n = 60 is the smallest
+round size that clears that bar with one false positive (59/60 -> 0.911); 30/30
+would only reach 0.886, so smaller cells can never earn ``strong``. The labelled
+CSV is committed next to the pack version it validates.
 
 Usage::
 
@@ -25,14 +29,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import random
 from collections import Counter, defaultdict
 from pathlib import Path
 
 TOP_FAMILIES = 10
-N_TOP = 30
-N_OTHER = 8
+N_PER_STRATUM = 60
 COLUMNS = [
     "stratum",
     "family",
@@ -72,8 +76,6 @@ def github_url(repo: str, channel: str, evidence: dict) -> str:
 
 
 def draw(run_id: int, seed: int) -> list[dict]:
-    import json
-
     import sqlalchemy as sa
 
     engine = sa.create_engine(os.environ["DATABASE_URL"])
@@ -98,20 +100,21 @@ def draw(run_id: int, seed: int) -> list[dict]:
     for (family, _channel), rows in cells.items():
         prevalence[family] += len({repo for _rule, repo, _ev in rows})
     top = {family for family, _count in prevalence.most_common(TOP_FAMILIES)}
+    strata: dict[str, dict[tuple[str, str], tuple]] = defaultdict(dict)
+    for (family, channel), rows in cells.items():
+        stratum = f"{family}|{channel}" if family in top else f"other|{channel}"
+        # One row per repository (and family) so a single noisy repo cannot fill a cell.
+        for rule_id, repo, evidence in rows:
+            strata[stratum].setdefault((repo, family), (family, channel, rule_id, repo, evidence))
     rng = random.Random(seed)
     sample: list[dict] = []
-    for (family, channel), rows in sorted(cells.items()):
-        size = N_TOP if family in top else N_OTHER
-        # One row per repository first, so a single noisy repo cannot fill a cell.
-        by_repo: dict[str, tuple] = {}
-        for row in rows:
-            by_repo.setdefault(row[1], row)
-        pool = list(by_repo.values())
+    for stratum, keyed in sorted(strata.items()):
+        pool = sorted(keyed.values(), key=lambda row: (row[3], row[0]))
         rng.shuffle(pool)
-        for rule_id, repo, evidence in pool[:size]:
+        for family, channel, rule_id, repo, evidence in pool[:N_PER_STRATUM]:
             sample.append(
                 {
-                    "stratum": f"{family}|{channel}",
+                    "stratum": stratum,
                     "family": family,
                     "channel": channel,
                     "rule_id": rule_id,
@@ -128,21 +131,89 @@ def draw(run_id: int, seed: int) -> list[dict]:
     return sample
 
 
-def summarize(path: Path) -> None:
-    """Print per-stratum precision with Wilson intervals from a labelled sheet."""
+STRONG_LOWER_BOUND = 0.90
+
+
+def score_sheet(path: Path) -> list[dict]:
+    """Per-stratum precision with Wilson intervals from an adjudicated sheet."""
     with path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     cells: dict[str, Counter] = defaultdict(Counter)
+    rule_ids: dict[str, set[str]] = defaultdict(set)
     for row in rows:
         label = (row.get("adjudicated") or "").strip().upper()
         if label in {"TP", "FP"}:
             cells[row["stratum"]][label] += 1
-    print(f"{'stratum':50s} {'n':>4s} {'precision':>9s} {'95% CI':>15s} gate")
+            if row.get("rule_id"):
+                rule_ids[row["stratum"]].add(row["rule_id"])
+    scores = []
     for stratum, counts in sorted(cells.items()):
         n = counts["TP"] + counts["FP"]
         low, high = wilson(counts["TP"], n)
-        gate = "strong" if low >= 0.90 else "corroborating/reject"
-        print(f"{stratum:50s} {n:4d} {counts['TP'] / n:9.3f} [{low:.3f}, {high:.3f}] {gate}")
+        scores.append(
+            {
+                "stratum": stratum,
+                "n": n,
+                "tp": counts["TP"],
+                "precision": round(counts["TP"] / n, 4),
+                "ci95": [round(low, 4), round(high, 4)],
+                "gate": "strong" if low >= STRONG_LOWER_BOUND else "corroborating",
+                "rule_ids": sorted(rule_ids[stratum]),
+                "sheet": path.name,
+            }
+        )
+    return scores
+
+
+def summarize(path: Path, out: Path | None = None) -> None:
+    scores = score_sheet(path)
+    print(f"{'stratum':50s} {'n':>4s} {'precision':>9s} {'95% CI':>15s} gate")
+    for item in scores:
+        low, high = item["ci95"]
+        print(
+            f"{item['stratum']:50s} {item['n']:4d} {item['precision']:9.3f} "
+            f"[{low:.3f}, {high:.3f}] {item['gate']}"
+        )
+    if out is not None:
+        out.write_text(json.dumps(scores, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {len(scores)} scored strata to {out}")
+
+
+def apply_scores(catalogue: dict, scores: list[dict], version: str) -> tuple[dict, list[str]]:
+    """Return a new catalogue version whose sampled rules carry measured validation.
+
+    Every rule seen in a scored stratum gets that stratum's precision, interval and
+    sample size, and is ``strong`` only when the interval's lower bound clears the
+    gate; otherwise it becomes ``corroborating``. Unsampled rules are untouched.
+    The input catalogue is not modified: frozen versions never change.
+    """
+    updated = json.loads(json.dumps(catalogue))
+    updated["version"] = version
+    by_rule: dict[str, dict] = {}
+    for item in scores:
+        for rule_id in item["rule_ids"]:
+            by_rule[rule_id] = item
+    report: list[str] = []
+    for rule in updated["rules"]:
+        item = by_rule.get(rule["id"])
+        if item is None:
+            continue
+        rule["provenance"]["validation"] = {
+            "status": "measured",
+            "precision": item["precision"],
+            "ci95": item["ci95"],
+            "n": item["n"],
+            "stratum": item["stratum"],
+            "sheet": item["sheet"],
+        }
+        previous = rule["confidence"]["class"]
+        rule["confidence"]["class"] = item["gate"]
+        if previous != item["gate"]:
+            report.append(
+                f"{rule['id']}: {previous} -> {item['gate']} "
+                f"(precision {item['precision']}, lower bound {item['ci95'][0]})"
+            )
+    return updated, report
 
 
 def main() -> int:
@@ -154,9 +225,29 @@ def main() -> int:
     draw_cmd.add_argument("--seed", type=int, default=20261115)
     score = sub.add_parser("score")
     score.add_argument("--sheet", type=Path, required=True)
+    score.add_argument("--out", type=Path, help="write per-stratum scores as JSON")
+    apply_cmd = sub.add_parser("apply")
+    apply_cmd.add_argument("--catalogue", type=Path, required=True)
+    apply_cmd.add_argument("--scores", type=Path, required=True)
+    apply_cmd.add_argument("--version", required=True, help="the NEW pack version")
+    apply_cmd.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "score":
-        summarize(args.sheet)
+        summarize(args.sheet, args.out)
+        return 0
+    if args.command == "apply":
+        catalogue = json.loads(args.catalogue.read_text(encoding="utf-8"))
+        if catalogue.get("version") == args.version:
+            parser.error("apply writes a new version; frozen packs never change")
+        scores = json.loads(args.scores.read_text(encoding="utf-8"))
+        updated, report = apply_scores(catalogue, scores, args.version)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(
+            json.dumps(updated, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        for line in report:
+            print(line)
+        print(f"wrote {args.out} ({len(report)} confidence changes)")
         return 0
     rows = draw(args.run, args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)

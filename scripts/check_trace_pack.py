@@ -28,28 +28,38 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-def static_checks(pack_doc: dict, previous_doc: dict, mapping_path: Path) -> list[str]:
+def static_checks(
+    pack_doc: dict,
+    previous_doc: dict | None = None,
+    mapping_path: Path | None = None,
+    *,
+    require_provenance: bool = True,
+) -> list[str]:
+    """Problems that must block a pack release; an empty list means it may ship."""
     errors: list[str] = []
     ids = {r["id"] for r in pack_doc["rules"]} | {r["id"] for r in pack_doc["rejections"]}
-    with mapping_path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    for row in rows:
-        if not row["outcome"]:
-            errors.append(f"baseline {row['channel']}:{row['pattern']} has no outcome")
-        for rule_id in row["rules"].split():
-            if rule_id != "noise" and rule_id != "ledger" and rule_id not in ids:
-                errors.append(f"baseline {row['pattern']!r} points at missing rule {rule_id}")
-        if not row["rules"].strip():
-            errors.append(f"baseline {row['pattern']!r} maps to nothing")
-    for rule in previous_doc["rules"] + previous_doc["rejections"]:
-        if rule["id"] not in ids:
-            errors.append(f"previous rule {rule['id']} disappeared without a ledger entry")
-    for rule in pack_doc["rules"]:
-        if rule.get("disposition") != "positive":
-            continue
-        provenance = rule.get("provenance") or {}
-        if "cohort" not in provenance or "validation" not in provenance:
-            errors.append(f"rule {rule['id']} lacks provenance.cohort/validation")
+    if mapping_path is not None:
+        with mapping_path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        for row in rows:
+            if not row["outcome"]:
+                errors.append(f"baseline {row['channel']}:{row['pattern']} has no outcome")
+            for rule_id in row["rules"].split():
+                if rule_id not in {"noise", "ledger"} and rule_id not in ids:
+                    errors.append(f"baseline {row['pattern']!r} points at missing rule {rule_id}")
+            if not row["rules"].strip():
+                errors.append(f"baseline {row['pattern']!r} maps to nothing")
+    if previous_doc is not None:
+        for rule in previous_doc["rules"] + previous_doc["rejections"]:
+            if rule["id"] not in ids:
+                errors.append(f"previous rule {rule['id']} disappeared without a ledger entry")
+    if require_provenance:
+        for rule in pack_doc["rules"]:
+            if rule.get("disposition") != "positive":
+                continue
+            provenance = rule.get("provenance") or {}
+            if "cohort" not in provenance or "validation" not in provenance:
+                errors.append(f"rule {rule['id']} lacks provenance.cohort/validation")
     return errors
 
 
@@ -116,12 +126,12 @@ def _legacy_family_names(pack) -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pack", type=Path, required=True)
-    parser.add_argument("--previous", type=Path, required=True)
-    parser.add_argument("--mapping", type=Path, required=True)
+    parser.add_argument("--previous", type=Path)
+    parser.add_argument("--mapping", type=Path)
     parser.add_argument("--run", type=int)
     args = parser.parse_args()
     pack_doc = json.loads(args.pack.read_text(encoding="utf-8"))
-    previous_doc = json.loads(args.previous.read_text(encoding="utf-8"))
+    previous_doc = json.loads(args.previous.read_text(encoding="utf-8")) if args.previous else None
     errors = static_checks(pack_doc, previous_doc, args.mapping)
     for error in errors:
         print(f"FAIL {error}")
