@@ -846,7 +846,7 @@ def detect_detail_response(request: Request, engine: Engine, row) -> HTMLRespons
     git_mode = spec.get("source") in ("git", "hybrid")
     hybrid_mode = spec.get("source") == "hybrid"
     if git_mode and isinstance(depth, int) and not isinstance(depth, bool):
-        windows = {**windows, "commits": depth, "prs": depth}
+        windows = {**windows, "commits": depth}
     first_repo = (page_number - 1) * DETECTION_REPOS_PAGE_SIZE + 1
     last_repo = min(page_number * DETECTION_REPOS_PAGE_SIZE, total_repos)
     repos_label = f"repos {first_repo}–{last_repo} of {total_repos}"
