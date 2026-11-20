@@ -39,8 +39,30 @@ _MEDIA_TYPES = {
     "csv": "text/csv",
     "detections": "text/csv",
     "detections-json": "application/json",
+    "comparison": "text/csv",
 }
 _BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv", "detections": "detections.csv"}
+
+COMPARE_CSV_HEADER = [
+    "full_name",
+    "stack",
+    "stars",
+    "primary_language",
+    "country",
+    "adoption_label",
+    "agents_found",
+    "created_at",
+    "commit_ratio",
+    "geo_confidence",
+]
+
+_ADOPTION_LABEL = {
+    "none": "none",
+    "experimental": "agentic",
+    "limited": "agentic",
+    "consistent": "agentic",
+    "pervasive": "agentic",
+}
 
 DETECT_REPO_CSV_HEADER = [
     "repo_id",
@@ -524,11 +546,48 @@ def _detect_repo_chunks(
             yield buffer.getvalue().encode("utf-8")
 
 
+def _comparison_chunks(
+    engine: Engine, run_id: int, *, stack: str = "", batch_rows: int = DETECT_REPO_BATCH_ROWS
+) -> Iterator[bytes]:
+    buffer = io.StringIO()
+    buffer.write("\ufeff")
+    csv.writer(buffer).writerow(COMPARE_CSV_HEADER)
+    yield buffer.getvalue().encode("utf-8")
+    resolved = _resolved_negative_ids(engine, run_id)
+    with engine.connect() as connection:
+        result = connection.execution_options(stream_results=True).execute(
+            _DETECT_REPO_STREAM_SQL, {"run": run_id}
+        )
+        for partition in result.partitions(max(1, batch_rows)):
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer = csv.writer(buffer)
+            for row in partition:
+                document = row[9] if isinstance(row[9], dict) else {}
+                agents = document.get("agents") or []
+                adoption_level = document.get("adoption_level") or "none"
+                adoption_label = _ADOPTION_LABEL.get(adoption_level, "none")
+                language = _csv_cell(row[5])
+                writer.writerow([
+                    _csv_cell(_resolved_repo_id(row[0], row[1], resolved)),
+                    _csv_cell(stack or language),
+                    _csv_cell(row[2]),
+                    _csv_cell(language),
+                    _csv_cell(country_name(row[7])),
+                    _csv_cell(adoption_label),
+                    _csv_cell("|".join(str(a) for a in agents)),
+                    _csv_cell(_iso(document.get("first_signal_at"))),
+                    _csv_cell(document.get("commit_ratio")),
+                    _csv_cell(row[8]),
+                ])
+            yield buffer.getvalue().encode("utf-8")
+
+
 def export_bundle(
-    engine: Engine, run_id: int, *, format: str, runs_root: str = "runs"
+    engine: Engine, run_id: int, *, format: str, stack: str = "", runs_root: str = "runs"
 ) -> tuple[Iterator[bytes], str]:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv, detections, detections-json")
+        raise ValueError("format", "format must be one of: json, csv, detections, detections-json, comparison")
     run_row = _row_for_run(engine, run_id)
     if run_row["kind"] == "detect":
         if run_row["status"] in _UNFINISHED_STATUSES:
@@ -537,6 +596,8 @@ def export_bundle(
             return _detections_chunks(engine, run_id), _MEDIA_TYPES[format]
         if format == "detections-json":
             return _detections_json_chunks(engine, run_id), _MEDIA_TYPES[format]
+        if format == "comparison":
+            return _comparison_chunks(engine, run_id, stack=stack), _MEDIA_TYPES[format]
         if format == "json":
             return (
                 _json_chunks(engine, run_row, run_id, include_detection=True),
@@ -574,16 +635,16 @@ def _pack_segment(run_row: Row) -> str:
 
 
 def export_run(
-    engine: Engine, run_id: int, *, format: str = "json", runs_root: str = "runs"
+    engine: Engine, run_id: int, *, format: str = "json", stack: str = "", runs_root: str = "runs"
 ) -> StreamingResponse:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv, detections, detections-json")
+        raise ValueError("format", "format must be one of: json, csv, detections, detections-json, comparison")
     run_row = _row_for_run(engine, run_id)
     detect = run_row["kind"] == "detect"
     regenerated = detect or format not in _BUNDLE_FILES
     if not regenerated:
         regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
-    chunks, media_type = export_bundle(engine, run_id, format=format, runs_root=runs_root)
+    chunks, media_type = export_bundle(engine, run_id, format=format, stack=stack, runs_root=runs_root)
     if detect:
         stem = f"gitcorpus-detect-{run_id}{_pack_segment(run_row)}"
         filename = {
@@ -591,7 +652,8 @@ def export_run(
             "detections-json": f"{stem}-evidence.json",
             "csv": f"{stem}-repos.csv",
             "json": f"{stem}.json",
-        }[format]
+            "comparison": f"{stem}-comparison.csv",
+        }.get(format, f"{stem}.csv")
     else:
         filename = f"gitcorpus-{run_row['filter_hash']}-{run_id}.{format}"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
