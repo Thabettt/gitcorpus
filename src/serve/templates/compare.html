@@ -50,19 +50,32 @@
 
         <!-- ── Tab 1: Overview ───────────────────────────────────────────── -->
         <div id="tab-overview" class="compare-tab-panel">
+          <div id="compare-kpi-grid" class="compare-kpi-grid"></div>
           <div class="compare-chart-grid">
             <div class="compare-chart-card">
               <h3>Adoption Rate by Stack <span class="muted" style="font-weight:400;font-size:.8rem">(95% Wilson CI)</span></h3>
               <div class="compare-chart-wrap"><canvas id="chart-adoption-bars"></canvas></div>
             </div>
             <div class="compare-chart-card">
-              <h3>Agentic vs AI-Assisted Breakdown</h3>
+              <h3>Adoption Mix by Depth <span class="muted" style="font-weight:400;font-size:.8rem">(pervasive · consistent · limited · none)</span></h3>
               <div class="compare-chart-wrap"><canvas id="chart-adoption-split"></canvas></div>
+            </div>
+          </div>
+          <div class="compare-chart-grid" style="margin-top:1.5rem">
+            <div class="compare-chart-card">
+              <h3>Adoption Depth <span class="muted" style="font-weight:400;font-size:.8rem">(level mix per stack)</span></h3>
+              <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Reads <code>adoption_level</code>: experimental → pervasive.</p>
+              <div class="compare-chart-wrap"><canvas id="chart-adoption-depth"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>Detection Signal Breadth</h3>
+              <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos grouped by how many of the 8 channels fired (file, author, branch, bot, commit_trailer, pr_metadata, issue, label).</p>
+              <div class="compare-chart-wrap"><canvas id="chart-channel-breadth"></canvas></div>
             </div>
           </div>
           <div id="compare-summary-table-wrap" style="margin-top:1.5rem;overflow-x:auto">
             <table class="data-table" id="compare-summary-table">
-              <thead><tr><th>Stack</th><th>Repos</th><th>Adopted</th><th>Agentic</th><th>AI-Assisted</th><th>Rate</th><th>95% CI Low</th><th>95% CI High</th></tr></thead>
+              <thead><tr><th>Stack</th><th>Repos</th><th>Adopted</th><th>Agentic</th><th>Pervasive</th><th>Rate</th><th>95% CI Low</th><th>95% CI High</th></tr></thead>
               <tbody id="compare-summary-tbody"></tbody>
             </table>
           </div>
@@ -71,18 +84,38 @@
         <!-- ── Tab 2: Agents ─────────────────────────────────────────────── -->
         <div id="tab-agents" class="compare-tab-panel" hidden>
           <div class="compare-chart-card compare-chart-full">
+            <h3>Agent Lifecycle Funnel <span class="muted" style="font-weight:400;font-size:.8rem">(ever observed → currently active → currently configured) — per stack</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">For the top agent families, shows the number of repos where each was ever seen vs still active vs explicitly configured right now.</p>
+            <div id="compare-agent-lifecycle-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Multi-Agent Concentration</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">How many distinct agent families co-exist per repo.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-agent-concentration"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Primary Agent Market Share <span class="muted" style="font-weight:400;font-size:.8rem">(per stack)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Dominant agent per repo (strongest evidence trail).</p>
+            <div id="compare-primary-agent-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Top Agents per Stack</h3>
             <div id="compare-agents-top-stacks"></div>
           </div>
-          <div class="compare-chart-grid" style="margin-top:1.5rem">
-            <div class="compare-chart-card">
-              <h3>Tool Loyalty — Single vs Multi-Tool</h3>
-              <div class="compare-chart-wrap"><canvas id="chart-tool-loyalty"></canvas></div>
-            </div>
-            <div class="compare-chart-card">
-              <h3>Agent Diversity — Single vs Multi-Agent</h3>
-              <div class="compare-chart-wrap"><canvas id="chart-agent-diversity"></canvas></div>
-            </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Tool Loyalty <span class="muted" style="font-weight:400;font-size:.8rem">(agentic repos split by # of agent families ever seen)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Loyal = exactly one family. Polyglot = four or more. Per-stack doughnut; hover slices for counts.</p>
+            <div id="compare-tool-loyalty-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Agent Diversity Radar <span class="muted" style="font-weight:400;font-size:.8rem">(4 diversity axes per stack, 0–100% scaled)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">
+              <strong>Entropy</strong> = Shannon diversity of the agent-family mix.
+              <strong>Avg agents/repo</strong> = mean family count (capped at 4).
+              <strong>% with ≥3 agents</strong> = share of highly-mixed repos.
+              <strong>Family coverage</strong> = unique families seen ÷ global families.
+            </p>
+            <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-agent-diversity"></canvas></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>AI Commit Density Buckets</h3>
@@ -117,49 +150,99 @@
             <h3>Adoption Rate &amp; Tool Pricing by Income Group — per Stack</h3>
             <div id="compare-pricing-income-stacks"></div>
           </div>
-          <div class="compare-chart-grid" style="margin-top:1.5rem">
-            <div class="compare-chart-card">
-              <h3>MENA vs Non-MENA Adoption by Stack</h3>
-              <div class="compare-chart-wrap"><canvas id="chart-mena-vs-rest"></canvas></div>
-            </div>
-            <div class="compare-chart-card">
-              <h3>MENA Countries — Adoption Rate Detail</h3>
-              <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-mena-countries"></canvas></div>
-            </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>MENA vs Non-MENA Adoption by Stack</h3>
+            <div class="compare-chart-wrap"><canvas id="chart-mena-vs-rest"></canvas></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
-            <h3>Country × Month Adoption Heatmap</h3>
-            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Cells with &lt;5 repos shown as grey. Requires <code>created_at</code> and <code>country</code> columns.</p>
+            <h3>MENA Countries — Adoption Rate Detail <span class="muted" style="font-weight:400;font-size:.8rem">(per stack)</span></h3>
+            <div id="compare-mena-countries-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Country × Repo-Creation Month — Adoption Rate Cohort <span class="muted" style="font-weight:400;font-size:.8rem">(per stack)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Rows = top countries by repo count. Columns = the month the repo was created. Cell = % of repos in that country × creation-month cohort that are agentic. Cells with &lt;5 repos shown as "—".</p>
             <div id="compare-country-heatmap"></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
-            <h3>Country Rank Over Time (Bump Chart)</h3>
-            <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-country-bump"></canvas></div>
+            <h3>Country Adoption Rate Trend <span class="muted" style="font-weight:400;font-size:.8rem">(top countries, 3-month rolling · per stack)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Lines = adoption rate (% agentic) of repos created in each top country, smoothed over a 3-month window. Hover a line for exact rate and sample size.</p>
+            <div id="compare-country-bump-stacks"></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Cumulative Agentic Repos per Country</h3>
             <div class="compare-chart-wrap"><canvas id="chart-country-cumulative"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Country × Primary Agent <span class="muted" style="font-weight:400;font-size:.8rem">(per stack)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">For the top countries, which agent family leads? Row-wise % share.</p>
+            <div id="compare-country-agent-matrix"></div>
           </div>
         </div>
 
         <!-- ── Tab 4: Time Series ────────────────────────────────────────── -->
         <div id="tab-time" class="compare-tab-panel" hidden>
           <div class="compare-chart-card compare-chart-full">
-            <h3>AI Adoption Rate by Repository Creation Month</h3>
+            <h3>First AI Signal — Monthly Cohort <span class="muted" style="font-weight:400;font-size:.8rem">(adoption rate per month)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Reads <code>first_signal_at</code>: when the earliest agent trace appeared on each repo.</p>
             <div class="compare-chart-wrap"><canvas id="chart-time-series"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Agent Emergence Timeline <span class="muted" style="font-weight:400;font-size:.8rem">(cumulative repos per agent family)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Tracks how each major agent family built its footprint over time.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-agent-emergence"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Recency × Adoption Depth</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos bucketed by days since first signal, split by adoption level. Reveals whether deep adoption needs time or shows up fast.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-recency-depth"></canvas></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Monthly New Repos by Adoption Label (Stacked) — per Stack</h3>
             <div id="compare-stacked-area-stacks"></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
-            <h3>First AI Signal — Adoption Timing</h3>
-            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Requires <code>timing_category</code> or both <code>created_at</code> and <code>first_signal_at</code> columns.</p>
+            <h3>Signal Recency per Stack <span class="muted" style="font-weight:400;font-size:.8rem">(agentic repos, days since first signal)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">How recently the first AI signal was observed. Short buckets = active/ongoing adoption; long buckets = older adoption stabilising.</p>
             <div class="compare-chart-wrap"><canvas id="chart-adoption-timing"></canvas></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
-            <h3>Days to First AI Signal — per Stack</h3>
+            <h3>Days Since First AI Signal — per Stack <span class="muted" style="font-weight:400;font-size:.8rem">(agentic repos, clipped to 365d)</span></h3>
             <div id="compare-days-hist-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Monthly New Adopters <span class="muted" style="font-weight:400;font-size:.8rem">(absolute count, stacked by stack)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Raw count of repos whose first AI signal landed in each month.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-monthly-new-adopters"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Cumulative Agentic Repos per Stack</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Running total of agentic repos. Steeper curve = faster accumulation.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-cumulative-adopters"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Greenfield vs Retrofit <span class="muted" style="font-weight:400;font-size:.8rem">(gap: oldest scanned commit → first AI signal)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">A short gap means AI landed near the project's birth (greenfield). A long gap means it was retrofitted onto an older repo. Shares normalize to 100% within each stack.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-retrofit-greenfield"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Adoption Momentum <span class="muted" style="font-weight:400;font-size:.8rem">(cumulative lookback windows)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">For each stack, the share of its agentic repos whose first AI signal fell inside each lookback window. Steeper left-to-right rise = older, more mature adoption; flatter = recent push.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-adoption-momentum"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>AI-Authored Commit Depth per Stack <span class="muted" style="font-weight:400;font-size:.8rem">(100% stacked)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Among agentic repos, how deep does AI authorship run? Config-only = present but zero AI commits; Full = ≥80% of recent commits are AI-authored.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-authored-depth"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Top Adopted Countries Over Time <span class="muted" style="font-weight:400;font-size:.8rem">(cumulative agentic repos, top N)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Running total of agentic repos per country. Steeper curve = faster accumulation. Set <em>Top countries</em> in the sidebar to change N.</p>
+            <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-top-countries-timeline"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Top Countries — Monthly New Agentic Repos <span class="muted" style="font-weight:400;font-size:.8rem">(absolute flow)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Month-by-month inflow of agentic repos per country. Peaks mark acceleration events.</p>
+            <div class="compare-chart-wrap compare-chart-tall"><canvas id="chart-top-countries-monthly"></canvas></div>
           </div>
         </div>
 
@@ -169,6 +252,11 @@
             <h3>Adoption Rate by Stars Tertile</h3>
             <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos split into Small / Medium / Large by star count. Requires <code>stars</code> column.</p>
             <div class="compare-chart-wrap"><canvas id="chart-size-tertile"></canvas></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Adoption Rate by Commits Tertile <span class="muted" style="font-weight:400;font-size:.8rem">(Small / Medium / Large by commit count)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Within each stack, repos are tertile-split by total <code>commits</code>. Rising bars left-to-right = larger repos adopt AI more.</p>
+            <div class="compare-chart-wrap"><canvas id="chart-size-commits-tertile"></canvas></div>
           </div>
           <div class="compare-chart-grid" style="margin-top:1.5rem">
             <div class="compare-chart-card">
@@ -185,9 +273,21 @@
 
         <!-- ── Tab 6: Depth & Ecosystems ────────────────────────────────── -->
         <div id="tab-depth" class="compare-tab-panel" hidden>
-          <div class="compare-chart-card compare-chart-full">
-            <h3>Adoption Rate by Ecosystem / Build System — per Stack</h3>
-            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Uses <code>ecosystem_type</code>, <code>primary_language</code>, or <code>corpus_source</code> column (first found).</p>
+          <div class="compare-chart-grid">
+            <div class="compare-chart-card">
+              <h3>Evidence Semantics Coverage</h3>
+              <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Which signals are detected: config files, commit authorship, runtime activity.</p>
+              <div class="compare-chart-wrap"><canvas id="chart-semantics-coverage"></canvas></div>
+            </div>
+            <div class="compare-chart-card">
+              <h3>History Scan Quality</h3>
+              <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos binned by <code>history_coverage</code>: how much of each repo was in scan scope.</p>
+              <div class="compare-chart-wrap"><canvas id="chart-history-coverage"></canvas></div>
+            </div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+            <h3>Adoption Rate by Framework — per Stack</h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Reads <code>framework_hints</code> (pipe-delimited labels inferred from repo names). Only frameworks with ≥5 repos shown; a repo can appear in multiple rows.</p>
             <div id="compare-ecosystem-stacks"></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
@@ -283,6 +383,26 @@
 .compare-filter-row input[type="range"] { flex: 1; cursor: pointer; }
 .compare-range { width: 100%; margin: .25rem 0; cursor: pointer; }
 .compare-eco-group > summary { cursor: pointer; font-size: .85rem; font-weight: 600; margin-bottom: .4rem; }
+.compare-nested-group {
+  margin: .25rem 0 .5rem 1.2rem;
+  padding-left: .4rem;
+  border-left: 2px solid var(--gc-border, #e2dbc6);
+}
+.compare-nested-group > summary {
+  cursor: pointer;
+  font-size: .72rem;
+  color: var(--gc-muted, #6d6554);
+  margin-bottom: .25rem;
+}
+.compare-nested-label {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--gc-muted, #6d6554);
+  margin: .3rem 0 .15rem;
+}
+.compare-nested-row { font-size: .78rem; margin-bottom: .15rem; }
+.compare-filter-hint { margin: .4rem 0 0; font-size: .72rem; }
 
 /* ── Tabs ─────────────────────────────────────────────────────────────────── */
 .compare-toolbar {
@@ -324,8 +444,183 @@
   border-radius: var(--gc-radius, 6px);
   padding: 1rem;
 }
-.compare-chart-card h3 { margin: 0 0 .75rem; font-size: .95rem; }
-.compare-chart-card h4 { margin: 0 0 .5rem; font-size: .88rem; }
+.compare-chart-card h3 { margin: 0 0 .75rem; font-size: .95rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.compare-chart-card h4 { margin: 0 0 .5rem; font-size: .88rem; display: flex; align-items: center; gap: .4rem; }
+.compare-dl-btn {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--gc-muted, #6d6554);
+  cursor: pointer;
+  padding: 0;
+  opacity: .45;
+  transition: opacity .15s ease, color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.compare-dl-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.compare-chart-card:hover .compare-dl-btn { opacity: 1; }
+.compare-dl-btn:hover,
+.compare-dl-btn:focus-visible {
+  opacity: 1;
+  color: var(--gc-accent, #1d3557);
+  background: color-mix(in srgb, var(--gc-accent, #1d3557) 10%, transparent);
+  border-color: color-mix(in srgb, var(--gc-accent, #1d3557) 30%, transparent);
+  outline: none;
+}
+.compare-dl-btn:active { transform: translateY(1px); }
+
+.compare-norm-btn {
+  margin-left: .25rem;
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--gc-muted, #6d6554);
+  cursor: pointer;
+  padding: 0;
+  opacity: .45;
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+  transition: opacity .15s ease, color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.compare-chart-card:hover .compare-norm-btn { opacity: 1; }
+.compare-norm-btn:hover,
+.compare-norm-btn:focus-visible {
+  opacity: 1;
+  color: var(--gc-accent, #1d3557);
+  background: color-mix(in srgb, var(--gc-accent, #1d3557) 10%, transparent);
+  border-color: color-mix(in srgb, var(--gc-accent, #1d3557) 30%, transparent);
+  outline: none;
+}
+.compare-norm-btn.active {
+  opacity: 1;
+  color: #fff;
+  background: var(--gc-accent, #1d3557);
+  border-color: var(--gc-accent, #1d3557);
+}
+.compare-norm-btn:active { transform: translateY(1px); }
+
+.compare-info-btn {
+  margin-left: .25rem;
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--gc-muted, #6d6554);
+  cursor: pointer;
+  padding: 0;
+  opacity: .45;
+  font: 700 12px/1 "Georgia", "Times New Roman", serif;
+  font-style: italic;
+  transition: opacity .15s ease, color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.compare-chart-card:hover .compare-info-btn { opacity: 1; }
+.compare-info-btn:hover,
+.compare-info-btn:focus-visible {
+  opacity: 1;
+  color: var(--gc-accent, #1d3557);
+  background: color-mix(in srgb, var(--gc-accent, #1d3557) 10%, transparent);
+  border-color: color-mix(in srgb, var(--gc-accent, #1d3557) 30%, transparent);
+  outline: none;
+}
+.compare-info-btn.active {
+  opacity: 1;
+  color: #fff;
+  background: var(--gc-accent, #1d3557);
+  border-color: var(--gc-accent, #1d3557);
+}
+.compare-info-btn:active { transform: translateY(1px); }
+
+.compare-info-pop {
+  position: absolute;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - 2rem);
+  background: var(--gc-surface, #fffdf8);
+  color: var(--gc-text, #201d16);
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06);
+  padding: .9rem 1rem .85rem;
+  font-size: .82rem;
+  line-height: 1.45;
+  animation: compareInfoPopFadeIn .14s ease-out;
+}
+@keyframes compareInfoPopFadeIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.compare-info-pop-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: .5rem; margin-bottom: .4rem;
+}
+.compare-info-pop h5 {
+  margin: 0;
+  font-size: .9rem;
+  font-weight: 700;
+  color: var(--gc-accent, #1d3557);
+  letter-spacing: .01em;
+}
+.compare-info-pop-close {
+  background: transparent;
+  border: 0;
+  padding: 0 .1rem;
+  color: var(--gc-muted, #6d6554);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.compare-info-pop-close:hover { color: var(--gc-text, #201d16); }
+.compare-info-pop p { margin: .35rem 0; }
+.compare-info-pop .compare-info-stack {
+  display: inline-block;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: .12rem .45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gc-accent, #1d3557) 10%, transparent);
+  color: var(--gc-accent, #1d3557);
+  margin-right: .3rem; margin-bottom: .25rem;
+}
+.compare-info-pop ul {
+  margin: .4rem 0 0; padding-left: 1.1rem;
+}
+.compare-info-pop li { margin: .15rem 0; }
+.compare-info-pop .compare-info-pop-hint {
+  margin-top: .55rem;
+  padding-top: .45rem;
+  border-top: 1px dashed var(--gc-border, #e2dbc6);
+  color: var(--gc-muted, #6d6554);
+  font-size: .76rem;
+  font-style: italic;
+}
+
+.compare-empty-note {
+  font-size: .82rem;
+  color: var(--gc-muted, #6d6554);
+  padding: 2rem 1rem;
+  text-align: center;
+  font-style: italic;
+}
 .compare-chart-wrap      { position: relative; height: 300px; }
 .compare-chart-tall      { height: 420px; }
 .compare-chart-full      { margin-bottom: 0; }
@@ -345,6 +640,34 @@
 }
 .compare-per-stack-grid .compare-chart-wrap { height: 260px; }
 
+/* ── Compare slots (max-2 stack picker) ───────────────────────────────────── */
+.compare-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: .5rem;
+}
+@media (max-width: 760px) { .compare-slots { grid-template-columns: 1fr; } }
+.compare-slot .compare-slot-header {
+  display: flex; align-items: center; gap: .5rem;
+  margin: 0 0 .5rem; font-size: .85rem;
+}
+.compare-slot .compare-slot-header h4 {
+  margin: 0; font-size: .85rem; color: var(--gc-muted, #6d6554); font-weight: 500;
+}
+.compare-slot-select {
+  flex: 1;
+  padding: .25rem .4rem;
+  font-size: .85rem;
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: 4px;
+  background: var(--gc-surface, #fffdf8);
+  color: var(--gc-text, #1d3557);
+}
+.compare-slot .compare-chart-wrap { height: 300px; }
+.compare-slot-tall .compare-chart-wrap { height: 420px; }
+.compare-slot-html { overflow-x: auto; }
+
 /* ── Stack table ──────────────────────────────────────────────────────────── */
 .compare-stacks        { margin-bottom: 1.5rem; }
 .compare-label-input   { padding: .25rem .5rem; font-size: .85rem; width: 160px; }
@@ -355,6 +678,38 @@
   margin-right: .4rem;
   vertical-align: middle;
   flex-shrink: 0;
+}
+
+/* ── KPI cards ────────────────────────────────────────────────────────────── */
+.compare-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.compare-kpi {
+  background: var(--gc-surface, #fffdf8);
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: var(--gc-radius, 6px);
+  padding: .9rem 1rem;
+}
+.compare-kpi-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--gc-muted, #6d6554);
+  margin: 0 0 .25rem;
+}
+.compare-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--gc-accent, #1d3557);
+  line-height: 1.1;
+}
+.compare-kpi-sub {
+  font-size: .75rem;
+  color: var(--gc-muted, #6d6554);
+  margin-top: .15rem;
 }
 
 /* ── Heatmap tables ───────────────────────────────────────────────────────── */

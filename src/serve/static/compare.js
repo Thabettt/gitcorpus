@@ -113,12 +113,17 @@ const FREE_TOOLS = new Set([
 const stacks  = [];   // [{label, filename, rows}]
 const charts  = {};   // keyed by canvas id
 let   filters = {
-  selectedStacks: null,  // null = all; Set of labels when filtered
+  selectedStacks: null,   // null = all; Set of labels when filtered
+  perStackSub:   {},      // { stackLabel: { framework: Set<string>, ecosystem: Set<string> } }
   dateFrom: null,
   dateTo:   null,
-  scope:    "all",       // "all" | "agentic"
+  scope:    "all",        // "all" | "agentic"
   minCountry: 10,
-  eco:      {},          // col → [allowed vals]
+  eco:      {},           // col → [allowed vals]
+  adoptionLevels: null,   // null = all; Set of levels when filtered
+  primaryAgents:  null,   // null = all; Set of agents when filtered
+  archived:  "any",       // "any" | "only" | "exclude"
+  active90:  "any",       // "any" | "only" | "exclude"
   topAgents:    8,
   topCountries: 10,
   heatmapN:     15,
@@ -164,9 +169,67 @@ function parseAgents(row) {
   if (!raw) return [];
   return raw.split("|").map(a => a.trim()).filter(Boolean);
 }
+function parsePipeList(val) {
+  if (!val) return [];
+  return String(val).split("|").map(s => s.trim()).filter(Boolean);
+}
+function toInt(v, fb) { const n = parseInt(v, 10); return isNaN(n) ? (fb == null ? null : fb) : n; }
+function toFloat(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
+const ADOPTION_DEPTH_ORDER   = ["none","experimental","limited","consistent","pervasive"];
+const ADOPTION_DEPTH_COLORS  = { none:"#E0E0E0", experimental:"#FFE082", limited:"#FFB74D", consistent:"#64B5F6", pervasive:"#1565C0" };
+const RECENCY_ORDER = ["≤7d","8–30d","31–90d","91–180d","180d+"];
+function recencyBucket(days) {
+  if (days == null || isNaN(days) || days < 0) return null;
+  if (days <= 7)   return "≤7d";
+  if (days <= 30)  return "8–30d";
+  if (days <= 90)  return "31–90d";
+  if (days <= 180) return "91–180d";
+  return "180d+";
+}
+const COUNTRY_ALIASES = {
+  "korea, rep.": "South Korea",
+  "korea, dem. people's rep.": "North Korea",
+  "turkiye": "Turkey",
+  "türkiye": "Turkey",
+  "viet nam": "Vietnam",
+  "russian federation": "Russia",
+  "iran, islamic rep.": "Iran",
+  "egypt, arab rep.": "Egypt",
+  "hong kong sar, china": "Hong Kong",
+  "macao sar, china": "Macao",
+  "czechia": "Czech Republic",
+  "slovak republic": "Slovakia",
+  "venezuela, rb": "Venezuela",
+  "yemen, rep.": "Yemen",
+  "syrian arab republic": "Syria",
+  "lao pdr": "Laos",
+  "myanmar": "Myanmar",
+  "congo, dem. rep.": "DR Congo",
+  "congo, rep.": "Congo",
+  "cote d'ivoire": "Ivory Coast",
+  "côte d'ivoire": "Ivory Coast",
+  "gambia, the": "Gambia",
+  "bahamas, the": "Bahamas",
+  "west bank and gaza": "Palestine",
+  "russia": "Russia",
+  "south korea": "South Korea",
+  "taiwan, province of china": "Taiwan",
+  "brunei darussalam": "Brunei",
+  "kyrgyz republic": "Kyrgyzstan",
+  "cabo verde": "Cape Verde",
+  "eswatini": "Swaziland",
+  "north macedonia": "Macedonia",
+  "timor-leste": "East Timor",
+  "micronesia, fed. sts.": "Micronesia",
+  "st. lucia": "Saint Lucia",
+  "st. vincent and the grenadines": "Saint Vincent",
+  "st. kitts and nevis": "Saint Kitts and Nevis",
+};
 function getCountry(row) {
-  const c = (row.country || row.inferred_country || "").trim();
-  return c && c !== "not_specified" && c !== "unknown" ? c : null;
+  const raw = (row.country || row.inferred_country || "").trim();
+  if (!raw || raw === "not_specified" || raw === "unknown") return null;
+  const alias = COUNTRY_ALIASES[raw.toLowerCase()];
+  return alias || raw;
 }
 function getMonth(row) {
   const d = (row.created_at || row.first_signal_at || "").trim().slice(0, 7);
@@ -194,6 +257,7 @@ const DENSITY_BUCKET_ORDER = ["Config-only (0%)","Low (<10%)","Medium (10–40%)
 function enrichRow(row) {
   const lbl = getAdoptionLabel(row);
   const country = getCountry(row);
+  const lvl = (row.adoption_level || "").trim().toLowerCase();
   return Object.assign({}, row, {
     _lbl:     lbl,
     _adopted: isAdopted(lbl),
@@ -204,6 +268,29 @@ function enrichRow(row) {
     _month:   getMonth(row),
     _density: getAIDensity(row),
     _agents:  parseAgents(row),
+    _level:   ADOPTION_DEPTH_ORDER.includes(lvl) ? lvl : (lbl === "agentic" ? "limited" : "none"),
+    _current: parsePipeList(row.current_agents),
+    _configured: parsePipeList(row.configured_agents),
+    _primary_agent: (row.primary_agent || "").trim(),
+    _agent_count:   toInt(row.agent_count, 0),
+    _channels_count: toInt(row.channels_count, 0),
+    _channels_fired: parsePipeList(row.channels_fired),
+    _first_signal_days_ago: toInt(row.first_signal_days_ago, null),
+    _history_coverage: toFloat(row.history_coverage),
+    _semantics: parsePipeList(row.evidence_semantics),
+    _frameworks:  parsePipeList(row.framework_hints),
+    _ecosystem:   (row.ecosystem || "").trim(),
+    _has_agents_md: String(row.has_agents_md || "").toLowerCase() === "true",
+    _is_archived:   String(row.is_archived   || "").toLowerCase() === "true",
+    _is_active_90d: String(row.is_active_last_90d || "").toLowerCase() === "true",
+    _repo_age_days:          toInt(row.repo_age_days, null),
+    _age_at_adoption_days:   toInt(row.age_at_adoption_days, null),
+    _days_since_push:        toInt(row.days_since_push, null),
+    _first_signal_at:        (row.first_signal_at || "").trim(),
+    _oldest_commit_at:       (row.oldest_scanned_commit_at || "").trim(),
+    _authored_by_agent:      row.authored_commits_by_agent || "",
+    _size_kb:                toFloat(row.size_kb),
+    _commits:                toFloat(row.commits),
   });
 }
 
@@ -213,10 +300,32 @@ function getFilteredRows(onlyStacks) {
   for (const s of stacks) {
     if (filters.selectedStacks && !filters.selectedStacks.has(s.label)) continue;
     if (onlyStacks && !onlyStacks.includes(s.label)) continue;
+    const sub = filters.perStackSub[s.label] || {};
+    const fwFilter  = sub.framework  && sub.framework.size  ? sub.framework  : null;
+    const ecoFilter = sub.ecosystem && sub.ecosystem.size ? sub.ecosystem : null;
     for (const r of s.rows) {
       const er = enrichRow(r);
+      er._stack = s.label;
       if (filters.dateFrom && er._month && er._month < filters.dateFrom) continue;
       if (filters.dateTo   && er._month && er._month > filters.dateTo)   continue;
+      // Per-stack sub-filters (framework/ecosystem)
+      if (fwFilter) {
+        if (!er._frameworks.length) continue;
+        if (!er._frameworks.some(f => fwFilter.has(f))) continue;
+      }
+      if (ecoFilter) {
+        if (!er._ecosystem || !ecoFilter.has(er._ecosystem)) continue;
+      }
+      // Top-level enrichment filters
+      if (filters.adoptionLevels && filters.adoptionLevels.size &&
+          !filters.adoptionLevels.has(er._level)) continue;
+      if (filters.primaryAgents && filters.primaryAgents.size &&
+          !filters.primaryAgents.has(er._primary_agent)) continue;
+      if (filters.archived === "only"    && !er._is_archived) continue;
+      if (filters.archived === "exclude" &&  er._is_archived) continue;
+      if (filters.active90 === "only"    && !er._is_active_90d) continue;
+      if (filters.active90 === "exclude" &&  er._is_active_90d) continue;
+      // Generic eco column filters
       let pass = true;
       for (const [col, vals] of Object.entries(filters.eco)) {
         if (!vals || vals.length === 0) continue;
@@ -254,9 +363,476 @@ function mkChart(id, type, data, options) {
   destroyChart(id);
   const el = document.getElementById(id);
   if (!el) return null;
+  // Clear any prior empty-state note and restore visibility.
+  if (el.parentNode) {
+    const note = el.parentNode.querySelector(`.compare-empty-note[data-for="${id}"]`);
+    if (note) note.remove();
+  }
+  el.style.display = "";
   const c = new Chart(el.getContext("2d"), { type, data, options });
   charts[id] = c;
   return c;
+}
+
+// ── PNG download per chart ─────────────────────────────────────────────────────
+function downloadCanvasPNG(canvas, name) {
+  if (!canvas) return;
+  try {
+    const tmp = document.createElement("canvas");
+    tmp.width = canvas.width; tmp.height = canvas.height;
+    const ctx = tmp.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, tmp.width, tmp.height);
+    ctx.drawImage(canvas, 0, 0);
+    const url = tmp.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    const safe = String(name || canvas.id || "chart").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
+    a.download = `${safe}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { console.warn("PNG download failed", e); }
+}
+function attachDownloadButtons() {
+  document.querySelectorAll("canvas[id]").forEach(canvas => {
+    if (canvas.dataset.downloadWired === "1") return;
+    const card = canvas.closest(".compare-chart-card");
+    if (!card) return;
+    // Prefer the heading that directly precedes this canvas's wrap (sub-card h4 case).
+    let heading = null;
+    const wrap = canvas.closest(".compare-chart-wrap");
+    if (wrap) {
+      let prev = wrap.previousElementSibling;
+      while (prev && !/^H[1-6]$/.test(prev.tagName)) prev = prev.previousElementSibling;
+      if (prev && card.contains(prev)) heading = prev;
+    }
+    if (!heading) heading = card.querySelector("h3, h4");
+    if (!heading) return;
+    if (heading.querySelector(".compare-dl-btn")) {
+      canvas.dataset.downloadWired = "1";
+      return;
+    }
+    const btn = document.createElement("button");
+    btn.className = "compare-dl-btn";
+    btn.type = "button";
+    btn.title = "Download PNG";
+    btn.setAttribute("aria-label", "Download PNG");
+    btn.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10m0 0l-3.5-3.5M10 13l3.5-3.5M4 15.5v1A1.5 1.5 0 0 0 5.5 18h9a1.5 1.5 0 0 0 1.5-1.5v-1"/></svg>';
+    const titleHint = heading.textContent.trim();
+    btn.addEventListener("click", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      downloadCanvasPNG(canvas, titleHint);
+    });
+    heading.appendChild(btn);
+    canvas.dataset.downloadWired = "1";
+  });
+}
+
+// ── Per-chart "normalize to %" toggle ──────────────────────────────────────────
+const normalizeMode = {};
+function isNormalized(id) { return !!normalizeMode[id]; }
+function markNormalizable(id) {
+  const el = document.getElementById(id);
+  if (el) el.dataset.normalizable = "1";
+}
+function attachNormalizeButtons() {
+  document.querySelectorAll('canvas[data-normalizable="1"]').forEach(canvas => {
+    const card = canvas.closest(".compare-chart-card");
+    if (!card) return;
+    let heading = null;
+    const wrap = canvas.closest(".compare-chart-wrap");
+    if (wrap) {
+      let prev = wrap.previousElementSibling;
+      while (prev && !/^H[1-6]$/.test(prev.tagName)) prev = prev.previousElementSibling;
+      if (prev && card.contains(prev)) heading = prev;
+    }
+    if (!heading) heading = card.querySelector("h3, h4");
+    if (!heading) return;
+    const active = isNormalized(canvas.id);
+    let btn = heading.querySelector(".compare-norm-btn");
+    if (btn) {
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+      btn.title = active ? "Show raw counts" : "Normalize to % of stack";
+      return;
+    }
+    btn = document.createElement("button");
+    btn.className = "compare-norm-btn" + (active ? " active" : "");
+    btn.type = "button";
+    btn.title = active ? "Show raw counts" : "Normalize to % of stack";
+    btn.setAttribute("aria-label", "Toggle normalize to percent");
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+    btn.textContent = "%";
+    btn.addEventListener("click", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      normalizeMode[canvas.id] = !normalizeMode[canvas.id];
+      renderActiveTab();
+    });
+    heading.appendChild(btn);
+  });
+}
+
+// ── Per-chart "info" popover ──────────────────────────────────────────────────
+// Describes what the chart shows, the stacks compared, and one or two findings.
+// Entry lookup: exact canvas id first; else the longest matching prefix.
+const CHART_INFO = {
+  // ── Overview ────────────────────────────────────────────────────────────
+  "chart-adoption-bars": {
+    title: "Adoption Rate by Stack",
+    desc: "Share of repos classified as agentic (any named-agent evidence) in each stack. Error bars show Wilson 95% confidence intervals.",
+  },
+  "chart-adoption-split": {
+    title: "Agentic / Non-agentic Split",
+    desc: "For each stack, how the repos split between agentic and not. Useful to eyeball the raw composition — not just the rate.",
+  },
+  "chart-adoption-depth": {
+    title: "Adoption Depth",
+    desc: "Breakdown of agentic repos by AI-authored commit ratio: Limited (<5%), Consistent (5–20%), Pervasive (≥20%).",
+  },
+  "chart-channel-breadth": {
+    title: "Detection Signal Breadth",
+    desc: "For each stack, how many of the channels (file, author, commit_trailer, pr_metadata, branch, label, bot, issue) fired at least once.",
+  },
+  // ── Agents ─────────────────────────────────────────────────────────────
+  "compare-agent-lifecycle-stacks": {
+    title: "Agent Lifecycle Funnel",
+    desc: "How repos in this stack move through the AI pipeline: configured → first signal → agentic → deep adoption. Big drop-offs point to silent adopters or dormant configs.",
+  },
+  "chart-agent-concentration": {
+    title: "Multi-Agent Concentration",
+    desc: "Share of agentic repos using exactly 1, 2, 3+ distinct agents. Flat distribution = stacks blending tools; spike at 1 = single-agent loyalty.",
+  },
+  "compare-primary-agent-stacks": {
+    title: "Primary Agent Market Share",
+    desc: "The single top-scoring agent per repo, aggregated across the stack. One slice per agent family.",
+  },
+  "compare-agents-top-stacks": {
+    title: "Top Agents",
+    desc: "Top-N agent families by repo count in this stack. Multiple agents per repo can contribute.",
+  },
+  "compare-tool-loyalty-stacks": {
+    title: "Tool Loyalty",
+    desc: "Among agentic repos in this stack, how many use exactly one agent (loyal) vs mix multiple (polyglot).",
+  },
+  "chart-agent-diversity": {
+    title: "Agent Diversity",
+    desc: "Shannon-style diversity of agents across stacks. Higher = healthier ecosystem; lower = winner-take-all.",
+  },
+  "chart-commit-depth": {
+    title: "AI Commit Density",
+    desc: "Histogram of AI-authored commit ratio (0–100%) per stack. The right tail is where AI is doing real work.",
+  },
+  "compare-commit-density-hist-stacks": {
+    title: "AI Density Distribution",
+    desc: "Per-stack histogram of the AI-authored commit ratio. Mass near 0% = config-only; mass near 1 = saturated.",
+  },
+  "compare-density-by-agent-stacks": {
+    title: "AI Density by Agent",
+    desc: "For this stack, how deep each agent gets into commits. Compares agents by median/quartile AI ratio.",
+  },
+  // ── Geography ──────────────────────────────────────────────────────────
+  "chart-world-regions": {
+    title: "Adoption by World Region",
+    desc: "Rate of agentic repos per world region, aggregated across all stacks.",
+  },
+  "compare-countries-stacks": {
+    title: "Top Countries",
+    desc: "Top countries by agentic-repo count in this stack. Owner-country is captured at search time and carried through detection.",
+  },
+  "chart-income-group": {
+    title: "Adoption × Income Group",
+    desc: "Rate of agentic repos bucketed by World-Bank income group of the owner's country.",
+  },
+  "compare-pricing-income-stacks": {
+    title: "Pricing × Income",
+    desc: "Within this stack, which agent-pricing tiers dominate across income groups.",
+  },
+  "chart-mena-vs-rest": {
+    title: "MENA vs Rest of World",
+    desc: "Adoption rate for the MENA region vs everything else, per stack.",
+  },
+  "compare-mena-countries-stacks": {
+    title: "MENA Countries — Detail",
+    desc: "Country-level adoption rate inside MENA for this stack.",
+  },
+  "compare-country-heatmap": {
+    title: "Country × Repo-Creation Month — Adoption Rate Cohort",
+    desc: "Colour = adoption rate for repos created in that month, in that country. Rows are countries; columns are months. Blank cells = too few repos.",
+  },
+  "compare-country-bump-stacks": {
+    title: "Top Countries — Monthly Adoption Rate",
+    desc: "3-month rolling adoption rate for the top countries in this stack. Shows magnitude plus trend direction.",
+  },
+  "chart-country-cumulative": {
+    title: "Cumulative Agentic Repos per Country",
+    desc: "Running total of agentic repos by country, across all stacks.",
+  },
+  "compare-country-agent-matrix": {
+    title: "Country × Primary Agent",
+    desc: "For each top country in this stack, which primary agent is most common — a heat cell per country-agent pair.",
+  },
+  // ── Time Series ────────────────────────────────────────────────────────
+  "chart-time-series": {
+    title: "Adoption Rate Over Time",
+    desc: "Monthly adoption rate per stack — the share of repos first observed in each month that are agentic. Months with <5 repos are dropped.",
+  },
+  "chart-agent-emergence": {
+    title: "Agent Emergence Timeline",
+    desc: "Cumulative repos per agent family over time. Shows which agent built its footprint first and who's compounding fastest.",
+  },
+  "chart-recency-depth": {
+    title: "Recency × Adoption Depth",
+    desc: "Repos bucketed by how long ago they got their first AI signal, split by adoption depth. Reveals whether deep adoption needs time or shows up fast.",
+  },
+  "compare-stacked-area-stacks": {
+    title: "Monthly New Repos by Adoption Label",
+    desc: "For this stack, how many new repos each month, coloured by adoption depth. Toggle % to see the share of depth within each month.",
+  },
+  "chart-adoption-timing": {
+    title: "Signal Recency per Stack",
+    desc: "Among agentic repos in each stack, how recently the first AI signal fired. Short-bucket mass = active adoption; long-bucket mass = older adoption stabilising.",
+  },
+  "compare-days-hist-stacks": {
+    title: "Days Since First AI Signal",
+    desc: "Smoothed density of days-since-first-signal for agentic repos in this stack (clipped at 365d). Peaks mark adoption waves.",
+  },
+  "chart-monthly-new-adopters": {
+    title: "Monthly New Adopters",
+    desc: "New agentic repos per month, stacked by stack. Toggle % to see each stack's share of the monthly flow.",
+  },
+  "chart-cumulative-adopters": {
+    title: "Cumulative Agentic Repos per Stack",
+    desc: "Running total of agentic repos by stack. Steeper curve = faster accumulation. Toggle % to compare growth shape (each stack normalised to its own final).",
+  },
+  "chart-retrofit-greenfield": {
+    title: "Greenfield vs Retrofit",
+    desc: "Gap from oldest scanned commit to first AI signal. Short gap = AI landed near the project's birth; long gap = retrofit onto an older repo.",
+  },
+  "chart-adoption-momentum": {
+    title: "Adoption Momentum",
+    desc: "For each stack, the share of agentic repos whose first AI signal fell inside each lookback window. Steeper rise = older, more mature adoption; flatter = recent push.",
+  },
+  "chart-authored-depth": {
+    title: "AI-Authored Commit Depth per Stack",
+    desc: "Among agentic repos in each stack, 100%-stacked share by AI-commit depth tier. Config-only = present but zero AI commits; Full = ≥80% AI-authored.",
+  },
+  "chart-top-countries-timeline": {
+    title: "Top Adopted Countries Over Time",
+    desc: "Running total of agentic repos per country, top-N by final count. Toggle % to compare growth shape across countries of different sizes.",
+  },
+  "chart-top-countries-monthly": {
+    title: "Top Countries — Monthly New Agentic Repos",
+    desc: "Monthly inflow of agentic repos per country. Peaks mark acceleration events. Toggle % to see each country's share of the monthly top-N flow.",
+  },
+  // ── Size ───────────────────────────────────────────────────────────────
+  "chart-size-tertile": {
+    title: "Adoption Rate by Stars Tertile",
+    desc: "Repos split into Small / Medium / Large by star count within each stack. Rising bars left-to-right = larger repos adopt more.",
+  },
+  "chart-size-commits-tertile": {
+    title: "Adoption Rate by Commits Tertile",
+    desc: "Repos split into Small / Medium / Large by total commits within each stack.",
+  },
+  "chart-size-stars": {
+    title: "Median Stars by Adoption Category",
+    desc: "Median star count for No AI vs Agentic repos in each stack.",
+  },
+  "chart-size-commits": {
+    title: "Median Commits by Adoption Category",
+    desc: "Median total commits for No AI vs Agentic repos in each stack.",
+  },
+  // ── Depth & Ecosystems ─────────────────────────────────────────────────
+  "chart-semantics-coverage": {
+    title: "Evidence Semantics Coverage",
+    desc: "Which categories of evidence fired per stack: configuration, activity, authorship, historical lineage, generated code.",
+  },
+  "chart-history-coverage": {
+    title: "History Scan Quality",
+    desc: "Repos binned by history_coverage — the fraction of the repo that was in scan scope. Higher = more trustworthy signal.",
+  },
+  "compare-ecosystem-stacks": {
+    title: "Adoption Rate by Framework",
+    desc: "Framework hints (pipe-delimited) with ≥5 repos per entry. A repo can appear under multiple frameworks.",
+  },
+  "chart-agent-market-share": {
+    title: "Agent Market Share Over Time",
+    desc: "For agentic repos in each month, the share that uses each top-7 agent. Months with <5 agentic repos are dropped.",
+  },
+  "compare-cooccurrence-table": {
+    title: "Tool Co-occurrence Heatmap",
+    desc: "% of repos with the row agent that also have the column agent. Diagonal is 100% by definition.",
+  },
+};
+
+function infoEntryFor(canvasId) {
+  if (CHART_INFO[canvasId]) return CHART_INFO[canvasId];
+  // Prefix match for slot ids like "compare-stacked-area-stacks-a"
+  let best = null;
+  Object.keys(CHART_INFO).forEach(k => {
+    if (canvasId.startsWith(k + "-") && (!best || k.length > best.length)) best = k;
+  });
+  return best ? CHART_INFO[best] : null;
+}
+
+function slotLabelForBodyId(bodyId) {
+  // bodyId like "compare-foo-a" — walk up to find the compare-slot card, then its <select>.
+  const el = document.getElementById(bodyId);
+  if (!el) return null;
+  const card = el.closest(".compare-slot");
+  if (!card) return null;
+  const sel = card.querySelector(".compare-slot-select");
+  return sel ? sel.value : null;
+}
+
+function computeChartFindings(canvasId) {
+  const c = charts[canvasId];
+  if (!c) return [];
+  const ds = c.data && c.data.datasets || [];
+  const labels = (c.data && c.data.labels) || [];
+  if (!ds.length) return [];
+  const findings = [];
+  const fmt = v => Math.abs(v) >= 1 ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : v.toFixed(2);
+
+  if (ds.length === 1) {
+    const d = ds[0];
+    const vals = (d._raw || d.data).map(v => (v == null || isNaN(v)) ? null : +v);
+    const nonNull = vals.map((v, i) => [v, i]).filter(([v]) => v != null);
+    if (nonNull.length) {
+      const maxP = nonNull.reduce((a, b) => b[0] > a[0] ? b : a);
+      const total = nonNull.reduce((s, [v]) => s + v, 0);
+      findings.push(`Peak: ${fmt(maxP[0])} at ${labels[maxP[1]] || "—"}`);
+      if (total && total !== maxP[0]) findings.push(`Total across bins: ${fmt(total)}`);
+    }
+  } else {
+    // Multi-series: show leader + runner-up by total
+    const totals = ds.map(d => {
+      const vals = (d._raw || d.data).map(v => (v == null || isNaN(v)) ? 0 : +v);
+      return vals.reduce((s, v) => s + v, 0);
+    });
+    const ranked = ds.map((d, i) => ({ label: d.label || `Series ${i + 1}`, total: totals[i] }))
+      .sort((a, b) => b.total - a.total);
+    if (ranked[0]) findings.push(`Leader: ${ranked[0].label} (${fmt(ranked[0].total)})`);
+    if (ranked[1]) findings.push(`Runner-up: ${ranked[1].label} (${fmt(ranked[1].total)})`);
+  }
+  return findings;
+}
+
+function stacksForChart(canvasId) {
+  // Slot chart? Return the slot's selected stack.
+  const slot = slotLabelForBodyId(canvasId);
+  if (slot) return [slot];
+  // Otherwise derive from dataset labels (combined chart).
+  const c = charts[canvasId];
+  if (!c) return [];
+  const labels = (c.data && c.data.datasets || []).map(d => d.label).filter(Boolean);
+  return [...new Set(labels)];
+}
+
+let _activeInfoPop = null;
+function closeInfoPop() {
+  if (_activeInfoPop) {
+    _activeInfoPop.remove();
+    _activeInfoPop = null;
+    document.removeEventListener("mousedown", _infoDocClick, true);
+    document.removeEventListener("keydown", _infoDocKey, true);
+  }
+}
+function _infoDocClick(ev) {
+  if (!_activeInfoPop) return;
+  if (_activeInfoPop.contains(ev.target)) return;
+  if (ev.target.classList && ev.target.classList.contains("compare-info-btn")) return;
+  closeInfoPop();
+}
+function _infoDocKey(ev) { if (ev.key === "Escape") closeInfoPop(); }
+
+function openInfoPop(canvasId, anchorBtn) {
+  closeInfoPop();
+  const entry = infoEntryFor(canvasId);
+  if (!entry) return;
+  const stacks = stacksForChart(canvasId);
+  const findings = computeChartFindings(canvasId);
+  const pop = document.createElement("div");
+  pop.className = "compare-info-pop";
+  pop.setAttribute("role", "dialog");
+  const stackHTML = stacks.length
+    ? `<p>${stacks.map(s => `<span class="compare-info-stack">${escapeHtml(s)}</span>`).join("")}</p>`
+    : "";
+  const findingsHTML = findings.length
+    ? `<ul>${findings.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>`
+    : "";
+  pop.innerHTML = `
+    <div class="compare-info-pop-header">
+      <h5>${escapeHtml(entry.title)}</h5>
+      <button class="compare-info-pop-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <p>${escapeHtml(entry.desc)}</p>
+    ${stackHTML}
+    ${findingsHTML}
+    <div class="compare-info-pop-hint">Tip: use the <strong>%</strong> toggle to flip between raw counts and shares.</div>
+  `;
+  document.body.appendChild(pop);
+  // Position: below the button, right-aligned to it.
+  const r = anchorBtn.getBoundingClientRect();
+  const scrollY = window.scrollY || document.documentElement.scrollTop;
+  const scrollX = window.scrollX || document.documentElement.scrollLeft;
+  const popW = pop.offsetWidth;
+  let left = r.right + scrollX - popW;
+  if (left < scrollX + 8) left = scrollX + 8;
+  const maxLeft = scrollX + document.documentElement.clientWidth - popW - 8;
+  if (left > maxLeft) left = maxLeft;
+  let top = r.bottom + scrollY + 6;
+  // Flip above if off-screen vertically.
+  const viewportBottom = scrollY + window.innerHeight;
+  if (top + pop.offsetHeight > viewportBottom - 8) {
+    top = r.top + scrollY - pop.offsetHeight - 6;
+  }
+  pop.style.left = left + "px";
+  pop.style.top = top + "px";
+  _activeInfoPop = pop;
+  pop.querySelector(".compare-info-pop-close").addEventListener("click", closeInfoPop);
+  setTimeout(() => {
+    document.addEventListener("mousedown", _infoDocClick, true);
+    document.addEventListener("keydown", _infoDocKey, true);
+  }, 0);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function attachInfoButtons() {
+  document.querySelectorAll("canvas[id], .compare-slot-html[id], #compare-cooccurrence-table, #compare-country-heatmap, #compare-country-agent-matrix").forEach(el => {
+    const canvasId = el.id;
+    if (!canvasId) return;
+    if (!infoEntryFor(canvasId)) return;
+    const card = el.closest(".compare-chart-card");
+    if (!card) return;
+    let heading = null;
+    const wrap = el.closest(".compare-chart-wrap");
+    if (wrap) {
+      let prev = wrap.previousElementSibling;
+      while (prev && !/^H[1-6]$/.test(prev.tagName)) prev = prev.previousElementSibling;
+      if (prev && card.contains(prev)) heading = prev;
+    }
+    if (!heading) heading = card.querySelector("h3, h4");
+    if (!heading) return;
+    if (heading.querySelector(".compare-info-btn")) return;
+    const btn = document.createElement("button");
+    btn.className = "compare-info-btn";
+    btn.type = "button";
+    btn.title = "What is this chart?";
+    btn.setAttribute("aria-label", "Show chart info");
+    btn.textContent = "i";
+    btn.dataset.canvasId = canvasId;
+    btn.addEventListener("click", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (_activeInfoPop && _activeInfoPop.dataset.for === canvasId) { closeInfoPop(); return; }
+      openInfoPop(canvasId, btn);
+      if (_activeInfoPop) _activeInfoPop.dataset.for = canvasId;
+    });
+    heading.appendChild(btn);
+  });
 }
 
 function commonOpts(overrides) {
@@ -310,15 +886,94 @@ const errorBarPlugin = {
 Chart.register(errorBarPlugin);
 
 // ── Per-stack grid helper ──────────────────────────────────────────────────────
+const slotState = {};  // keyed by containerId → { a: label, b: label }
+function buildCompareSlots(containerId, stackLabels, buildFn, opts) {
+  opts = opts || {};
+  const useHtml = opts.html === true;
+  const tall = opts.tall === true;
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  destroyPrefix(containerId + "-");
+  container.innerHTML = "";
+  if (!stackLabels.length) return;
+  const state = slotState[containerId] || {};
+  if (!stackLabels.includes(state.a)) state.a = stackLabels[0];
+  if (!stackLabels.includes(state.b)) state.b = stackLabels.length >= 2 ? stackLabels[1] : stackLabels[0];
+  slotState[containerId] = state;
+  const slots = document.createElement("div");
+  slots.className = "compare-slots";
+  container.appendChild(slots);
+  const slotKeys = stackLabels.length >= 2 ? ["a", "b"] : ["a"];
+  slotKeys.forEach(key => {
+    const card = document.createElement("div");
+    card.className = "compare-chart-card compare-slot" + (tall ? " compare-slot-tall" : "");
+    const header = document.createElement("div");
+    header.className = "compare-slot-header";
+    const h4 = document.createElement("h4"); h4.textContent = "Stack";
+    const sel = document.createElement("select");
+    sel.className = "compare-slot-select";
+    stackLabels.forEach(l => {
+      const o = document.createElement("option");
+      o.value = l; o.textContent = l;
+      if (l === state[key]) o.selected = true;
+      sel.appendChild(o);
+    });
+    header.appendChild(h4); header.appendChild(sel);
+    card.appendChild(header);
+    const bodyId = containerId + "-" + key;
+    let body;
+    if (useHtml) {
+      body = document.createElement("div");
+      body.className = "compare-slot-html";
+      body.id = bodyId;
+    } else {
+      body = document.createElement("div");
+      body.className = "compare-chart-wrap";
+      const canvas = document.createElement("canvas");
+      canvas.id = bodyId;
+      body.appendChild(canvas);
+    }
+    card.appendChild(body);
+    slots.appendChild(card);
+    const render = () => {
+      destroyChart(bodyId);
+      if (useHtml) document.getElementById(bodyId).innerHTML = "";
+      buildFn(bodyId, state[key]);
+    };
+    sel.addEventListener("change", () => { state[key] = sel.value; render(); });
+    render();
+  });
+}
+
+function buildPerStackHtmlGrid(containerId, stackLabels, buildFn) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = "";
+  if (!stackLabels.length) return;
+  const grid = document.createElement("div");
+  grid.className = "compare-per-stack-grid";
+  container.appendChild(grid);
+  stackLabels.forEach(label => {
+    const card = document.createElement("div");
+    card.className = "compare-chart-card";
+    const h4 = document.createElement("h4"); h4.textContent = label; card.appendChild(h4);
+    const inner = document.createElement("div");
+    inner.id = containerId + "-" + label.replace(/[^a-zA-Z0-9]/g, "_");
+    card.appendChild(inner);
+    grid.appendChild(card);
+    buildFn(inner.id, label);
+  });
+}
+
 function buildPerStackGrid(containerId, stackLabels, buildFn) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  // Destroy charts whose IDs start with containerId
   destroyPrefix(containerId + "-");
   container.innerHTML = "";
   if (!stackLabels.length) return;
   const grid = document.createElement("div");
   grid.className = "compare-per-stack-grid";
+  container.appendChild(grid);
   stackLabels.forEach(label => {
     const card = document.createElement("div");
     card.className = "compare-chart-card";
@@ -329,7 +984,6 @@ function buildPerStackGrid(containerId, stackLabels, buildFn) {
     canvas.id = id; wrap.appendChild(canvas); grid.appendChild(card);
     buildFn(id, label);
   });
-  container.appendChild(grid);
 }
 
 // ── HTML heatmap helper ────────────────────────────────────────────────────────
@@ -372,10 +1026,12 @@ function renderOverview() {
     const rows = all.filter(r => (r._stack || r.stack) === lbl);
     const n    = rows.length;
     const ag   = rows.filter(r => r._lbl === "agentic").length;
-    const ai   = rows.filter(r => r._lbl === "ai_assisted").length;
+    const pervasive  = rows.filter(r => r._level === "pervasive").length;
+    const consistent = rows.filter(r => r._level === "consistent").length;
+    const limited    = rows.filter(r => r._level === "limited").length;
     const adopted = rows.filter(r => r._adopted).length;
     const ci   = wilsonCI(adopted, n);
-    return { lbl, n, ag, ai, adopted, ci };
+    return { lbl, n, ag, pervasive, consistent, limited, adopted, ci };
   });
 
   // Adoption bars
@@ -407,13 +1063,14 @@ function renderOverview() {
     },
   }));
 
-  // Stacked split bar
+  // Stacked split bar — adoption depth mix per stack
   mkChart("chart-adoption-split", "bar", {
     labels: summary.map(s => s.lbl),
     datasets: [
-      { label: "Agentic",      data: summary.map(s => s.n > 0 ? s.ag   / s.n * 100 : 0), backgroundColor: "#2196F3cc", borderRadius: 2 },
-      { label: "AI-Assisted",  data: summary.map(s => s.n > 0 ? s.ai   / s.n * 100 : 0), backgroundColor: "#81D4FAcc", borderRadius: 2 },
-      { label: "No AI",        data: summary.map(s => s.n > 0 ? (s.n - s.ag - s.ai) / s.n * 100 : 0), backgroundColor: "#E0E0E0cc", borderRadius: 2 },
+      { label: "Pervasive",  data: summary.map(s => s.n > 0 ? s.pervasive  / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.pervasive  + "cc", borderRadius: 2 },
+      { label: "Consistent", data: summary.map(s => s.n > 0 ? s.consistent / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.consistent + "cc", borderRadius: 2 },
+      { label: "Limited",    data: summary.map(s => s.n > 0 ? s.limited    / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.limited    + "cc", borderRadius: 2 },
+      { label: "No AI",      data: summary.map(s => s.n > 0 ? (s.n - s.ag) / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.none       + "cc", borderRadius: 2 },
     ],
   }, commonOpts({
     scales: {
@@ -430,12 +1087,114 @@ function renderOverview() {
       <td>${s.n.toLocaleString()}</td>
       <td>${s.adopted.toLocaleString()}</td>
       <td>${s.ag.toLocaleString()}</td>
-      <td>${s.ai.toLocaleString()}</td>
+      <td>${s.pervasive.toLocaleString()}</td>
       <td><strong>${pct(s.ci.mid)}</strong></td>
       <td>${pct(s.ci.lo)}</td>
       <td>${pct(s.ci.hi)}</td>
     </tr>`).join("");
   }
+
+  renderKpiGrid(all);
+  renderAdoptionDepthChart(all, stackLabels);
+  renderChannelBreadthChart(all);
+}
+
+// ── Overview extras ───────────────────────────────────────────────────────────
+function renderKpiGrid(all) {
+  const host = document.getElementById("compare-kpi-grid");
+  if (!host) return;
+  const n = all.length;
+  if (!n) { host.innerHTML = ""; return; }
+  const agentic = all.filter(r => r._lbl === "agentic").length;
+  const multiAgent = all.filter(r => r._agent_count > 1).length;
+  const authored = all.filter(r => toFloat(r.commit_ratio) > 0).length;
+  const withCountry = all.filter(r => r._country).length;
+  const avgChannels = all.reduce((s, r) => s + (r._channels_count || 0), 0) / n;
+  const distinctPrimary = new Set(all.filter(r => r._primary_agent).map(r => r._primary_agent)).size;
+  const kpis = [
+    { label: "Repos",            value: n.toLocaleString(),              sub: "in dataset" },
+    { label: "Agentic",          value: pct(agentic / n),                sub: `${agentic.toLocaleString()} repos` },
+    { label: "Multi-agent",      value: pct(multiAgent / n),             sub: `${multiAgent.toLocaleString()} repos ≥2 agents` },
+    { label: "Authored commits", value: pct(authored / n),               sub: `${authored.toLocaleString()} repos with commit_ratio>0` },
+    { label: "Country-tagged",   value: pct(withCountry / n),            sub: `${withCountry.toLocaleString()} repos` },
+    { label: "Avg channels fired", value: avgChannels.toFixed(1),        sub: "out of 8" },
+    { label: "Agent families",   value: String(distinctPrimary),         sub: "distinct primaries" },
+  ];
+  host.innerHTML = kpis.map(k => `
+    <div class="compare-kpi">
+      <p class="compare-kpi-label">${k.label}</p>
+      <div class="compare-kpi-value">${k.value}</div>
+      <div class="compare-kpi-sub">${k.sub}</div>
+    </div>`).join("");
+}
+
+function renderAdoptionDepthChart(all, stackLabels) {
+  const th = getTheme();
+  const have = all.some(r => ADOPTION_DEPTH_ORDER.includes(r._level));
+  if (!have) { destroyChart("chart-adoption-depth"); return; }
+  const datasets = ADOPTION_DEPTH_ORDER.map(lvl => ({
+    label: lvl,
+    data: stackLabels.map(lbl => {
+      const rows = all.filter(r => (r._stack || r.stack) === lbl);
+      return rows.length ? rows.filter(r => r._level === lvl).length / rows.length * 100 : 0;
+    }),
+    backgroundColor: ADOPTION_DEPTH_COLORS[lvl] + "cc",
+    borderRadius: 2,
+  }));
+  mkChart("chart-adoption-depth", "bar", { labels: stackLabels, datasets }, commonOpts({
+    scales: {
+      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+      y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } },
+    },
+  }));
+}
+
+const CHANNEL_ORDER = ["file","author","branch","bot","commit_trailer","pr_metadata","issue","label"];
+function renderChannelBreadthChart(all) {
+  const th = getTheme();
+  const id = "chart-channel-breadth";
+  if (!all.length) { destroyChart(id); return; }
+  const norm = isNormalized(id);
+  const stackLabels = [...new Set(all.map(r => r._stack || r.stack))];
+  const useFired = all.some(r => r._channels_fired && r._channels_fired.length);
+  const stackRaw = {}, stackTotal = {};
+  stackLabels.forEach(lbl => {
+    const srows = all.filter(r => (r._stack || r.stack) === lbl);
+    stackTotal[lbl] = srows.length || 1;
+    stackRaw[lbl] = CHANNEL_ORDER.map(ch => {
+      if (useFired) return srows.filter(r => r._channels_fired.includes(ch)).length;
+      const key = "has_" + ch + "_evidence";
+      return srows.filter(r => String(r[key] || "").toLowerCase() === "true").length;
+    });
+  });
+  const datasets = stackLabels.map(lbl => ({
+    label: lbl,
+    data: norm ? stackRaw[lbl].map(v => v / stackTotal[lbl] * 100) : stackRaw[lbl],
+    backgroundColor: stackColorForLabel(lbl) + "cc",
+    borderColor: stackColorForLabel(lbl),
+    borderWidth: 1, borderRadius: 2,
+  }));
+  mkChart(id, "bar", { labels: CHANNEL_ORDER, datasets }, commonOpts({
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const lbl = ctx.dataset.label;
+            const raw = stackRaw[lbl][ctx.dataIndex];
+            const p = raw / stackTotal[lbl];
+            return `${lbl}: ${raw.toLocaleString()} repos (${pct(p)})`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Channel", color: th.text } },
+      y: norm
+        ? { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "% of stack firing channel", color: th.text } }
+        : { ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Repos firing channel", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -447,46 +1206,41 @@ function renderAgents() {
   const th = getTheme();
   const topN = filters.topAgents;
 
+  renderAgentLifecycleChart(all, stackLabels);
+  renderAgentConcentrationChart(all);
+  renderPrimaryAgentChart(all, stackLabels);
+
   // Top agents per stack (per-stack grid)
-  buildPerStackGrid("compare-agents-top-stacks", stackLabels, (id, lbl) => {
+  buildCompareSlots("compare-agents-top-stacks", stackLabels, (id, lbl) => {
     const rows = all.filter(r => (r._stack || r.stack) === lbl);
     const counts = {};
     rows.forEach(r => r._agents.forEach(a => { counts[a] = (counts[a] || 0) + 1; }));
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, topN).reverse();
     if (!sorted.length) return;
+    const norm = isNormalized(id);
+    const total = rows.length || 1;
+    const raw = sorted.map(([, c]) => c);
     mkChart(id, "bar", {
       labels: sorted.map(([a]) => a),
-      datasets: [{ label: "Repos", data: sorted.map(([,c]) => c),
+      datasets: [{ label: "Repos", data: norm ? raw.map(v => v / total * 100) : raw,
         backgroundColor: stackColorForLabel(lbl) + "cc", borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3 }],
-    }, commonOpts({ indexAxis: "y", plugins: { legend: { display: false } },
-      scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
+    }, commonOpts({ indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${raw[ctx.dataIndex].toLocaleString()} repos (${pct(raw[ctx.dataIndex] / total)})` } },
+      },
+      scales: {
+        x: norm
+          ? { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "% of stack", color: th.text } }
+          : { ticks: { color: th.text }, grid: { color: th.grid } },
+        y: { ticks: { color: th.text }, grid: { display: false } },
+      },
+    }));
+    markNormalizable(id);
   });
 
-  // Tool loyalty
-  const loyaltyData = stackLabels.map(lbl => {
-    const rows = all.filter(r => (r._stack || r.stack) === lbl && r._lbl === "agentic");
-    if (!rows.length) return { lbl, single: 0, multi: 0 };
-    const n = rows.length;
-    const single = rows.filter(r => r._agents.length === 1).length;
-    const multi  = rows.filter(r => r._agents.length  > 1).length;
-    return { lbl, single: single / n * 100, multi: multi / n * 100 };
-  });
-  mkChart("chart-tool-loyalty", "bar", {
-    labels: loyaltyData.map(d => d.lbl),
-    datasets: [
-      { label: "Single-tool", data: loyaltyData.map(d => d.single), backgroundColor: "#4C72B0cc", borderRadius: 3 },
-      { label: "Multi-tool",  data: loyaltyData.map(d => d.multi),  backgroundColor: "#DD8452cc", borderRadius: 3 },
-    ],
-  }, commonOpts({ scales: { x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } }, y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
-
-  // Agent diversity
-  mkChart("chart-agent-diversity", "bar", {
-    labels: loyaltyData.map(d => d.lbl),
-    datasets: [
-      { label: "Single-agent", data: loyaltyData.map(d => d.single), backgroundColor: "#4C72B0cc", borderRadius: 3 },
-      { label: "Multi-agent",  data: loyaltyData.map(d => d.multi),  backgroundColor: "#DD8452cc", borderRadius: 3 },
-    ],
-  }, commonOpts({ scales: { x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } }, y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+  renderToolLoyaltyChart(all, stackLabels);
+  renderAgentDiversityChart(all, stackLabels);
 
   // Commit density buckets
   const agentic = all.filter(r => r._lbl === "agentic" && r._density != null);
@@ -511,7 +1265,7 @@ function renderAgents() {
   }
 
   // Density histogram per stack
-  buildPerStackGrid("compare-commit-density-hist-stacks", stackLabels, (id, lbl) => {
+  buildCompareSlots("compare-commit-density-hist-stacks", stackLabels, (id, lbl) => {
     const rows = agentic.filter(r => (r._stack || r.stack) === lbl);
     if (!rows.length) return;
     const bins = 20; const binWidth = 1 / bins;
@@ -526,7 +1280,7 @@ function renderAgents() {
   });
 
   // Density by agent per stack
-  buildPerStackGrid("compare-density-by-agent-stacks", stackLabels, (id, lbl) => {
+  buildCompareSlots("compare-density-by-agent-stacks", stackLabels, (id, lbl) => {
     const rows = agentic.filter(r => (r._stack || r.stack) === lbl);
     if (!rows.length) return;
     const counts = {};
@@ -549,6 +1303,237 @@ function renderAgents() {
     }, commonOpts({ indexAxis: "y",
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => { const s = stats[ctx.dataIndex]; return [`Median: ${pct(s.med)}`, `IQR: ${pct(s.q1)} – ${pct(s.q3)}`, `n: ${s.n}`]; } } } },
       scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
+  });
+}
+
+// ── Agent-tab extras ──────────────────────────────────────────────────────────
+function renderAgentLifecycleChart(all, stackLabels) {
+  const th = getTheme();
+  const topN = filters.topAgents || 8;
+  buildCompareSlots("compare-agent-lifecycle-stacks", stackLabels, (id, lbl) => {
+    const rows = all.filter(r => (r._stack || r.stack) === lbl);
+    const total = rows.length || 1;
+    const everCounts = {}, currentCounts = {}, configuredCounts = {};
+    rows.forEach(r => {
+      r._agents.forEach(a => { everCounts[a] = (everCounts[a] || 0) + 1; });
+      r._current.forEach(a => { currentCounts[a] = (currentCounts[a] || 0) + 1; });
+      r._configured.forEach(a => { configuredCounts[a] = (configuredCounts[a] || 0) + 1; });
+    });
+    const topAgents = Object.entries(everCounts)
+      .filter(([a]) => a && a !== "Generic" && a !== "Rejected/noise")
+      .sort((a, b) => b[1] - a[1]).slice(0, topN).map(([a]) => a);
+    if (!topAgents.length) return;
+    const norm = isNormalized(id);
+    const everRaw = topAgents.map(a => everCounts[a] || 0);
+    const currRaw = topAgents.map(a => currentCounts[a] || 0);
+    const cfgRaw  = topAgents.map(a => configuredCounts[a] || 0);
+    const toPct = arr => arr.map(v => v / total * 100);
+    const rawByLabel = { "Ever observed": everRaw, "Currently active": currRaw, "Currently configured": cfgRaw };
+    mkChart(id, "bar", {
+      labels: topAgents,
+      datasets: [
+        { label: "Ever observed",        data: norm ? toPct(everRaw) : everRaw, backgroundColor: "#90A4AEcc", borderRadius: 3 },
+        { label: "Currently active",     data: norm ? toPct(currRaw) : currRaw, backgroundColor: "#42A5F5cc", borderRadius: 3 },
+        { label: "Currently configured", data: norm ? toPct(cfgRaw)  : cfgRaw,  backgroundColor: "#1565C0cc", borderRadius: 3 },
+      ],
+    }, commonOpts({
+      indexAxis: "y",
+      plugins: {
+        tooltip: { callbacks: { label: ctx => {
+          const raw = rawByLabel[ctx.dataset.label][ctx.dataIndex];
+          return `${ctx.dataset.label}: ${raw.toLocaleString()} repos (${pct(raw / total)})`;
+        } } }
+      },
+      scales: {
+        x: norm
+          ? { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "% of stack", color: th.text } }
+          : { ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Repos", color: th.text } },
+        y: { ticks: { color: th.text }, grid: { display: false } },
+      },
+    }));
+    markNormalizable(id);
+  }, { tall: true });
+}
+
+function renderAgentConcentrationChart(all) {
+  const th = getTheme();
+  const id = "chart-agent-concentration";
+  const rows = all.filter(r => r._agent_count != null);
+  if (!rows.length) { destroyChart(id); return; }
+  const norm = isNormalized(id);
+  const buckets = ["0","1","2","3","4+"];
+  const stackLabels = [...new Set(rows.map(r => r._stack || r.stack))];
+  const stackRaw = {}, stackTotal = {};
+  stackLabels.forEach(lbl => {
+    const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+    stackTotal[lbl] = srows.length || 1;
+    stackRaw[lbl] = buckets.map(b => b === "4+"
+      ? srows.filter(r => r._agent_count >= 4).length
+      : srows.filter(r => r._agent_count === parseInt(b, 10)).length);
+  });
+  const datasets = stackLabels.map(lbl => ({
+    label: lbl,
+    data: norm ? stackRaw[lbl].map(v => v / stackTotal[lbl] * 100) : stackRaw[lbl],
+    backgroundColor: stackColorForLabel(lbl) + "cc",
+    borderRadius: 3,
+  }));
+  mkChart(id, "bar", { labels: buckets, datasets }, commonOpts({
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const lbl = ctx.dataset.label;
+            const raw = stackRaw[lbl][ctx.dataIndex];
+            return `${lbl}: ${raw.toLocaleString()} repos (${pct(raw / stackTotal[lbl])})`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { stacked: !norm, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Agent families per repo", color: th.text } },
+      y: norm
+        ? { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "% of stack", color: th.text } }
+        : { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+function renderToolLoyaltyChart(all, stackLabels) {
+  // Per-stack doughnut: % of agentic repos sticking with ONE agent family
+  // vs those using 2, 3, or 4+ families.
+  const th = getTheme();
+  const SEG_LABELS = ["Loyal (1 tool)","Dabbling (2)","Mixed (3)","Polyglot (4+)"];
+  const SEG_COLORS = ["#2a9d8f","#e9c46a","#f4a261","#e76f51"];
+  buildCompareSlots("compare-tool-loyalty-stacks", stackLabels, (id, lbl) => {
+    const agentic = all.filter(r => (r._stack || r.stack) === lbl && r._lbl === "agentic");
+    if (!agentic.length) return;
+    const n = agentic.length;
+    const data = [
+      agentic.filter(r => r._agents.length === 1).length,
+      agentic.filter(r => r._agents.length === 2).length,
+      agentic.filter(r => r._agents.length === 3).length,
+      agentic.filter(r => r._agents.length >= 4).length,
+    ];
+    mkChart(id, "doughnut", {
+      labels: SEG_LABELS,
+      datasets: [{ data, backgroundColor: SEG_COLORS, borderWidth: 1 }],
+    }, {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom", labels: { color: th.text, font: { size: 10 }, boxWidth: 10 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${ctx.raw.toLocaleString()} (${pct(ctx.raw / n)})` } },
+        title: { display: true, text: `Loyal: ${pct(data[0]/n)} · n=${n.toLocaleString()}`, color: th.text, font: { size: 11 } },
+      },
+      cutout: "55%",
+    });
+  });
+}
+
+function renderAgentDiversityChart(all, stackLabels) {
+  // Radar: each stack plotted on 4 diversity axes (0-100 scaled)
+  //  • Shannon entropy (bits), normalised by log2(unique agents) × 100
+  //  • Mean agents per agentic repo (0-4+ → 0-100)
+  //  • % of agentic repos with ≥3 agents
+  //  • % of agents families observed (coverage: unique agents / all agents seen globally)
+  const th = getTheme();
+  const host = document.getElementById("chart-agent-diversity");
+  if (!host) return;
+  const agenticAll = all.filter(r => r._lbl === "agentic");
+  const globalAgents = new Set(); agenticAll.forEach(r => r._agents.forEach(a => globalAgents.add(a)));
+  const globalTotal = globalAgents.size || 1;
+  const perStack = stackLabels.map(lbl => {
+    const rows = agenticAll.filter(r => (r._stack || r.stack) === lbl);
+    const n = rows.length || 1;
+    const freq = {};
+    rows.forEach(r => r._agents.forEach(a => { freq[a] = (freq[a] || 0) + 1; }));
+    const total = Object.values(freq).reduce((s, v) => s + v, 0) || 1;
+    const k = Object.keys(freq).length || 1;
+    let ent = 0; Object.values(freq).forEach(v => { const p = v / total; if (p > 0) ent -= p * Math.log2(p); });
+    const entMax = Math.log2(k) || 1;
+    const entNorm = (ent / entMax) * 100;
+    const mean = rows.reduce((s, r) => s + (r._agents.length || 0), 0) / n;
+    const meanScaled = Math.min(1, mean / 4) * 100;  // cap at 4 agents/repo
+    const polyPct = rows.filter(r => r._agents.length >= 3).length / n * 100;
+    const coverage = k / globalTotal * 100;
+    return { lbl, entNorm, meanScaled, polyPct, coverage, mean: mean.toFixed(2), k };
+  });
+  const AXES = ["Entropy", "Avg agents/repo", "% with ≥3 agents", "Family coverage"];
+  mkChart("chart-agent-diversity", "radar", {
+    labels: AXES,
+    datasets: perStack.map((s, i) => ({
+      label: s.lbl,
+      data: [s.entNorm, s.meanScaled, s.polyPct, s.coverage],
+      backgroundColor: stackColorForLabel(s.lbl) + "33",
+      borderColor: stackColorForLabel(s.lbl),
+      borderWidth: 2,
+      pointBackgroundColor: stackColorForLabel(s.lbl),
+      pointRadius: 3,
+    })),
+  }, {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const s = perStack[ctx.datasetIndex];
+            if (!s) return "";
+            const axis = AXES[ctx.dataIndex];
+            if (axis === "Entropy")           return `Entropy: ${(s.entNorm/100 * Math.log2(s.k)).toFixed(2)} bits (${s.entNorm.toFixed(0)}% of max)`;
+            if (axis === "Avg agents/repo")   return `Mean: ${s.mean} agents/repo`;
+            if (axis === "% with ≥3 agents")  return `${s.polyPct.toFixed(1)}% have ≥3 families`;
+            if (axis === "Family coverage")   return `${s.coverage.toFixed(0)}% of global families seen (${s.k}/${globalAgents.size})`;
+            return "";
+          }
+        }
+      }
+    },
+    scales: {
+      r: {
+        min: 0, max: 100,
+        angleLines: { color: th.grid },
+        grid: { color: th.grid },
+        pointLabels: { color: th.text, font: { size: 11 } },
+        ticks: { color: th.muted, backdropColor: "transparent", stepSize: 25, callback: v => v + "%" },
+      },
+    },
+  });
+}
+
+function renderPrimaryAgentChart(all, stackLabels) {
+  const th = getTheme();
+  buildCompareSlots("compare-primary-agent-stacks", stackLabels, (id, lbl) => {
+    const rows = all.filter(r => (r._stack || r.stack) === lbl && r._primary_agent);
+    if (!rows.length) return;
+    const counts = {};
+    rows.forEach(r => { counts[r._primary_agent] = (counts[r._primary_agent] || 0) + 1; });
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const n = rows.length;
+    const norm = isNormalized(id);
+    const raw = top.map(([, c]) => c);
+    mkChart(id, "bar", {
+      labels: top.map(([a]) => a),
+      datasets: [{
+        label: "Repos",
+        data: norm ? raw.map(v => v / n * 100) : raw,
+        backgroundColor: top.map((_, i) => PALETTE[i % PALETTE.length] + "cc"),
+        borderRadius: 3,
+      }],
+    }, commonOpts({
+      indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${raw[ctx.dataIndex].toLocaleString()} (${pct(raw[ctx.dataIndex] / n)})` } },
+      },
+      scales: {
+        x: norm
+          ? { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "% of stack", color: th.text } }
+          : { ticks: { color: th.text }, grid: { color: th.grid } },
+        y: { ticks: { color: th.text }, grid: { display: false } },
+      },
+    }));
+    markNormalizable(id);
   });
 }
 
@@ -581,7 +1566,7 @@ function renderGeography() {
   }
 
   // Top/bottom countries per stack
-  buildPerStackGrid("compare-countries-stacks", stackLabels, (id, lbl) => {
+  buildCompareSlots("compare-countries-stacks", stackLabels, (id, lbl) => {
     const rows = geo.filter(r => (r._stack || r.stack) === lbl);
     const countryCounts = {};
     rows.forEach(r => {
@@ -623,7 +1608,7 @@ function renderGeography() {
   }
 
   // Pricing by income per stack
-  buildPerStackGrid("compare-pricing-income-stacks", stackLabels, (id, lbl) => {
+  buildCompareSlots("compare-pricing-income-stacks", stackLabels, (id, lbl) => {
     const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._income);
     if (!rows.length) return;
     const labels = INCOME_ORDER.map(k => INCOME_LABELS[k]);
@@ -670,81 +1655,114 @@ function renderGeography() {
     ],
   }, commonOpts({ scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
 
-  // MENA countries
-  const menaRows = geo.filter(r => r._is_mena);
-  const menaCounts = {};
-  menaRows.forEach(r => {
-    if (!menaCounts[r._country]) menaCounts[r._country] = { n: 0, adopted: 0 };
-    menaCounts[r._country].n++;
-    if (r._adopted) menaCounts[r._country].adopted++;
-  });
-  const menaStats = Object.entries(menaCounts)
-    .filter(([, v]) => v.n >= filters.menaMin)
-    .map(([c, v]) => ({ c, rate: v.adopted / v.n * 100 }))
-    .sort((a, b) => a.rate - b.rate);
-  if (menaStats.length) {
-    mkChart("chart-mena-countries", "bar", {
+  // MENA countries — per stack
+  buildCompareSlots("compare-mena-countries-stacks", stackLabels, (id, lbl) => {
+    const menaRows = geo.filter(r => (r._stack || r.stack) === lbl && r._is_mena);
+    if (!menaRows.length) return;
+    const menaCounts = {};
+    menaRows.forEach(r => {
+      if (!menaCounts[r._country]) menaCounts[r._country] = { n: 0, adopted: 0 };
+      menaCounts[r._country].n++;
+      if (r._adopted) menaCounts[r._country].adopted++;
+    });
+    const menaStats = Object.entries(menaCounts)
+      .filter(([, v]) => v.n >= filters.menaMin)
+      .map(([c, v]) => ({ c, rate: v.adopted / v.n * 100, n: v.n }))
+      .sort((a, b) => a.rate - b.rate);
+    if (!menaStats.length) return;
+    mkChart(id, "bar", {
       labels: menaStats.map(s => s.c),
       datasets: [{ label: "Adoption Rate", data: menaStats.map(s => s.rate),
-        backgroundColor: "#FF7043cc", borderColor: "#FF7043", borderWidth: 1, borderRadius: 3 }],
-    }, commonOpts({ indexAxis: "y", plugins: { legend: { display: false } },
+        backgroundColor: stackColorForLabel(lbl) + "cc", borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3 }],
+    }, commonOpts({ indexAxis: "y",
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `Rate: ${ctx.raw.toFixed(1)}% · n=${menaStats[ctx.dataIndex].n}` } } },
       scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
-  }
+  });
 
-  // Country heatmap (requires created_at)
-  const geoWithDate = geo.filter(r => r._month);
-  if (geoWithDate.length) {
+  // Country heatmap — per stack
+  buildCompareSlots("compare-country-heatmap", stackLabels, (id, lbl) => {
+    const geoWithDate = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
+    if (!geoWithDate.length) { document.getElementById(id).innerHTML = '<p class="muted">No month data.</p>'; return; }
     const topN = filters.heatmapN;
     const ctryFreq = {};
     geoWithDate.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
     const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
     const months = [...new Set(geoWithDate.map(r => r._month))].sort();
-    buildHeatmapTable("compare-country-heatmap", topCtries, months, (c, m) => {
+    if (!topCtries.length || !months.length) { document.getElementById(id).innerHTML = '<p class="muted">Not enough data.</p>'; return; }
+    buildHeatmapTable(id, topCtries, months, (c, m) => {
       const cell = geoWithDate.filter(r => r._country === c && r._month === m);
       if (cell.length < 5) return { val: null, label: "—" };
       const rate = cell.filter(r => r._adopted).length / cell.length * 100;
       return { val: rate, label: rate.toFixed(0) + "%" };
     }, "Country", "Month");
-  }
+  }, { html: true, tall: true });
 
-  // Bump chart
-  if (geoWithDate.length) {
+  // Country adoption-rate trend — per stack (smoothed line chart, replaces bump)
+  buildCompareSlots("compare-country-bump-stacks", stackLabels, (id, lbl) => {
+    const srows = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
+    if (!srows.length) return;
     const topN = filters.bumpN;
     const ctryFreq = {};
-    geoWithDate.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
+    srows.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
     const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
-    const months = [...new Set(geoWithDate.map(r => r._month))].sort();
-    const rankData = {};
-    topCtries.forEach(c => { rankData[c] = []; });
-    months.forEach(m => {
-      const mRows = geoWithDate.filter(r => r._month === m);
-      const rates = {};
-      topCtries.forEach(c => {
-        const g = mRows.filter(r => r._country === c);
-        if (g.length >= 3) rates[c] = g.filter(r => r._adopted).length / g.length;
-        else rates[c] = null;
+    const months = [...new Set(srows.map(r => r._month))].sort();
+    if (!topCtries.length || !months.length) return;
+    // Precompute monthly cohort buckets (n, adopted) for each country.
+    const perCtry = {};
+    topCtries.forEach(c => {
+      perCtry[c] = months.map(m => {
+        const g = srows.filter(r => r._country === c && r._month === m);
+        return { n: g.length, k: g.filter(r => r._adopted).length };
       });
-      const ranked = topCtries.filter(c => rates[c] != null).sort((a, b) => rates[b] - rates[a]);
-      topCtries.forEach(c => { rankData[c].push(ranked.includes(c) ? ranked.indexOf(c) + 1 : null); });
     });
-    const bumpDatasets = topCtries.map((c, i) => ({
-      label: c,
-      data: rankData[c],
-      borderColor: PALETTE[i % PALETTE.length],
-      backgroundColor: "transparent",
-      pointRadius: 3, borderWidth: 2, tension: 0.3, spanGaps: false,
-    }));
-    mkChart("chart-country-bump", "line", { labels: months, datasets: bumpDatasets },
-      commonOpts({
-        plugins: { tooltip: { mode: "index" } },
-        scales: {
-          x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
-          y: { reverse: true, min: 1, ticks: { color: th.text, stepSize: 1 }, grid: { color: th.grid } },
+    // 3-month rolling adoption rate. Produces smoother, more readable trends.
+    const WINDOW = 3;
+    const rolledRate = (arr, i) => {
+      let n = 0, k = 0;
+      for (let j = Math.max(0, i - (WINDOW - 1)); j <= i; j++) { n += arr[j].n; k += arr[j].k; }
+      return n >= 5 ? { rate: k / n * 100, n } : { rate: null, n };
+    };
+    const datasets = topCtries.map((c, i) => {
+      const series = months.map((_, idx) => rolledRate(perCtry[c], idx));
+      const color = PALETTE[i % PALETTE.length];
+      return {
+        label: c,
+        data: series.map(s => s.rate),
+        _n: series.map(s => s.n),
+        borderColor: color,
+        backgroundColor: color + "22",
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        borderWidth: 2.5,
+        tension: 0.4,
+        fill: false,
+        spanGaps: true,
+      };
+    });
+    mkChart(id, "line", { labels: months, datasets }, commonOpts({
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const n = ctx.dataset._n[ctx.dataIndex];
+              const v = ctx.parsed.y;
+              return v == null ? `${ctx.dataset.label}: insufficient data` : `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n})`;
+            },
+          },
         },
-      }));
-  }
+      },
+      scales: {
+        x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid }, title: { display: true, text: "Repo creation month", color: th.text } },
+        y: { min: 0, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Adoption rate (3-mo rolling)", color: th.text } },
+      },
+    }));
+  }, { tall: true });
 
-  // Cumulative
+  // Cumulative (combined across all stacks — one chart)
+  const geoWithDate = geo.filter(r => r._month);
   if (geoWithDate.length) {
     const topN = filters.cumulN;
     const agentic = geoWithDate.filter(r => r._lbl === "agentic");
@@ -765,6 +1783,33 @@ function renderGeography() {
     mkChart("chart-country-cumulative", "line", { labels: months, datasets: cumDatasets },
       commonOpts({ scales: { x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { color: th.grid } } } }));
   }
+
+  // Country × primary agent matrix — per stack
+  renderCountryAgentMatrix(geo, stackLabels);
+}
+
+function renderCountryAgentMatrix(geo, stackLabels) {
+  buildCompareSlots("compare-country-agent-matrix", stackLabels, (id, lbl) => {
+    const host = document.getElementById(id);
+    if (!host) return;
+    const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._primary_agent);
+    if (!rows.length) { host.innerHTML = '<p class="muted">No primary_agent data.</p>'; return; }
+    const ctryCounts = {};
+    rows.forEach(r => { ctryCounts[r._country] = (ctryCounts[r._country] || 0) + 1; });
+    const topCtries = Object.entries(ctryCounts)
+      .filter(([, n]) => n >= Math.max(3, filters.minCountry))
+      .sort((a, b) => b[1] - a[1]).slice(0, 12).map(([c]) => c);
+    if (!topCtries.length) { host.innerHTML = '<p class="muted">Not enough per-country data at current min-repos threshold.</p>'; return; }
+    const agentCounts = {};
+    rows.forEach(r => { if (topCtries.includes(r._country)) agentCounts[r._primary_agent] = (agentCounts[r._primary_agent] || 0) + 1; });
+    const topAgents = Object.entries(agentCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([a]) => a);
+    buildHeatmapTable(id, topCtries, topAgents, (country, agent) => {
+      const g = rows.filter(r => r._country === country);
+      if (!g.length) return { val: null, label: "—" };
+      const share = g.filter(r => r._primary_agent === agent).length / g.length * 100;
+      return { val: share, label: share >= 1 ? share.toFixed(0) + "%" : "—" };
+    }, "Country ↓ / Agent →", "");
+  }, { html: true, tall: true });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -795,66 +1840,440 @@ function renderTimeSeries() {
   mkChart("chart-time-series", "line", { labels: months, datasets: tsDatasets },
     commonOpts({ scales: { x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } }, y: { ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
 
-  // Stacked area per stack (stacked bar in Chart.js)
-  buildPerStackGrid("compare-stacked-area-stacks", stackLabels, (id, lbl) => {
+  // Stacked area per stack (true filled area chart)
+  buildCompareSlots("compare-stacked-area-stacks", stackLabels, (id, lbl) => {
     const rows = dated.filter(r => (r._stack || r.stack) === lbl);
+    if (!rows.length) return;
     const ms = [...new Set(rows.map(r => r._month))].sort();
-    mkChart(id, "bar", {
-      labels: ms,
-      datasets: [
-        { label: "Agentic",     data: ms.map(m => rows.filter(r => r._month === m && r._lbl === "agentic").length),     backgroundColor: "#2196F3cc", borderRadius: 1 },
-        { label: "AI-Assisted", data: ms.map(m => rows.filter(r => r._month === m && r._lbl === "ai_assisted").length), backgroundColor: "#81D4FAcc", borderRadius: 1 },
-        { label: "No AI",       data: ms.map(m => rows.filter(r => r._month === m && r._lbl === "none").length),        backgroundColor: "#E0E0E0cc", borderRadius: 1 },
-      ],
-    }, commonOpts({ scales: { x: { stacked: true, ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } }, y: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } } } }));
-  });
+    const SEGS = [
+      { k: "pervasive",  l: "Pervasive",  v: m => rows.filter(r => r._month === m && r._level === "pervasive").length },
+      { k: "consistent", l: "Consistent", v: m => rows.filter(r => r._month === m && r._level === "consistent").length },
+      { k: "limited",    l: "Limited",    v: m => rows.filter(r => r._month === m && r._level === "limited").length },
+      { k: "none",       l: "No AI",      v: m => rows.filter(r => r._month === m && r._lbl === "none").length },
+    ];
+    const rawPerMonth = SEGS.map(s => ms.map(m => s.v(m)));
+    const totals = ms.map((_, i) => rawPerMonth.reduce((acc, row) => acc + row[i], 0));
+    const norm = isNormalized(id);
+    const datasets = SEGS.map((s, i) => ({
+      label: s.l,
+      data: rawPerMonth[i].map((v, j) => norm ? (totals[j] ? v / totals[j] * 100 : 0) : v),
+      _raw: rawPerMonth[i],
+      borderColor: ADOPTION_DEPTH_COLORS[s.k],
+      backgroundColor: ADOPTION_DEPTH_COLORS[s.k] + "aa",
+      pointRadius: 0, borderWidth: 1.2, tension: 0.35, fill: true,
+    }));
+    mkChart(id, "line", { labels: ms, datasets }, commonOpts({
+      plugins: {
+        legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+        tooltip: { mode: "index", intersect: false, callbacks: {
+          label: ctx => {
+            const raw = ctx.dataset._raw ? ctx.dataset._raw[ctx.dataIndex] : ctx.parsed.y;
+            const total = totals[ctx.dataIndex] || 0;
+            const pct = total ? (raw / total * 100) : 0;
+            return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}%)`;
+          },
+        } },
+      },
+      scales: {
+        x: { stacked: false, ticks: { color: th.text, maxTicksLimit: 10 }, grid: { color: th.grid } },
+        y: { stacked: true, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, max: norm ? 100 : undefined },
+      },
+    }));
+    markNormalizable(id);
+  }, { tall: true });
 
-  // Adoption timing stacked bar (uses commit_ratio as a proxy if adoption_timing not present)
-  // This chart requires a "timing_category" column — if absent, derive from days between created_at and first_signal_at
-  const timingRows = all.filter(r => r.timing_category || (r.created_at && r.first_signal_at));
-  if (timingRows.length) {
-    function getTimingCat(r) {
-      if (r.timing_category) return r.timing_category;
-      const days = (new Date(r.first_signal_at) - new Date(r.created_at)) / 86400000;
-      if (days <= 7)  return "immediate";
-      if (days <= 30) return "early";
-      if (days > 30)  return "late";
-      return "unknown";
-    }
-    const CAT_ORDER = ["immediate","early","late","unknown"];
-    const CAT_COLORS = { immediate: "#2196F3cc", early: "#66BB6Acc", late: "#FF7043cc", unknown: "#9E9E9Ecc" };
-    const CAT_LABELS = { immediate: "Immediate (≤7d)", early: "Early (8–30d)", late: "Late (>30d)", unknown: "Unknown" };
-    const agentic = timingRows.filter(r => r._lbl === "agentic");
-    if (agentic.length) {
-      mkChart("chart-adoption-timing", "bar", {
-        labels: stackLabels,
-        datasets: CAT_ORDER.map(cat => ({
-          label: CAT_LABELS[cat],
-          data: stackLabels.map(lbl => {
-            const g = agentic.filter(r => (r._stack || r.stack) === lbl);
-            return g.length ? g.filter(r => getTimingCat(r) === cat).length / g.length * 100 : 0;
-          }),
-          backgroundColor: CAT_COLORS[cat], borderRadius: 2,
-        })),
-      }, commonOpts({ scales: { x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } }, y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
-    }
+  // First signal recency per stack (replaces created-at based timing, which is identical to first_signal_at in this dataset)
+  const recencyRows = all.filter(r => r._lbl === "agentic" && r._first_signal_days_ago != null);
+  if (recencyRows.length) {
+    const BUCKET_COLORS = { "≤7d":"#1565C0cc","8–30d":"#42A5F5cc","31–90d":"#66BB6Acc","91–180d":"#FFB74Dcc","180d+":"#9E9E9Ecc" };
+    mkChart("chart-adoption-timing", "bar", {
+      labels: stackLabels,
+      datasets: RECENCY_ORDER.map(b => ({
+        label: b,
+        data: stackLabels.map(lbl => {
+          const g = recencyRows.filter(r => (r._stack || r.stack) === lbl);
+          return g.length ? g.filter(r => recencyBucket(r._first_signal_days_ago) === b).length / g.length * 100 : 0;
+        }),
+        backgroundColor: BUCKET_COLORS[b], borderRadius: 2,
+      })),
+    }, commonOpts({ scales: { x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } }, y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+  } else {
+    destroyChart("chart-adoption-timing");
   }
 
-  // Days to adoption histogram per stack
-  buildPerStackGrid("compare-days-hist-stacks", stackLabels, (id, lbl) => {
-    const rows = all.filter(r => (r._stack || r.stack) === lbl && r.days_to_adoption != null);
+  // Days-since-first-signal density per stack (clipped to 365d)
+  buildCompareSlots("compare-days-hist-stacks", stackLabels, (id, lbl) => {
+    const rows = all.filter(r => (r._stack || r.stack) === lbl && r._lbl === "agentic" && r._first_signal_days_ago != null);
     if (!rows.length) return;
-    const vals = rows.map(r => Math.min(365, parseFloat(r.days_to_adoption))).filter(v => !isNaN(v) && v >= 0);
+    const vals = rows.map(r => Math.min(365, r._first_signal_days_ago)).filter(v => !isNaN(v) && v >= 0);
     if (!vals.length) return;
     const bins = 36; const binSize = 365 / bins;
     const counts = new Array(bins).fill(0);
     vals.forEach(v => { const bi = Math.min(bins - 1, Math.floor(v / binSize)); counts[bi]++; });
+    const total = vals.length;
+    const norm = isNormalized(id);
     const labels = Array.from({ length: bins }, (_, i) => Math.round(i * binSize) + "d");
-    mkChart(id, "bar", {
+    const color = stackColorForLabel(lbl);
+    const data = norm ? counts.map(c => c / total * 100) : counts;
+    mkChart(id, "line", {
       labels,
-      datasets: [{ label: "Repos", data: counts, backgroundColor: stackColorForLabel(lbl) + "cc", borderRadius: 2 }],
-    }, commonOpts({ plugins: { legend: { display: false } }, scales: { x: { ticks: { color: th.text, maxTicksLimit: 10 }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { color: th.grid } } } }));
+      datasets: [{
+        label: lbl,
+        data,
+        _raw: counts,
+        borderColor: color,
+        backgroundColor: color + "33",
+        pointRadius: 0, borderWidth: 2, tension: 0.4, fill: true,
+      }],
+    }, commonOpts({
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const raw = counts[ctx.dataIndex] || 0;
+          const pct = total ? (raw / total * 100) : 0;
+          return `${raw.toLocaleString()} repos (${pct.toFixed(1)}%)`;
+        } } },
+      },
+      scales: {
+        x: { ticks: { color: th.text, maxTicksLimit: 10 }, grid: { color: th.grid } },
+        y: { ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, beginAtZero: true },
+      },
+    }));
+    markNormalizable(id);
   });
+
+  renderAgentEmergenceChart(all);
+  renderRecencyDepthChart(all);
+  renderMonthlyNewAdoptersChart(all, stackLabels);
+  renderCumulativeAdoptersChart(all, stackLabels);
+  renderRetrofitVsGreenfieldChart(all, stackLabels);
+  renderAdoptionMomentumChart(all, stackLabels);
+  renderAuthoredDepthChart(all, stackLabels);
+  renderTopCountriesTimelineChart(all);
+  renderTopCountriesMonthlyChart(all);
+}
+
+// ── Top countries over time ────────────────────────────────────────────────────
+function renderTopCountriesTimelineChart(all) {
+  const id = "chart-top-countries-timeline";
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._month && r._country);
+  if (!rows.length) { destroyChart(id); return; }
+  const topN = filters.topCountries || 10;
+  const totals = {};
+  rows.forEach(r => { totals[r._country] = (totals[r._country] || 0) + 1; });
+  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+  if (!top.length) { destroyChart(id); return; }
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  const rawPer = top.map(country => {
+    let cum = 0;
+    return months.map(m => { cum += rows.filter(r => r._country === country && r._month === m).length; return cum; });
+  });
+  const finals = rawPer.map(d => d[d.length - 1] || 1);
+  const norm = isNormalized(id);
+  const datasets = top.map((country, i) => ({
+    label: country,
+    data: rawPer[i].map(v => norm ? (v / finals[i] * 100) : v),
+    _raw: rawPer[i],
+    borderColor: PALETTE[i % PALETTE.length],
+    backgroundColor: PALETTE[i % PALETTE.length] + "22",
+    pointRadius: 0, borderWidth: 2, tension: 0.35, fill: false,
+  }));
+  mkChart(id, "line", { labels: months, datasets }, commonOpts({
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } }, position: "right" },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+        const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+        const final = finals[ctx.datasetIndex] || 0;
+        const pct = final ? (raw / final * 100) : 0;
+        return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}% of country total)`;
+      } } },
+    },
+    scales: {
+      x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+      y: { max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "% of country's final cumulative" : "Cumulative agentic repos", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+function renderTopCountriesMonthlyChart(all) {
+  const id = "chart-top-countries-monthly";
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._month && r._country);
+  if (!rows.length) { destroyChart(id); return; }
+  const topN = filters.topCountries || 10;
+  const totals = {};
+  rows.forEach(r => { totals[r._country] = (totals[r._country] || 0) + 1; });
+  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+  if (!top.length) { destroyChart(id); return; }
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  const rawPer = top.map(country => months.map(m => rows.filter(r => r._country === country && r._month === m).length));
+  const monthTotals = months.map((_, i) => rawPer.reduce((a, row) => a + row[i], 0));
+  const norm = isNormalized(id);
+  const datasets = top.map((country, i) => ({
+    label: country,
+    data: rawPer[i].map((v, j) => norm ? (monthTotals[j] ? v / monthTotals[j] * 100 : 0) : v),
+    _raw: rawPer[i],
+    backgroundColor: PALETTE[i % PALETTE.length] + "cc",
+    borderColor: PALETTE[i % PALETTE.length], borderWidth: 1, borderRadius: 2,
+  }));
+  mkChart(id, "bar", { labels: months, datasets }, commonOpts({
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } }, position: "right" },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+        const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+        const total = monthTotals[ctx.dataIndex] || 0;
+        const pct = total ? (raw / total * 100) : 0;
+        return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}%)`;
+      } } },
+    },
+    scales: {
+      x: { stacked: true, ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+      y: { stacked: true, max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "Share of monthly top-N flow" : "New agentic repos", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+// ── Time-series extras ─────────────────────────────────────────────────────────
+function renderMonthlyNewAdoptersChart(all, stackLabels) {
+  const id = "chart-monthly-new-adopters";
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._month);
+  if (!rows.length) { destroyChart(id); return; }
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  const rawPerStack = stackLabels.map(lbl =>
+    months.map(m => rows.filter(r => (r._stack || r.stack) === lbl && r._month === m).length));
+  const totals = months.map((_, i) => rawPerStack.reduce((a, row) => a + row[i], 0));
+  const norm = isNormalized(id);
+  const datasets = stackLabels.map((lbl, i) => ({
+    label: lbl,
+    data: rawPerStack[i].map((v, j) => norm ? (totals[j] ? v / totals[j] * 100 : 0) : v),
+    _raw: rawPerStack[i],
+    backgroundColor: stackColorForLabel(lbl) + "cc",
+    borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 2,
+  }));
+  mkChart(id, "bar", { labels: months, datasets }, commonOpts({
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } } },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+        const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+        const total = totals[ctx.dataIndex] || 0;
+        const pct = total ? (raw / total * 100) : 0;
+        return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}%)`;
+      } } },
+    },
+    scales: {
+      x: { stacked: true, ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+      y: { stacked: true, max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "Share of monthly flow" : "New agentic repos", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+function renderCumulativeAdoptersChart(all, stackLabels) {
+  const id = "chart-cumulative-adopters";
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._month);
+  if (!rows.length) { destroyChart(id); return; }
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  const rawPerStack = stackLabels.map(lbl => {
+    let cum = 0;
+    return months.map(m => { cum += rows.filter(r => (r._stack || r.stack) === lbl && r._month === m).length; return cum; });
+  });
+  const finals = rawPerStack.map(d => d[d.length - 1] || 0);
+  const norm = isNormalized(id);
+  const datasets = stackLabels.map((lbl, i) => {
+    const color = stackColorForLabel(lbl);
+    const final = finals[i] || 1;
+    return {
+      label: lbl,
+      data: rawPerStack[i].map(v => norm ? (v / final * 100) : v),
+      _raw: rawPerStack[i],
+      borderColor: color,
+      backgroundColor: color + "33",
+      pointRadius: 0, borderWidth: 2.2, tension: 0.35, fill: !norm,
+    };
+  });
+  mkChart(id, "line", { labels: months, datasets }, commonOpts({
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } } },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+        const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+        const final = finals[ctx.datasetIndex] || 0;
+        const pct = final ? (raw / final * 100) : 0;
+        return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}% of stack total)`;
+      } } },
+    },
+    scales: {
+      x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+      y: { max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "% of stack's final cumulative" : "Cumulative agentic repos", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+function parseIsoDays(a, b) {
+  if (!a || !b) return null;
+  const da = Date.parse(a), db = Date.parse(b);
+  if (isNaN(da) || isNaN(db)) return null;
+  return Math.max(0, Math.round((db - da) / 86400000));
+}
+
+const RETROFIT_BUCKETS = ["Greenfield (≤7d)","Fast (7–30d)","Normal (1–3mo)","Slow (3–12mo)","Retrofit (1y+)"];
+function retrofitBucket(days) {
+  if (days == null || isNaN(days) || days < 0) return null;
+  if (days <=   7) return "Greenfield (≤7d)";
+  if (days <=  30) return "Fast (7–30d)";
+  if (days <=  90) return "Normal (1–3mo)";
+  if (days <= 365) return "Slow (3–12mo)";
+  return "Retrofit (1y+)";
+}
+
+function renderRetrofitVsGreenfieldChart(all, stackLabels) {
+  // "Greenfield vs Retrofit" = time from oldest scanned commit to first AI signal.
+  // Short gap = AI landed near project birth (greenfield); long gap = added much later.
+  const th = getTheme();
+  const rows = all
+    .filter(r => r._lbl === "agentic" && r._first_signal_at && r._oldest_commit_at)
+    .map(r => Object.assign({}, r, { _gap_days: parseIsoDays(r._oldest_commit_at, r._first_signal_at) }))
+    .filter(r => r._gap_days != null);
+  if (!rows.length) { destroyChart("chart-retrofit-greenfield"); return; }
+  const BUCKET_COLORS = ["#2a9d8f","#8ecae6","#e9c46a","#f4a261","#6c757d"];
+  const datasets = RETROFIT_BUCKETS.map((b, i) => ({
+    label: b,
+    data: stackLabels.map(lbl => {
+      const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+      return srows.length ? srows.filter(r => retrofitBucket(r._gap_days) === b).length / srows.length * 100 : 0;
+    }),
+    backgroundColor: BUCKET_COLORS[i] + "cc",
+    borderRadius: 2,
+  }));
+  mkChart("chart-retrofit-greenfield", "bar", { labels: stackLabels, datasets }, commonOpts({
+    scales: {
+      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+      y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid },
+           title: { display: true, text: "Share of agentic repos", color: th.text } },
+    },
+  }));
+}
+
+function renderAdoptionMomentumChart(all, stackLabels) {
+  // What % of agentic repos had their first signal inside each lookback window?
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._first_signal_days_ago != null);
+  if (!rows.length) { destroyChart("chart-adoption-momentum"); return; }
+  const WINDOWS = [
+    { label: "≤30d",  days: 30 },
+    { label: "≤90d",  days: 90 },
+    { label: "≤180d", days: 180 },
+    { label: "≤365d", days: 365 },
+  ];
+  const datasets = stackLabels.map(lbl => {
+    const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+    const n = srows.length || 1;
+    return {
+      label: lbl,
+      data: WINDOWS.map(w => srows.filter(r => r._first_signal_days_ago <= w.days).length / n * 100),
+      backgroundColor: stackColorForLabel(lbl) + "cc",
+      borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3,
+    };
+  });
+  mkChart("chart-adoption-momentum", "bar", { labels: WINDOWS.map(w => w.label), datasets }, commonOpts({
+    scales: {
+      x: { ticks: { color: th.text }, grid: { color: th.grid },
+           title: { display: true, text: "Lookback window (first AI signal within)", color: th.text } },
+      y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid },
+           title: { display: true, text: "% of agentic repos", color: th.text } },
+    },
+  }));
+}
+
+function renderAuthoredDepthChart(all, stackLabels) {
+  // Distribution of AI-authored commit depth per stack. Uses commit_ratio tiers.
+  // Shows how many repos are "flirting" vs "saturated".
+  const th = getTheme();
+  const rows = all.filter(r => r._lbl === "agentic" && r._density != null);
+  if (!rows.length) { destroyChart("chart-authored-depth"); return; }
+  const SEG_COLORS = { "Config-only (0%)":"#E0E0E0","Low (<10%)":"#FFE082","Medium (10–40%)":"#FFB74D","High (40–80%)":"#64B5F6","Full (≥80%)":"#1565C0" };
+  const datasets = DENSITY_BUCKET_ORDER.map(b => ({
+    label: b,
+    data: stackLabels.map(lbl => {
+      const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+      return srows.length ? srows.filter(r => densityBucket(r._density) === b).length / srows.length * 100 : 0;
+    }),
+    backgroundColor: SEG_COLORS[b] + "cc",
+    borderRadius: 2,
+  }));
+  mkChart("chart-authored-depth", "bar", { labels: stackLabels, datasets }, commonOpts({
+    scales: {
+      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+      y: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid },
+           title: { display: true, text: "Agentic repos by AI-commit depth", color: th.text } },
+    },
+  }));
+}
+
+function renderAgentEmergenceChart(all) {
+  const id = "chart-agent-emergence";
+  const th = getTheme();
+  const rows = all.filter(r => r._month && r._primary_agent);
+  if (!rows.length) { destroyChart(id); return; }
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  const counts = {};
+  rows.forEach(r => { counts[r._primary_agent] = (counts[r._primary_agent] || 0) + 1; });
+  const topAgents = Object.entries(counts)
+    .filter(([a]) => a && a !== "Generic")
+    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([a]) => a);
+  const rawPerAgent = topAgents.map(agent => {
+    let cum = 0;
+    return months.map(m => { cum += rows.filter(r => r._primary_agent === agent && r._month === m).length; return cum; });
+  });
+  const finals = rawPerAgent.map(d => d[d.length - 1] || 1);
+  const norm = isNormalized(id);
+  const datasets = topAgents.map((agent, i) => ({
+    label: agent,
+    data: rawPerAgent[i].map(v => norm ? (v / finals[i] * 100) : v),
+    _raw: rawPerAgent[i],
+    borderColor: PALETTE[i % PALETTE.length],
+    backgroundColor: PALETTE[i % PALETTE.length] + "22",
+    pointRadius: 0, borderWidth: 2.2, tension: 0.35, fill: false,
+  }));
+  mkChart(id, "line", { labels: months, datasets }, commonOpts({
+    plugins: {
+      legend: { labels: { color: th.text, font: { size: 11 } }, position: "right" },
+      tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+        const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+        const final = finals[ctx.datasetIndex] || 0;
+        const pct = final ? (raw / final * 100) : 0;
+        return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}% of agent total)`;
+      } } },
+    },
+    scales: {
+      x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+      y: { max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "% of agent's final footprint" : "Cumulative repos", color: th.text } },
+    },
+  }));
+  markNormalizable(id);
+}
+
+function renderRecencyDepthChart(all) {
+  const th = getTheme();
+  const rows = all.filter(r => r._first_signal_days_ago != null);
+  if (!rows.length) { destroyChart("chart-recency-depth"); return; }
+  const datasets = ADOPTION_DEPTH_ORDER.filter(l => l !== "none").map(lvl => ({
+    label: lvl,
+    data: RECENCY_ORDER.map(b => rows.filter(r => recencyBucket(r._first_signal_days_ago) === b && r._level === lvl).length),
+    backgroundColor: ADOPTION_DEPTH_COLORS[lvl] + "cc",
+    borderRadius: 2,
+  }));
+  mkChart("chart-recency-depth", "bar", { labels: RECENCY_ORDER, datasets }, commonOpts({
+    scales: {
+      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Days since first signal", color: th.text } },
+      y: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Repos", color: th.text } },
+    },
+  }));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -887,8 +2306,8 @@ function renderSize() {
     }
 
     // Median stars by adoption category
-    const CAT_LABELS = ["No AI","AI-Assisted","Agentic"];
-    const CAT_KEYS   = ["none","ai_assisted","agentic"];
+    const CAT_LABELS = ["No AI","Agentic"];
+    const CAT_KEYS   = ["none","agentic"];
     const starsDatasets = stackLabels.map(lbl => {
       const rows = withStars.filter(r => (r._stack || r.stack) === lbl);
       return {
@@ -905,16 +2324,16 @@ function renderSize() {
   }
 
   // Median commits by adoption category (if column exists)
-  const withCommits = all.filter(r => r.commits != null && r.commits !== "");
+  const withCommits = all.filter(r => r._commits != null);
   if (withCommits.length) {
-    const CAT_LABELS = ["No AI","AI-Assisted","Agentic"];
-    const CAT_KEYS   = ["none","ai_assisted","agentic"];
+    const CAT_LABELS = ["No AI","Agentic"];
+    const CAT_KEYS   = ["none","agentic"];
     const commitsDatasets = stackLabels.map(lbl => {
       const rows = withCommits.filter(r => (r._stack || r.stack) === lbl);
       return {
         label: lbl,
         data: CAT_KEYS.map(cat => {
-          const g = rows.filter(r => r._lbl === cat).map(r => parseFloat(r.commits)).filter(v => !isNaN(v)).sort((a, b) => a - b);
+          const g = rows.filter(r => r._lbl === cat).map(r => r._commits).filter(v => !isNaN(v)).sort((a, b) => a - b);
           return g.length ? g[Math.floor(g.length / 2)] : 0;
         }),
         backgroundColor: stackColorForLabel(lbl) + "cc", borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3,
@@ -922,7 +2341,62 @@ function renderSize() {
     });
     mkChart("chart-size-commits", "bar", { labels: CAT_LABELS, datasets: commitsDatasets },
       commonOpts({ scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { color: th.grid } } } }));
+  } else {
+    destroyChart("chart-size-commits");
   }
+
+  // Commits tertile adoption rate (Small / Medium / Large by commit count)
+  renderTertileAdoptionChart(
+    "chart-size-commits-tertile",
+    all.filter(r => r._commits != null).map(r => Object.assign({}, r, { _sizeVal: r._commits })),
+    stackLabels,
+    "commits",
+  );
+
+}
+
+// ── Helpers: tertile adoption chart + empty-state ──────────────────────────────
+function renderTertileAdoptionChart(canvasId, rowsWithSize, stackLabels, label) {
+  const th = getTheme();
+  if (!rowsWithSize.length) {
+    showEmptyCanvas(canvasId, `No ${label} data in uploaded CSVs.`);
+    return;
+  }
+  const TERTILE_LABELS = ["Small","Medium","Large"];
+  const datasets = stackLabels.map(lbl => {
+    const rows = rowsWithSize.filter(r => (r._stack || r.stack) === lbl).sort((a, b) => a._sizeVal - b._sizeVal);
+    if (rows.length < 3) return null;
+    const t = Math.floor(rows.length / 3);
+    const groups = [rows.slice(0, t), rows.slice(t, 2 * t), rows.slice(2 * t)];
+    return {
+      label: lbl,
+      data: groups.map(g => g.filter(r => r._adopted).length / (g.length || 1) * 100),
+      backgroundColor: stackColorForLabel(lbl) + "cc",
+      borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3,
+    };
+  }).filter(Boolean);
+  if (!datasets.length) { showEmptyCanvas(canvasId, `Not enough ${label} data per stack (need ≥3 repos).`); return; }
+  mkChart(canvasId, "bar", { labels: TERTILE_LABELS, datasets },
+    commonOpts({ scales: {
+      x: { ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: label, color: th.text } },
+      y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } },
+    } }));
+}
+
+function showEmptyCanvas(canvasId, msg) {
+  destroyChart(canvasId);
+  const el = document.getElementById(canvasId);
+  if (!el || !el.parentNode) return;
+  // If we've already replaced it with a note, update text.
+  const existing = el.parentNode.querySelector(`.compare-empty-note[data-for="${canvasId}"]`);
+  if (existing) { existing.textContent = msg; return; }
+  const note = document.createElement("div");
+  note.className = "compare-empty-note";
+  note.dataset.for = canvasId;
+  note.textContent = msg;
+  // Keep the canvas in DOM but hidden so download wiring can skip it.
+  el.style.display = "none";
+  el.parentNode.insertBefore(note, el);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -933,30 +2407,45 @@ function renderDepth() {
   const stackLabels = [...new Set(all.map(r => r._stack || r.stack))];
   const th = getTheme();
 
-  // Ecosystem breakdown per stack
-  const ecoCol = ["ecosystem_type","primary_language","corpus_source"].find(c => all.some(r => r[c]));
-  if (ecoCol) {
-    buildPerStackGrid("compare-ecosystem-stacks", stackLabels, (id, lbl) => {
-      const rows = all.filter(r => (r._stack || r.stack) === lbl && r[ecoCol]);
+  renderSemanticsCoverageChart(all, stackLabels);
+  renderHistoryCoverageChart(all, stackLabels);
+
+  // Framework-hint adoption rate per stack (uses framework_hints from the integrated CSV).
+  const haveFrameworks = all.some(r => r._frameworks && r._frameworks.length);
+  if (haveFrameworks) {
+    buildCompareSlots("compare-ecosystem-stacks", stackLabels, (id, lbl) => {
+      const rows = all.filter(r => (r._stack || r.stack) === lbl && r._frameworks && r._frameworks.length);
       if (!rows.length) return;
-      const ecoMap = {};
-      rows.forEach(r => {
-        const eco = String(r[ecoCol]);
-        if (!ecoMap[eco]) ecoMap[eco] = { n: 0, adopted: 0 };
-        ecoMap[eco].n++;
-        if (r._adopted) ecoMap[eco].adopted++;
-      });
-      const stats = Object.entries(ecoMap).map(([e, v]) => ({ e, rate: v.adopted / v.n * 100 })).sort((a, b) => a.rate - b.rate);
+      const fwMap = {};
+      rows.forEach(r => r._frameworks.forEach(f => {
+        if (!fwMap[f]) fwMap[f] = { n: 0, adopted: 0 };
+        fwMap[f].n++;
+        if (r._adopted) fwMap[f].adopted++;
+      }));
+      const stats = Object.entries(fwMap)
+        .filter(([, v]) => v.n >= 5)
+        .map(([f, v]) => ({ f, n: v.n, rate: v.adopted / v.n * 100 }))
+        .sort((a, b) => a.rate - b.rate)
+        .slice(-18);
+      if (!stats.length) return;
+      const color = stackColorForLabel(lbl);
       mkChart(id, "bar", {
-        labels: stats.map(s => s.e),
+        labels: stats.map(s => `${s.f} (n=${s.n})`),
         datasets: [{ label: "Adoption Rate", data: stats.map(s => s.rate),
-          backgroundColor: stackColorForLabel(lbl) + "cc", borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3 }],
-      }, commonOpts({ indexAxis: "y", plugins: { legend: { display: false } },
-        scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
-    });
+          backgroundColor: stats.map(s => color + "cc"),
+          borderColor: color, borderWidth: 1, borderRadius: 4 }],
+      }, commonOpts({ indexAxis: "y", plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: ctx => {
+            const s = stats[ctx.dataIndex]; return `${s.rate.toFixed(1)}%  (${Math.round(s.rate * s.n / 100)}/${s.n})`;
+          } } } },
+        scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Adoption rate", color: th.text } }, y: { ticks: { color: th.text, font: { size: 10 } }, grid: { display: false } } } }));
+    }, { tall: true });
+  } else {
+    const host = document.getElementById("compare-ecosystem-stacks");
+    if (host) host.innerHTML = '<p class="muted">No <code>framework_hints</code> column — regenerate the CSV with the latest build_integrated_csv.py to populate.</p>';
   }
 
-  // Agent market share over time
+  // Agent market share over time (already percent-based)
   const dated = all.filter(r => r._lbl === "agentic" && r._month);
   if (dated.length) {
     const globalCounts = {};
@@ -964,19 +2453,31 @@ function renderDepth() {
     const topN = 7;
     const topAgents = Object.entries(globalCounts).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([a]) => a);
     const months = [...new Set(dated.map(r => r._month))].sort();
+    const perMonthG = months.map(m => dated.filter(r => r._month === m));
     const msDatasets = topAgents.map((agent, i) => ({
       label: agent,
-      data: months.map(m => {
-        const g = dated.filter(r => r._month === m);
-        if (g.length < 5) return null;
-        return g.filter(r => r._agents.includes(agent)).length / g.length * 100;
-      }),
+      data: perMonthG.map(g => g.length < 5 ? null : g.filter(r => r._agents.includes(agent)).length / g.length * 100),
+      _counts: perMonthG.map(g => g.filter(r => r._agents.includes(agent)).length),
+      _denoms: perMonthG.map(g => g.length),
       borderColor: PALETTE[i % PALETTE.length],
-      backgroundColor: "transparent",
-      pointRadius: 3, borderWidth: 2, tension: 0.3, spanGaps: true,
+      backgroundColor: PALETTE[i % PALETTE.length] + "14",
+      pointRadius: 0, borderWidth: 2.2, tension: 0.4, spanGaps: true, fill: false,
     }));
-    mkChart("chart-agent-market-share", "line", { labels: months, datasets: msDatasets },
-      commonOpts({ scales: { x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } }, y: { ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+    mkChart("chart-agent-market-share", "line", { labels: months, datasets: msDatasets }, commonOpts({
+      plugins: {
+        legend: { labels: { color: th.text, font: { size: 11 } }, position: "right" },
+        tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+          const c = ctx.dataset._counts[ctx.dataIndex];
+          const d = ctx.dataset._denoms[ctx.dataIndex];
+          if (ctx.parsed.y == null) return `${ctx.dataset.label}: — (n<5)`;
+          return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}% (${c}/${d})`;
+        } } },
+      },
+      scales: {
+        x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid } },
+        y: { ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Share of agentic repos that month", color: th.text } },
+      },
+    }));
   }
 
   // Tool co-occurrence heatmap
@@ -1003,27 +2504,123 @@ function renderDepth() {
   }
 }
 
+function renderSemanticsCoverageChart(all, stackLabels) {
+  const th = getTheme();
+  const rows = all.filter(r => r._semantics && r._semantics.length);
+  if (!rows.length) { destroyChart("chart-semantics-coverage"); return; }
+  const semKeys = ["configuration","activity","authorship","historical_lineage","generated_code"];
+  const semLabels = ["Configuration","Activity","Authorship","Historical","Generated"];
+  const datasets = stackLabels.map(lbl => {
+    const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+    return {
+      label: lbl,
+      data: semKeys.map(k => srows.length ? srows.filter(r => r._semantics.includes(k)).length / srows.length * 100 : 0),
+      backgroundColor: stackColorForLabel(lbl) + "cc",
+      borderRadius: 3,
+    };
+  });
+  mkChart("chart-semantics-coverage", "bar", { labels: semLabels, datasets }, commonOpts({
+    scales: {
+      x: { ticks: { color: th.text }, grid: { color: th.grid } },
+      y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } },
+    },
+  }));
+}
+
+function renderHistoryCoverageChart(all, stackLabels) {
+  const th = getTheme();
+  const rows = all.filter(r => r._history_coverage != null);
+  if (!rows.length) { destroyChart("chart-history-coverage"); return; }
+  const buckets = ["0–20%","20–40%","40–60%","60–80%","80–100%"];
+  function bin(v) {
+    if (v == null) return null;
+    if (v < 0.2) return "0–20%";
+    if (v < 0.4) return "20–40%";
+    if (v < 0.6) return "40–60%";
+    if (v < 0.8) return "60–80%";
+    return "80–100%";
+  }
+  const datasets = stackLabels.map(lbl => {
+    const srows = rows.filter(r => (r._stack || r.stack) === lbl);
+    return {
+      label: lbl,
+      data: buckets.map(b => srows.filter(r => bin(r._history_coverage) === b).length),
+      backgroundColor: stackColorForLabel(lbl) + "cc",
+      borderRadius: 2,
+    };
+  });
+  mkChart("chart-history-coverage", "bar", { labels: buckets, datasets }, commonOpts({
+    scales: {
+      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+      y: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+    },
+  }));
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SIDEBAR BUILDER
 // ══════════════════════════════════════════════════════════════════════════════
 function buildSidebar() {
   const sidebar = document.getElementById("compare-sidebar");
   if (!sidebar) return;
-  const all = getFilteredRows.call ? (() => { const rows = []; stacks.forEach(s => s.rows.forEach(r => rows.push(Object.assign({}, r, { _stack: s.label })))); return rows; })() : [];
   const allStacks = stacks.map(s => s.label);
+
+  // Pre-compute per-stack framework + ecosystem values (from raw rows, no filters applied).
+  const stackFacets = {};
+  stacks.forEach(s => {
+    const fw = new Set(); const eco = new Set();
+    s.rows.forEach(r => {
+      const list = (r.framework_hints || r.frameworks || "").trim();
+      if (list) list.split("|").map(x => x.trim()).filter(Boolean).forEach(f => fw.add(f));
+      const e = (r.ecosystem || "").trim(); if (e) eco.add(e);
+    });
+    stackFacets[s.label] = {
+      frameworks: [...fw].sort(),
+      ecosystems: [...eco].sort(),
+    };
+  });
+
+  // Discover top-level enum facets.
+  const allEnrichedSample = stacks.flatMap(s => s.rows.slice(0, 4000).map(r => enrichRow(r)));
+  const levelSet = new Set(allEnrichedSample.map(r => r._level).filter(Boolean));
+  const primaryAgentCounts = {};
+  allEnrichedSample.forEach(r => { if (r._primary_agent) primaryAgentCounts[r._primary_agent] = (primaryAgentCounts[r._primary_agent] || 0) + 1; });
+  const topPrimaryAgents = Object.entries(primaryAgentCounts).sort((a,b) => b[1]-a[1]).slice(0, 12).map(([a]) => a);
+  const hasArchivedData = allEnrichedSample.some(r => r._is_archived);
+  const hasActiveData   = allEnrichedSample.some(r => r._is_active_90d);
 
   let html = "";
 
-  // Stack filter
+  // ── Stacks (with nested framework + ecosystem) ──────────────────────────
   html += `<div class="compare-filter-group"><h4>Stacks</h4>`;
   allStacks.forEach(lbl => {
     const checked = !filters.selectedStacks || filters.selectedStacks.has(lbl);
     const col = stackColorForLabel(lbl);
+    const facets = stackFacets[lbl] || { frameworks: [], ecosystems: [] };
+    const sub = filters.perStackSub[lbl] || {};
     html += `<label class="compare-filter-row"><input type="checkbox" class="sf-stack" value="${escHtml(lbl)}"${checked ? " checked" : ""}><span class="compare-stack-dot" style="background:${col}"></span>${escHtml(lbl)}</label>`;
+    if (facets.ecosystems.length || facets.frameworks.length) {
+      html += `<details class="compare-nested-group"><summary>↳ narrow by ecosystem/framework</summary>`;
+      if (facets.ecosystems.length) {
+        html += `<div class="compare-nested-label">Ecosystem</div>`;
+        facets.ecosystems.forEach(e => {
+          const isSel = sub.ecosystem && sub.ecosystem.has(e);
+          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="ecosystem" value="${escHtml(e)}"${isSel ? " checked" : ""}> ${escHtml(e)}</label>`;
+        });
+      }
+      if (facets.frameworks.length) {
+        html += `<div class="compare-nested-label">Framework</div>`;
+        facets.frameworks.forEach(f => {
+          const isSel = sub.framework && sub.framework.has(f);
+          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="framework" value="${escHtml(f)}"${isSel ? " checked" : ""}> ${escHtml(f)}</label>`;
+        });
+      }
+      html += "</details>";
+    }
   });
   html += "</div>";
 
-  // Date range
+  // ── Date range ─────────────────────────────────────────────────────────
   const months = [...new Set(stacks.flatMap(s => s.rows.map(r => getMonth(r)).filter(Boolean)))].sort();
   if (months.length >= 2) {
     html += `<div class="compare-filter-group"><h4>Date range</h4>
@@ -1034,18 +2631,53 @@ function buildSidebar() {
     html += `</select></label></div>`;
   }
 
-  // Adoption scope
-  html += `<div class="compare-filter-group"><h4>Adoption scope</h4>
-    <label class="compare-filter-row"><input type="radio" name="sf-scope" value="all"${filters.scope === "all" ? " checked" : ""}> All adopted (agentic + AI-assisted)</label>
-    <label class="compare-filter-row"><input type="radio" name="sf-scope" value="agentic"${filters.scope === "agentic" ? " checked" : ""}> Agentic only</label>
-  </div>`;
+  // ── Adoption depth ─────────────────────────────────────────────────────
+  if (levelSet.size > 1) {
+    html += `<div class="compare-filter-group"><h4>Adoption depth</h4>`;
+    ADOPTION_DEPTH_ORDER.forEach(lvl => {
+      if (!levelSet.has(lvl)) return;
+      const isSel = filters.adoptionLevels && filters.adoptionLevels.has(lvl);
+      html += `<label class="compare-filter-row"><input type="checkbox" class="sf-level" value="${lvl}"${isSel ? " checked" : ""}>${lvl}</label>`;
+    });
+    html += `<p class="muted compare-filter-hint">Leave empty to include all levels.</p></div>`;
+  }
 
-  // Min repos per country
+  // ── Repo state (archived / active) ─────────────────────────────────────
+  if (hasArchivedData || hasActiveData) {
+    html += `<div class="compare-filter-group"><h4>Repo state</h4>`;
+    if (hasArchivedData) {
+      html += `<label class="compare-filter-row">Archived<select id="sf-archived" class="field-input">
+        <option value="any"${filters.archived === "any" ? " selected" : ""}>Any</option>
+        <option value="exclude"${filters.archived === "exclude" ? " selected" : ""}>Exclude</option>
+        <option value="only"${filters.archived === "only" ? " selected" : ""}>Only</option>
+      </select></label>`;
+    }
+    if (hasActiveData) {
+      html += `<label class="compare-filter-row">Active &lt;90d<select id="sf-active90" class="field-input">
+        <option value="any"${filters.active90 === "any" ? " selected" : ""}>Any</option>
+        <option value="only"${filters.active90 === "only" ? " selected" : ""}>Only</option>
+        <option value="exclude"${filters.active90 === "exclude" ? " selected" : ""}>Exclude</option>
+      </select></label>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Primary agent family ───────────────────────────────────────────────
+  if (topPrimaryAgents.length > 1) {
+    html += `<div class="compare-filter-group"><h4>Primary agent family</h4><details class="compare-eco-group"><summary>${filters.primaryAgents && filters.primaryAgents.size ? filters.primaryAgents.size + " selected" : "any"}</summary>`;
+    topPrimaryAgents.forEach(a => {
+      const isSel = filters.primaryAgents && filters.primaryAgents.has(a);
+      html += `<label class="compare-filter-row"><input type="checkbox" class="sf-primary" value="${escHtml(a)}"${isSel ? " checked" : ""}> ${escHtml(a)}</label>`;
+    });
+    html += `</details></div>`;
+  }
+
+  // ── Min repos per country ──────────────────────────────────────────────
   html += `<div class="compare-filter-group"><h4>Min repos per country <span id="sf-mincountry-val">${filters.minCountry}</span></h4>
     <input type="range" id="sf-mincountry" min="1" max="50" value="${filters.minCountry}" class="compare-range">
   </div>`;
 
-  // Chart sliders
+  // ── Chart sliders ──────────────────────────────────────────────────────
   html += `<div class="compare-filter-group"><h4>Chart controls</h4>
     <label class="compare-filter-row">Top agents <input type="range" id="sf-top-agents" min="3" max="15" value="${filters.topAgents}" class="compare-range"> <span id="sf-top-agents-val">${filters.topAgents}</span></label>
     <label class="compare-filter-row">Top countries <input type="range" id="sf-top-countries" min="5" max="20" value="${filters.topCountries}" class="compare-range"> <span id="sf-top-countries-val">${filters.topCountries}</span></label>
@@ -1055,31 +2687,20 @@ function buildSidebar() {
     <label class="compare-filter-row">MENA min repos <input type="range" id="sf-mena-min" min="1" max="30" value="${filters.menaMin}" class="compare-range"> <span id="sf-mena-min-val">${filters.menaMin}</span></label>
   </div>`;
 
-  // Ecosystem filters (dynamic)
-  const ecoAllRows = stacks.flatMap(s => s.rows.map(r => Object.assign({}, r)));
-  const detectedCols = ["ecosystem_type","primary_language","corpus_source","size_stratum","topics"].filter(col => ecoAllRows.some(r => r[col]));
-  if (detectedCols.length) {
-    html += `<div class="compare-filter-group"><h4>Ecosystem filters</h4>`;
-    detectedCols.forEach(col => {
-      const vals = [...new Set(ecoAllRows.map(r => r[col]).filter(v => v != null && v !== ""))].sort();
-      if (vals.length < 2 || vals.length > 50) return;
-      const selVals = filters.eco[col] || vals;
-      html += `<details class="compare-eco-group"><summary>${col.replace(/_/g, " ")}</summary>`;
-      vals.forEach(v => {
-        const checked = selVals.includes(String(v));
-        html += `<label class="compare-filter-row"><input type="checkbox" class="sf-eco" data-col="${escHtml(col)}" value="${escHtml(String(v))}"${checked ? " checked" : ""}> ${escHtml(String(v))}</label>`;
-      });
-      html += "</details>";
-    });
-    html += "</div>";
-  }
-
   sidebar.innerHTML = html;
 
-  // Wire events
+  // ── Event wiring ────────────────────────────────────────────────────────
   sidebar.querySelectorAll(".sf-stack").forEach(cb => cb.addEventListener("change", () => {
     const checked = [...sidebar.querySelectorAll(".sf-stack:checked")].map(c => c.value);
     filters.selectedStacks = checked.length === allStacks.length ? null : new Set(checked);
+    renderActiveTab();
+  }));
+  sidebar.querySelectorAll(".sf-substack").forEach(cb => cb.addEventListener("change", () => {
+    const stack = cb.dataset.stack, kind = cb.dataset.kind;
+    const sub = filters.perStackSub[stack] = filters.perStackSub[stack] || {};
+    sub[kind] = sub[kind] || new Set();
+    if (cb.checked) sub[kind].add(cb.value); else sub[kind].delete(cb.value);
+    if (sub[kind].size === 0) delete sub[kind];
     renderActiveTab();
   }));
   sidebar.querySelectorAll(".sf-date").forEach(sel => sel.addEventListener("change", () => {
@@ -1088,9 +2709,20 @@ function buildSidebar() {
     filters.dateTo   = to   ? to.value   : null;
     renderActiveTab();
   }));
-  sidebar.querySelectorAll("input[name='sf-scope']").forEach(r => r.addEventListener("change", () => {
-    filters.scope = r.value; if (r.checked) renderActiveTab();
+  sidebar.querySelectorAll(".sf-level").forEach(cb => cb.addEventListener("change", () => {
+    const checked = [...sidebar.querySelectorAll(".sf-level:checked")].map(c => c.value);
+    filters.adoptionLevels = checked.length ? new Set(checked) : null;
+    renderActiveTab();
   }));
+  sidebar.querySelectorAll(".sf-primary").forEach(cb => cb.addEventListener("change", () => {
+    const checked = [...sidebar.querySelectorAll(".sf-primary:checked")].map(c => c.value);
+    filters.primaryAgents = checked.length ? new Set(checked) : null;
+    renderActiveTab();
+  }));
+  const archEl = document.getElementById("sf-archived");
+  if (archEl) archEl.addEventListener("change", () => { filters.archived = archEl.value; renderActiveTab(); });
+  const actEl = document.getElementById("sf-active90");
+  if (actEl) actEl.addEventListener("change", () => { filters.active90 = actEl.value; renderActiveTab(); });
   const mcSlider = document.getElementById("sf-mincountry");
   if (mcSlider) mcSlider.addEventListener("input", () => {
     filters.minCountry = parseInt(mcSlider.value); document.getElementById("sf-mincountry-val").textContent = filters.minCountry; renderActiveTab();
@@ -1099,11 +2731,6 @@ function buildSidebar() {
     const el = document.getElementById(id); if (!el) return;
     el.addEventListener("input", () => { filters[key] = parseInt(el.value); document.getElementById(id + "-val").textContent = filters[key]; renderActiveTab(); });
   });
-  sidebar.querySelectorAll(".sf-eco").forEach(cb => cb.addEventListener("change", () => {
-    const col = cb.dataset.col;
-    const checked = [...sidebar.querySelectorAll(`.sf-eco[data-col="${col}"]:checked`)].map(c => c.value);
-    filters.eco[col] = checked; renderActiveTab();
-  }));
 }
 
 function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -1117,6 +2744,8 @@ function renderActiveTab() {
   else if (activeTab === "time")       renderTimeSeries();
   else if (activeTab === "size")       renderSize();
   else if (activeTab === "depth")      renderDepth();
+  // Attach per-chart PNG download + normalize + info toggles (idempotent).
+  requestAnimationFrame(() => { attachDownloadButtons(); attachNormalizeButtons(); attachInfoButtons(); closeInfoPop(); });
 }
 
 function renderAll() {
