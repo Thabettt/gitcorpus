@@ -587,7 +587,10 @@ def export_bundle(
     engine: Engine, run_id: int, *, format: str, stack: str = "", runs_root: str = "runs"
 ) -> tuple[Iterator[bytes], str]:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv, detections, detections-json, comparison")
+        raise ValueError(
+            "format",
+            "format must be one of: json, csv, detections, detections-json, comparison",
+        )
     run_row = _row_for_run(engine, run_id)
     if run_row["kind"] == "detect":
         if run_row["status"] in _UNFINISHED_STATUSES:
@@ -638,13 +641,20 @@ def export_run(
     engine: Engine, run_id: int, *, format: str = "json", stack: str = "", runs_root: str = "runs"
 ) -> StreamingResponse:
     if format not in _MEDIA_TYPES:
-        raise ValueError("format", "format must be one of: json, csv, detections, detections-json, comparison")
+        raise ValueError(
+            "format",
+            "format must be one of: json, csv, detections, detections-json, comparison",
+        )
     run_row = _row_for_run(engine, run_id)
     detect = run_row["kind"] == "detect"
     regenerated = detect or format not in _BUNDLE_FILES
     if not regenerated:
-        regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
-    chunks, media_type = export_bundle(engine, run_id, format=format, stack=stack, runs_root=runs_root)
+        regenerated = not bundle_file(
+            runs_root, run_row["filter_hash"], run_id, format
+        ).is_file()
+    chunks, media_type = export_bundle(
+        engine, run_id, format=format, stack=stack, runs_root=runs_root
+    )
     if detect:
         stem = f"gitcorpus-detect-{run_id}{_pack_segment(run_row)}"
         filename = {

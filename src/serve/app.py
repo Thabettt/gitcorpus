@@ -990,7 +990,10 @@ def create_app(
                 content={
                     "error": "invalid_param",
                     "param": "format",
-                    "hint": "format must be one of: json, csv, detections, detections-json, comparison",
+                    "hint": (
+                        "format must be one of: json, csv, detections, "
+                        "detections-json, comparison"
+                    ),
                 },
             )
         try:
