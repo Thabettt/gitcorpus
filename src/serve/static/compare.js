@@ -50,6 +50,21 @@ const INCOME_MAP = {
 };
 const INCOME_ORDER  = ["HIC","UMIC","LMIC","LIC"];
 const INCOME_LABELS = {"HIC":"High Income","UMIC":"Upper-Middle","LMIC":"Lower-Middle","LIC":"Low Income"};
+const INCOME_LABEL_TO_CODE = {
+  "high income":         "HIC",
+  "upper middle income": "UMIC",
+  "upper-middle income": "UMIC",
+  "lower middle income": "LMIC",
+  "lower-middle income": "LMIC",
+  "low income":          "LIC",
+};
+function incomeFromRow(row, country) {
+  // Prefer the CSV-provided income_group (authoritative World Bank classification).
+  // Fall back to the hardcoded country → tier map only when the column is absent.
+  const raw = (row && row.income_group ? String(row.income_group) : "").trim().toLowerCase();
+  if (raw && INCOME_LABEL_TO_CODE[raw]) return INCOME_LABEL_TO_CODE[raw];
+  return country ? (INCOME_MAP[country] || null) : null;
+}
 const MENA_COUNTRIES = new Set([
   "Algeria","Bahrain","Egypt","Iran","Iraq","Israel","Jordan",
   "Kuwait","Lebanon","Libya","Morocco","Oman","Palestine",
@@ -99,15 +114,134 @@ const REGION_ORDER = [
   "North America","Western Europe","East Asia","South Asia",
   "Eastern Europe","Latin America","MENA","Southeast Asia","Sub-Saharan Africa","Oceania",
 ];
-const PAID_TOOLS = new Set([
-  "claude code","claude code / generic","junie","devin","roo code",
-  "codegen","factory","greptile","ellipsis","amp","openai codex",
-]);
-const FREE_TOOLS = new Set([
-  "github copilot","cursor","windsurf","codeium","aider","continue",
-  "gemini cli","opencode","openhands","swe-agent","amazon q","kiro",
-  "coderabbit","sweep","jules","replit","deepsource","pr-agent","sourcery",
-]);
+// Pricing classification — sourced from the AI Coding Agent Cost Codebook
+// (operator-maintained xlsx; keyed by `category_default` column, i.e. the
+// path most developers actually pay for, not the cheapest-possible path).
+// Categories: C0 = $0 forever via local/open models; C1 = vendor free tier, capped,
+// no expiry; C1-P = free for public/OSS repos only; C2 = student/verified-OSS free;
+// C3 = metered (pay only API tokens, no sub); C4 = paid subscription required;
+// C5 = enterprise/sales-only/discontinued; X = framework/registry, excluded;
+// Unknown = unverified. Binary rule (per codebook Key sheet):
+// FREE_CATS = {C0, C1, C1-P, C2}; PAID_CATS = {C3, C4, C5}; X/Unknown → ambiguous.
+const FREE_CATS = new Set(["C0", "C1", "C1-P", "C2"]);
+const PAID_CATS = new Set(["C3", "C4", "C5"]);
+const AGENT_CATEGORY = {
+  "abacus ai agent": { cat: "C4", conf: "H" },
+  "abacus ai agent / coding agent": { cat: "C4", conf: "H" },
+  "abacus ai coding agent": { cat: "C4", conf: "H" },
+  "abacus.ai cli": { cat: "C4", conf: "H" },
+  "aider": { cat: "C3", conf: "M" },
+  "alibaba lingma": { cat: "C1", conf: "H" },
+  "amazon q cli": { cat: "C1", conf: "H" },
+  "amazon q ide": { cat: "C1", conf: "H" },
+  "amp": { cat: "C1", conf: "M" },
+  "archon": { cat: "C4", conf: "M" },
+  "atlassian rovo cli": { cat: "C4", conf: "H" },
+  "augment code": { cat: "C4", conf: "H" },
+  "azure sre agent": { cat: "X", conf: "H" },
+  "baidu comate": { cat: "C1", conf: "M" },
+  "bmad-method": { cat: "X", conf: "M" },
+  "builder.io fusion": { cat: "C1", conf: "H" },
+  "cascade": { cat: "C4", conf: "H" },
+  "charlie": { cat: "C4", conf: "L" },
+  "claude code": { cat: "C4", conf: "H" },
+  "cline": { cat: "C3", conf: "M" },
+  "codebuddy": { cat: "C1", conf: "H" },
+  "codebuff": { cat: "C1", conf: "H" },
+  "codegen": { cat: "C5", conf: "H" },
+  "coderabbit": { cat: "C1", conf: "H" },
+  "codex": { cat: "C1", conf: "M" },
+  "command code": { cat: "C4", conf: "M" },
+  "copilot": { cat: "C1", conf: "H" },
+  "copilotswe": { cat: "C1", conf: "H" },
+  "crush": { cat: "C3", conf: "L" },
+  "cubic": { cat: "C1", conf: "H" },
+  "cursor": { cat: "C1", conf: "H" },
+  "deepagent": { cat: "C4", conf: "H" },
+  "deepseek harness": { cat: "C3", conf: "M" },
+  "deepsource": { cat: "C1", conf: "H" },
+  "devin / devin desktop": { cat: "C4", conf: "H" },
+  "docker agent": { cat: "C3", conf: "H" },
+  "factory": { cat: "C4", conf: "M" },
+  "factory droid": { cat: "C4", conf: "M" },
+  "fly": { cat: "C4", conf: "M" },
+  "freebuff (codebuff lineage)": { cat: "C1", conf: "H" },
+  "gajae-code": { cat: "C4", conf: "M" },
+  "gemini": { cat: "C1", conf: "H" },
+  "gemini cli": { cat: "C1", conf: "H" },
+  "gemini code assist": { cat: "C1", conf: "H" },
+  "gitai / graft": { cat: "X", conf: "L" },
+  "github agentic workflows": { cat: "C1-P", conf: "M" },
+  "gitlab duo agent platform": { cat: "C4", conf: "H" },
+  "google antigravity / gemini code assist": { cat: "C1", conf: "H" },
+  "goose": { cat: "C3", conf: "M" },
+  "greptile": { cat: "C1", conf: "H" },
+  "grok build": { cat: "C4", conf: "M" },
+  "gru": { cat: "Unknown", conf: "L" },
+  "herder": { cat: "C4", conf: "L" },
+  "hermes agent": { cat: "C3", conf: "H" },
+  "jcode": { cat: "C3", conf: "M" },
+  "jules": { cat: "C1", conf: "H" },
+  "junie": { cat: "C2", conf: "M" },
+  "kilo code": { cat: "C1", conf: "M" },
+  "kimi code": { cat: "C4", conf: "M" },
+  "kimi code cli": { cat: "C4", conf: "M" },
+  "kiro": { cat: "C1", conf: "H" },
+  "kody ai": { cat: "C3", conf: "M" },
+  "langchain open swe": { cat: "C3", conf: "M" },
+  "langgraph": { cat: "X", conf: "M" },
+  "letta code": { cat: "C3", conf: "H" },
+  "lingma": { cat: "C1", conf: "H" },
+  "lovable": { cat: "C1", conf: "H" },
+  "manicode": { cat: "C1", conf: "H" },
+  "microsoft amplifier": { cat: "C3", conf: "M" },
+  "mistral vibe": { cat: "C4", conf: "H" },
+  "odysseus": { cat: "X", conf: "L" },
+  "oh my pi": { cat: "C3", conf: "M" },
+  "oh-my-claudecode": { cat: "C4", conf: "H" },
+  "ona": { cat: "C4", conf: "M" },
+  "openclaw": { cat: "C3", conf: "H" },
+  "opencode": { cat: "C1", conf: "H" },
+  "opencodereview": { cat: "C3", conf: "M" },
+  "openhands": { cat: "C3", conf: "M" },
+  "openspec": { cat: "X", conf: "M" },
+  "orca": { cat: "C4", conf: "M" },
+  "paperclip": { cat: "C4", conf: "M" },
+  "phoenix": { cat: "C4", conf: "M" },
+  "phoenix.new (fly.io)": { cat: "C4", conf: "M" },
+  "pi": { cat: "C3", conf: "H" },
+  "plandex": { cat: "C3", conf: "M" },
+  "pr-agent": { cat: "C3", conf: "M" },
+  "prime agent": { cat: "C3", conf: "H" },
+  "qoder (alibaba)": { cat: "C1", conf: "H" },
+  "qodo": { cat: "C4", conf: "H" },
+  "qwen coder": { cat: "C3", conf: "H" },
+  "replit agent": { cat: "C1", conf: "H" },
+  "roo code": { cat: "C3", conf: "M" },
+  "roomote": { cat: "C4", conf: "M" },
+  "rovo dev": { cat: "C4", conf: "H" },
+  "ruler": { cat: "X", conf: "M" },
+  "rulesync": { cat: "X", conf: "M" },
+  "sentry seer": { cat: "C4", conf: "H" },
+  "serena": { cat: "X", conf: "M" },
+  "shelley": { cat: "C4", conf: "M" },
+  "sketch": { cat: "C4", conf: "M" },
+  "snarktank/ralph": { cat: "X", conf: "M" },
+  "sourcery": { cat: "C1-P", conf: "H" },
+  "speckit": { cat: "X", conf: "M" },
+  "t3 code": { cat: "C4", conf: "H" },
+  "taskmaster": { cat: "X", conf: "M" },
+  "tessl": { cat: "X", conf: "M" },
+  "trae": { cat: "C1", conf: "M" },
+  "verdent": { cat: "C4", conf: "H" },
+  "warp": { cat: "C1", conf: "M" },
+  "windsurf": { cat: "C4", conf: "H" },
+  "xiaomi mimo code": { cat: "C4", conf: "H" },
+  "zoo code": { cat: "C3", conf: "M" },
+};
+// Sample-size floor: income-group cells with fewer than this many repos
+// are rendered as "insufficient data" instead of a rate.
+const MIN_INCOME_SAMPLE = 30;
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const stacks  = [];   // [{label, filename, rows}]
@@ -214,6 +348,9 @@ const COUNTRY_ALIASES = {
   "russia": "Russia",
   "south korea": "South Korea",
   "taiwan, province of china": "Taiwan",
+  "tw": "Taiwan",
+  "va": "Vatican",
+  "holy see (vatican city state)": "Vatican",
   "brunei darussalam": "Brunei",
   "kyrgyz republic": "Kyrgyzstan",
   "cabo verde": "Cape Verde",
@@ -232,7 +369,7 @@ function getCountry(row) {
   return alias || raw;
 }
 function getMonth(row) {
-  const d = (row.created_at || row.first_signal_at || "").trim().slice(0, 7);
+  const d = (row.created_at || row.repo_created_at || row.first_signal_at || "").trim().slice(0, 7);
   return d.length === 7 ? d : null;
 }
 function getAIDensity(row) {
@@ -240,10 +377,25 @@ function getAIDensity(row) {
   return isNaN(v) ? null : Math.min(1, Math.max(0, v));
 }
 function classifyPricing(name) {
-  const n = name.trim().toLowerCase();
-  if (PAID_TOOLS.has(n)) return "paid";
-  if (FREE_TOOLS.has(n)) return "free";
+  const entry = AGENT_CATEGORY[name.trim().toLowerCase()];
+  if (!entry) return "ambiguous";
+  if (FREE_CATS.has(entry.cat)) return "free";
+  if (PAID_CATS.has(entry.cat)) return "paid";
   return "ambiguous";
+}
+
+// Unified geo-confidence vocabulary across stacks.
+// The Go pipeline emits coarse confidence ("high"/"medium"/"low"/"none");
+// the JS/TS pipeline emits resolution-method tags ("name"/"region"/"weak"
+// plus the rarer "exact-iso"/"gazetteer-city"/"geocoder"/"unmatched").
+// Fold both into: strong / medium / weak / unresolved.
+function geoTier(raw) {
+  const v = (raw || "").trim().toLowerCase();
+  if (!v || v === "none" || v === "unmatched" || v === "unknown") return "unresolved";
+  if (v === "high" || v === "name" || v === "exact-iso" || v === "gazetteer-city" || v === "geocoder") return "strong";
+  if (v === "medium" || v === "region") return "medium";
+  if (v === "low" || v === "weak") return "weak";
+  return "weak";
 }
 function densityBucket(d) {
   if (d === 0)      return "Config-only (0%)";
@@ -262,8 +414,10 @@ function enrichRow(row) {
     _lbl:     lbl,
     _adopted: isAdopted(lbl),
     _country: country,
+    _geo_confidence: (row.geo_confidence || "").trim().toLowerCase(),
+    _geo_tier:       geoTier(row.geo_confidence),
     _region:  country ? (REGION_MAP[country] || null)   : null,
-    _income:  country ? (INCOME_MAP[country] || null)   : null,
+    _income:  incomeFromRow(row, country),
     _is_mena: country ? MENA_COUNTRIES.has(country)     : false,
     _month:   getMonth(row),
     _density: getAIDensity(row),
@@ -287,10 +441,13 @@ function enrichRow(row) {
     _age_at_adoption_days:   toInt(row.age_at_adoption_days, null),
     _days_since_push:        toInt(row.days_since_push, null),
     _first_signal_at:        (row.first_signal_at || "").trim(),
-    _oldest_commit_at:       (row.oldest_scanned_commit_at || "").trim(),
+    _oldest_commit_at:       (row.oldest_scanned_commit_at || row.repo_created_at || "").trim(),
     _authored_by_agent:      row.authored_commits_by_agent || "",
     _size_kb:                toFloat(row.size_kb),
     _commits:                toFloat(row.commits),
+    _ecosystem_type:         (row.ecosystem_type || "").trim().toLowerCase(),
+    _primary_language_detected: (row.primary_language_detected || "").trim(),
+    _size_stratum:           (row.size_stratum || "").trim().toLowerCase(),
   });
 }
 
@@ -530,6 +687,10 @@ const CHART_INFO = {
     desc: "For this stack, how deep each agent gets into commits. Compares agents by median/quartile AI ratio.",
   },
   // ── Geography ──────────────────────────────────────────────────────────
+  "compare-country-resolution-stacks": {
+    title: "Country Resolution per Stack",
+    desc: "For the selected stack, how many repos had their owner location parsed and at what confidence vs. how many were unresolved. Use it as a data-quality lens before interpreting other geo charts. Vocabulary differs per stack (Go: high/medium/low · JS/TS: name/region/weak).",
+  },
   "chart-world-regions": {
     title: "Adoption by World Region",
     desc: "Rate of agentic repos per world region, aggregated across all stacks.",
@@ -544,23 +705,19 @@ const CHART_INFO = {
   },
   "compare-pricing-income-stacks": {
     title: "Pricing × Income",
-    desc: "Within this stack, which agent-pricing tiers dominate across income groups.",
-  },
-  "chart-mena-vs-rest": {
-    title: "MENA vs Rest of World",
-    desc: "Adoption rate for the MENA region vs everything else, per stack.",
+    desc: "Within this stack, adoption rate per income group plus the share of agentic repos that use any free-path tool vs any paid-path tool. Classification comes from the AI Coding Agent Cost Codebook (default-path column): free = C0/C1/C1-P/C2 (OSS, vendor free tier, OSS-only free, student free); paid = C3/C4/C5 (metered API tokens, paid subscription, enterprise-only). Frameworks (X) and unverified tools are excluded from the free/paid lines.",
   },
   "compare-mena-countries-stacks": {
     title: "MENA Countries — Detail",
     desc: "Country-level adoption rate inside MENA for this stack.",
   },
   "compare-country-heatmap": {
-    title: "Country × Repo-Creation Month — Adoption Rate Cohort",
-    desc: "Colour = adoption rate for repos created in that month, in that country. Rows are countries; columns are months. Blank cells = too few repos.",
+    title: "Country × Repo-Creation Month — Sparklines",
+    desc: "One sparkline per top country for this stack: 3-month rolling adoption rate over time. Header shows the latest rolling rate; footer shows total repos and overall adoption rate.",
   },
   "compare-country-bump-stacks": {
-    title: "Top Countries — Monthly Adoption Rate",
-    desc: "3-month rolling adoption rate for the top countries in this stack. Shows magnitude plus trend direction.",
+    title: "Country Adoption Trend — compare two picks",
+    desc: "Pick a Stack · Country in each slot to compare their 3-month rolling adoption trends side by side. Dropdown lists top countries per stack.",
   },
   "chart-country-cumulative": {
     title: "Cumulative Agentic Repos per Country",
@@ -568,7 +725,7 @@ const CHART_INFO = {
   },
   "compare-country-agent-matrix": {
     title: "Country × Primary Agent",
-    desc: "For each top country in this stack, which primary agent is most common — a heat cell per country-agent pair.",
+    desc: "For each top country in this stack, the primary-agent mix as a 100%-stacked bar. Countries sorted by leader share (most dominated → most fragmented). The grey 'Other' slice absorbs agents outside the top 8.",
   },
   // ── Time Series ────────────────────────────────────────────────────────
   "chart-time-series": {
@@ -579,9 +736,9 @@ const CHART_INFO = {
     title: "Agent Emergence Timeline",
     desc: "Cumulative repos per agent family over time. Shows which agent built its footprint first and who's compounding fastest.",
   },
-  "chart-recency-depth": {
-    title: "Recency × Adoption Depth",
-    desc: "Repos bucketed by how long ago they got their first AI signal, split by adoption depth. Reveals whether deep adoption needs time or shows up fast.",
+  "compare-recency-depth-stacks": {
+    title: "Recency × Adoption Depth per Stack",
+    desc: "Repos bucketed by how long ago their first AI signal fired, split by adoption depth. Each slot shows one stack so you can compare whether deep adoption takes time or shows up fast. Toggle % to normalise each recency bucket to 100%.",
   },
   "compare-stacked-area-stacks": {
     title: "Monthly New Repos by Adoption Label",
@@ -605,7 +762,7 @@ const CHART_INFO = {
   },
   "chart-retrofit-greenfield": {
     title: "Greenfield vs Retrofit",
-    desc: "Gap from oldest scanned commit to first AI signal. Short gap = AI landed near the project's birth; long gap = retrofit onto an older repo.",
+    desc: "Gap from the repo's oldest known commit (or creation date when scanned-commit history is unavailable) to the first AI signal. Short gap = AI landed near the project's birth (greenfield); long gap = retrofit onto an older repo.",
   },
   "chart-adoption-momentum": {
     title: "Adoption Momentum",
@@ -660,6 +817,22 @@ const CHART_INFO = {
   "compare-cooccurrence-table": {
     title: "Tool Co-occurrence Heatmap",
     desc: "% of repos with the row agent that also have the column agent. Diagonal is 100% by definition.",
+  },
+  "chart-jsts-ecosystem": {
+    title: "Adoption Rate by Package Manager",
+    desc: "JS/TS repos grouped by lockfile detected during seed: npm, pnpm, yarn, bun, deno, vanilla (no manifest), npm_no_lock (manifest without lockfile).",
+  },
+  "chart-jsts-language": {
+    title: "Adoption Rate by Primary Language",
+    desc: "JS/TS repos split by the primary language detected from seed metadata (TypeScript vs JavaScript).",
+  },
+  "chart-jsts-size-stratum": {
+    title: "Adoption Rate by Seed Size Stratum",
+    desc: "Repos were split into small/medium/large strata by the seed phase using star + commit thresholds.",
+  },
+  "compare-jsts-lang-eco-heatmap": {
+    title: "Language × Package Manager Heatmap",
+    desc: "Adoption rate (%) per {language, ecosystem} cell. Cells with n<30 are dashed out.",
   },
 };
 
@@ -909,7 +1082,7 @@ function buildCompareSlots(containerId, stackLabels, buildFn, opts) {
     card.className = "compare-chart-card compare-slot" + (tall ? " compare-slot-tall" : "");
     const header = document.createElement("div");
     header.className = "compare-slot-header";
-    const h4 = document.createElement("h4"); h4.textContent = "Stack";
+    const h4 = document.createElement("h4"); h4.textContent = opts.label || "Stack";
     const sel = document.createElement("select");
     sel.className = "compare-slot-select";
     stackLabels.forEach(l => {
@@ -1540,29 +1713,120 @@ function renderPrimaryAgentChart(all, stackLabels) {
 // ══════════════════════════════════════════════════════════════════════════════
 // TAB 3: GEOGRAPHY
 // ══════════════════════════════════════════════════════════════════════════════
+
+// Unified tier order: strongest → weakest → unresolved (last)
+const GEO_CONF_ORDER = ["strong", "medium", "weak", "unresolved"];
+const GEO_CONF_COLORS = {
+  "strong":     "#1565C0",
+  "medium":     "#42A5F5",
+  "weak":       "#FFB74D",
+  "unresolved": "#9E9E9E",
+};
+const GEO_CONF_LABELS = {
+  "strong":     "strong (direct name / ISO / city match)",
+  "medium":     "medium (regional hint)",
+  "weak":       "weak (fuzzy / last-resort match)",
+  "unresolved": "unresolved (no location)",
+};
+
+function renderCountryResolutionChart(all, stackLabels) {
+  const th = getTheme();
+  buildCompareSlots("compare-country-resolution-stacks", stackLabels, (id, lbl) => {
+    const rows = all.filter(r => (r._stack || r.stack) === lbl);
+    if (!rows.length) return;
+    const buckets = {};
+    rows.forEach(r => {
+      const key = r._country ? r._geo_tier : "unresolved";
+      buckets[key] = (buckets[key] || 0) + 1;
+    });
+    const total = rows.length;
+    const ordered = GEO_CONF_ORDER.filter(k => buckets[k]);
+    const labels = ordered.map(k => GEO_CONF_LABELS[k] || k);
+    const counts = ordered.map(k => buckets[k]);
+    const pcts = counts.map(c => c / total * 100);
+    const colors = ordered.map(k => (GEO_CONF_COLORS[k] || "#78909C") + "cc");
+    const resolvedN = rows.filter(r => r._country).length;
+    const unresolvedN = total - resolvedN;
+    mkChart(id, "bar", {
+      labels,
+      datasets: [{
+        label: lbl,
+        data: counts,
+        _pct: pcts,
+        backgroundColor: colors,
+        borderColor: colors.map(c => c.slice(0, 7)),
+        borderWidth: 1, borderRadius: 3,
+      }],
+    }, commonOpts({
+      indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        title: {
+          display: true,
+          color: th.text,
+          font: { size: 12, weight: "normal" },
+          text: `Total ${total.toLocaleString()} · Resolved ${resolvedN.toLocaleString()} (${(resolvedN/total*100).toFixed(1)}%) · Unresolved ${unresolvedN.toLocaleString()} (${(unresolvedN/total*100).toFixed(1)}%)`,
+        },
+        tooltip: { callbacks: {
+          label: ctx => `${ctx.raw.toLocaleString()} repos (${pcts[ctx.dataIndex].toFixed(1)}%)`,
+        } },
+      },
+      scales: {
+        x: { ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Repos", color: th.text } },
+        y: { ticks: { color: th.text }, grid: { display: false } },
+      },
+    }));
+  });
+}
+
 function renderGeography() {
   const all = getFilteredRows();
   const stackLabels = [...new Set(all.map(r => r._stack || r.stack))];
   const th = getTheme();
   const geo = all.filter(r => r._country);
 
-  // World regions
-  const regions = REGION_ORDER.filter(r => geo.some(row => row._region === r));
-  const regionDatasets = stackLabels.map(lbl => {
-    const rows = geo.filter(r => (r._stack || r.stack) === lbl);
-    return {
+  // Country resolution (data-quality panel) — how many owner locations parsed, at what confidence
+  renderCountryResolutionChart(all, stackLabels);
+
+  // World regions — horizontal grouped bars, ranked by combined adoption rate
+  const candidateRegions = REGION_ORDER.filter(r => geo.some(row => row._region === r));
+  const perRegion = candidateRegions.map(reg => {
+    const perStack = stackLabels.map(lbl => {
+      const g = geo.filter(r => (r._stack || r.stack) === lbl && r._region === reg);
+      return { lbl, n: g.length, rate: g.length ? g.filter(r => r._adopted).length / g.length * 100 : null };
+    });
+    const totalN = perStack.reduce((s, p) => s + p.n, 0);
+    const totalK = perStack.reduce((s, p) => s + (p.n ? (p.rate / 100) * p.n : 0), 0);
+    return { reg, perStack, combined: totalN ? totalK / totalN * 100 : 0, totalN };
+  }).sort((a, b) => b.combined - a.combined);
+  if (perRegion.length) {
+    const sortedRegions = perRegion.map(r => r.reg);
+    const regionDatasets = stackLabels.map(lbl => ({
       label: lbl,
-      data: regions.map(reg => {
-        const g = rows.filter(r => r._region === reg);
-        return g.length ? g.filter(r => r._adopted).length / g.length * 100 : 0;
+      data: perRegion.map(r => {
+        const ps = r.perStack.find(p => p.lbl === lbl);
+        return ps && ps.n ? ps.rate : null;
       }),
+      _n: perRegion.map(r => (r.perStack.find(p => p.lbl === lbl) || { n: 0 }).n),
       backgroundColor: stackColorForLabel(lbl) + "cc",
       borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3,
-    };
-  });
-  if (regions.length) {
-    mkChart("chart-world-regions", "bar", { labels: regions, datasets: regionDatasets },
-      commonOpts({ scales: { x: { ticks: { color: th.text, maxTicksLimit: 15 }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+    }));
+    mkChart("chart-world-regions", "bar", { labels: sortedRegions, datasets: regionDatasets },
+      commonOpts({
+        indexAxis: "y",
+        plugins: {
+          legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+          tooltip: { callbacks: { label: ctx => {
+            const n = ctx.dataset._n[ctx.dataIndex] || 0;
+            const v = ctx.parsed.x;
+            return v == null ? `${ctx.dataset.label}: n=0` : `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})`;
+          } } },
+        },
+        scales: {
+          x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Adoption rate", color: th.text } },
+          y: { ticks: { color: th.text }, grid: { display: false } },
+        },
+      }));
   }
 
   // Top/bottom countries per stack
@@ -1589,71 +1853,87 @@ function renderGeography() {
       scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
   });
 
-  // Income group
+  // Income group — adoption-rate bar always rendered; tooltip flags small samples
   const incomeDatasets = stackLabels.map(lbl => {
     const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._income);
+    const data = INCOME_ORDER.map(ig => {
+      const g = rows.filter(r => r._income === ig);
+      return g.length ? g.filter(r => r._adopted).length / g.length * 100 : null;
+    });
+    const ns = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig).length);
     return {
       label: lbl,
-      data: INCOME_ORDER.map(ig => {
-        const g = rows.filter(r => r._income === ig);
-        return g.length ? g.filter(r => r._adopted).length / g.length * 100 : 0;
-      }),
+      data,
+      _n: ns,
       backgroundColor: stackColorForLabel(lbl) + "cc",
       borderColor: stackColorForLabel(lbl), borderWidth: 1, borderRadius: 3,
     };
   });
   if (geo.some(r => r._income)) {
     mkChart("chart-income-group", "bar", { labels: INCOME_ORDER.map(k => INCOME_LABELS[k]), datasets: incomeDatasets },
-      commonOpts({ scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+      commonOpts({
+        plugins: {
+          legend: { labels: { color: th.text, font: { size: 11 } } },
+          tooltip: { callbacks: { label: ctx => {
+            const n = ctx.dataset._n[ctx.dataIndex] || 0;
+            const v = ctx.parsed.y;
+            if (v == null) return `${ctx.dataset.label}: no repos in this bucket`;
+            const flag = n < MIN_INCOME_SAMPLE ? ` ⚠ small sample (floor ${MIN_INCOME_SAMPLE})` : "";
+            return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})${flag}`;
+          } } },
+        },
+        scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } },
+      }));
   }
 
-  // Pricing by income per stack
+  // Pricing by income per stack — with sample-size floor
   buildCompareSlots("compare-pricing-income-stacks", stackLabels, (id, lbl) => {
     const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._income);
     if (!rows.length) return;
     const labels = INCOME_ORDER.map(k => INCOME_LABELS[k]);
-    const adoptRates = INCOME_ORDER.map(ig => {
+    const totalNs    = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig).length);
+    const agenticNs  = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig && r._lbl === "agentic").length);
+    const adoptRates = INCOME_ORDER.map((ig, i) => {
       const g = rows.filter(r => r._income === ig);
-      return g.length ? g.filter(r => r._adopted).length / g.length * 100 : 0;
+      return g.length ? g.filter(r => r._adopted).length / g.length * 100 : null;
     });
-    const paidPcts = INCOME_ORDER.map(ig => {
+    const paidPcts = INCOME_ORDER.map((ig, i) => {
+      if (agenticNs[i] < MIN_INCOME_SAMPLE) return null;
       const ag = rows.filter(r => r._income === ig && r._lbl === "agentic");
-      if (!ag.length) return 0;
       return ag.filter(r => r._agents.some(a => classifyPricing(a) === "paid")).length / ag.length * 100;
     });
-    const freePcts = INCOME_ORDER.map(ig => {
+    const freePcts = INCOME_ORDER.map((ig, i) => {
+      if (agenticNs[i] < MIN_INCOME_SAMPLE) return null;
       const ag = rows.filter(r => r._income === ig && r._lbl === "agentic");
-      if (!ag.length) return 0;
       return ag.filter(r => r._agents.some(a => classifyPricing(a) === "free")).length / ag.length * 100;
     });
     mkChart(id, "bar", {
       labels,
       datasets: [
-        { label: "Adoption Rate", data: adoptRates, backgroundColor: "#1565C0cc", borderRadius: 3, order: 2 },
-        { label: "Paid Tools %", data: paidPcts, type: "line", borderColor: "#E53935", backgroundColor: "transparent", pointRadius: 4, borderWidth: 2, order: 1 },
-        { label: "Free Tools %", data: freePcts, type: "line", borderColor: "#43A047", backgroundColor: "transparent", pointRadius: 4, borderWidth: 2, order: 1 },
+        { label: "Adoption Rate", data: adoptRates, _n: totalNs, backgroundColor: "#1565C0cc", borderRadius: 3, order: 2 },
+        { label: "Paid Tools %",  data: paidPcts,   _n: agenticNs, type: "line", borderColor: "#E53935", backgroundColor: "transparent", pointRadius: 4, borderWidth: 2, order: 1, spanGaps: false },
+        { label: "Free Tools %",  data: freePcts,   _n: agenticNs, type: "line", borderColor: "#43A047", backgroundColor: "transparent", pointRadius: 4, borderWidth: 2, order: 1, spanGaps: false },
       ],
-    }, commonOpts({ scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
+    }, commonOpts({
+      plugins: {
+        legend: { labels: { color: th.text, font: { size: 11 } } },
+        tooltip: { mode: "index", intersect: false, callbacks: { label: ctx => {
+          const n = ctx.dataset._n[ctx.dataIndex] || 0;
+          const v = ctx.parsed.y;
+          if (v == null) {
+            if (ctx.dataset.label === "Adoption Rate") return `${ctx.dataset.label}: no repos in this bucket`;
+            return `${ctx.dataset.label}: insufficient agentic sample (n=${n}, floor ${MIN_INCOME_SAMPLE})`;
+          }
+          const flag = (ctx.dataset.label === "Adoption Rate" && n < MIN_INCOME_SAMPLE) ? ` ⚠ small sample` : "";
+          return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})${flag}`;
+        } } },
+      },
+      scales: {
+        x: { ticks: { color: th.text }, grid: { color: th.grid } },
+        y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } },
+      },
+    }));
   });
-
-  // MENA vs rest
-  const menaData = stackLabels.map(lbl => {
-    const rows = geo.filter(r => (r._stack || r.stack) === lbl);
-    const mena    = rows.filter(r => r._is_mena);
-    const nonMena = rows.filter(r => !r._is_mena);
-    return {
-      lbl,
-      mena:    mena.length    ? mena.filter(r => r._adopted).length    / mena.length    * 100 : 0,
-      nonMena: nonMena.length ? nonMena.filter(r => r._adopted).length / nonMena.length * 100 : 0,
-    };
-  });
-  mkChart("chart-mena-vs-rest", "bar", {
-    labels: menaData.map(d => d.lbl),
-    datasets: [
-      { label: "MENA",     data: menaData.map(d => d.mena),    backgroundColor: "#FF7043cc", borderRadius: 3 },
-      { label: "Non-MENA", data: menaData.map(d => d.nonMena), backgroundColor: "#42A5F5cc", borderRadius: 3 },
-    ],
-  }, commonOpts({ scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } } }));
 
   // MENA countries — per stack
   buildCompareSlots("compare-mena-countries-stacks", stackLabels, (id, lbl) => {
@@ -1680,86 +1960,13 @@ function renderGeography() {
       scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
   });
 
-  // Country heatmap — per stack
+  // Country × Month cohort — per stack, rendered as sparkline small-multiples
   buildCompareSlots("compare-country-heatmap", stackLabels, (id, lbl) => {
-    const geoWithDate = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
-    if (!geoWithDate.length) { document.getElementById(id).innerHTML = '<p class="muted">No month data.</p>'; return; }
-    const topN = filters.heatmapN;
-    const ctryFreq = {};
-    geoWithDate.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
-    const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
-    const months = [...new Set(geoWithDate.map(r => r._month))].sort();
-    if (!topCtries.length || !months.length) { document.getElementById(id).innerHTML = '<p class="muted">Not enough data.</p>'; return; }
-    buildHeatmapTable(id, topCtries, months, (c, m) => {
-      const cell = geoWithDate.filter(r => r._country === c && r._month === m);
-      if (cell.length < 5) return { val: null, label: "—" };
-      const rate = cell.filter(r => r._adopted).length / cell.length * 100;
-      return { val: rate, label: rate.toFixed(0) + "%" };
-    }, "Country", "Month");
+    renderCountryMonthSparks(id, geo, lbl);
   }, { html: true, tall: true });
 
-  // Country adoption-rate trend — per stack (smoothed line chart, replaces bump)
-  buildCompareSlots("compare-country-bump-stacks", stackLabels, (id, lbl) => {
-    const srows = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
-    if (!srows.length) return;
-    const topN = filters.bumpN;
-    const ctryFreq = {};
-    srows.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
-    const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
-    const months = [...new Set(srows.map(r => r._month))].sort();
-    if (!topCtries.length || !months.length) return;
-    // Precompute monthly cohort buckets (n, adopted) for each country.
-    const perCtry = {};
-    topCtries.forEach(c => {
-      perCtry[c] = months.map(m => {
-        const g = srows.filter(r => r._country === c && r._month === m);
-        return { n: g.length, k: g.filter(r => r._adopted).length };
-      });
-    });
-    // 3-month rolling adoption rate. Produces smoother, more readable trends.
-    const WINDOW = 3;
-    const rolledRate = (arr, i) => {
-      let n = 0, k = 0;
-      for (let j = Math.max(0, i - (WINDOW - 1)); j <= i; j++) { n += arr[j].n; k += arr[j].k; }
-      return n >= 5 ? { rate: k / n * 100, n } : { rate: null, n };
-    };
-    const datasets = topCtries.map((c, i) => {
-      const series = months.map((_, idx) => rolledRate(perCtry[c], idx));
-      const color = PALETTE[i % PALETTE.length];
-      return {
-        label: c,
-        data: series.map(s => s.rate),
-        _n: series.map(s => s.n),
-        borderColor: color,
-        backgroundColor: color + "22",
-        pointRadius: 2,
-        pointHoverRadius: 5,
-        borderWidth: 2.5,
-        tension: 0.4,
-        fill: false,
-        spanGaps: true,
-      };
-    });
-    mkChart(id, "line", { labels: months, datasets }, commonOpts({
-      interaction: { mode: "nearest", axis: "x", intersect: false },
-      plugins: {
-        legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
-        tooltip: {
-          callbacks: {
-            label: ctx => {
-              const n = ctx.dataset._n[ctx.dataIndex];
-              const v = ctx.parsed.y;
-              return v == null ? `${ctx.dataset.label}: insufficient data` : `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n})`;
-            },
-          },
-        },
-      },
-      scales: {
-        x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid }, title: { display: true, text: "Repo creation month", color: th.text } },
-        y: { min: 0, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Adoption rate (3-mo rolling)", color: th.text } },
-      },
-    }));
-  }, { tall: true });
+  // Country Adoption Rate Trend — per-country compare slots (pick stack + country)
+  renderCountryTrendSlots(geo, stackLabels);
 
   // Cumulative (combined across all stacks — one chart)
   const geoWithDate = geo.filter(r => r._month);
@@ -1788,28 +1995,229 @@ function renderGeography() {
   renderCountryAgentMatrix(geo, stackLabels);
 }
 
+function renderCountryTrendSlots(geo, stackLabels) {
+  const th = getTheme();
+  // Build "Stack · Country" combo labels, limited to top N by repo count per stack.
+  const perStackTop = {};
+  stackLabels.forEach(lbl => {
+    const srows = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
+    const freq = {};
+    srows.forEach(r => { freq[r._country] = (freq[r._country] || 0) + 1; });
+    perStackTop[lbl] = Object.entries(freq).sort((a, b) => b[1] - a[1])
+      .slice(0, filters.bumpN).map(([c]) => c);
+  });
+  const combos = [];
+  stackLabels.forEach(lbl => perStackTop[lbl].forEach(c => combos.push(`${lbl} · ${c}`)));
+  if (!combos.length) return;
+
+  buildCompareSlots("compare-country-bump-stacks", combos, (id, combo) => {
+    const sep = combo.indexOf(" · ");
+    const lbl = combo.slice(0, sep);
+    const country = combo.slice(sep + 3);
+    const srows = geo.filter(r => (r._stack || r.stack) === lbl && r._country === country && r._month);
+    if (!srows.length) { destroyChart(id); return; }
+    const months = [...new Set(geo.filter(r => (r._stack || r.stack) === lbl && r._month).map(r => r._month))].sort();
+    const cells = months.map(m => {
+      const g = srows.filter(r => r._month === m);
+      return { n: g.length, k: g.filter(r => r._adopted).length };
+    });
+    const WINDOW = 3;
+    const rolled = cells.map((_, i) => {
+      let n = 0, k = 0;
+      for (let j = Math.max(0, i - (WINDOW - 1)); j <= i; j++) { n += cells[j].n; k += cells[j].k; }
+      return n >= 5 ? { rate: k / n * 100, n } : { rate: null, n };
+    });
+    const color = stackColorForLabel(lbl);
+    mkChart(id, "line", {
+      labels: months,
+      datasets: [{
+        label: country,
+        data: rolled.map(r => r.rate),
+        _n: rolled.map(r => r.n),
+        borderColor: color,
+        backgroundColor: color + "33",
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        borderWidth: 2.5,
+        tension: 0.4,
+        fill: true,
+        spanGaps: true,
+      }],
+    }, commonOpts({
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      plugins: {
+        legend: { display: false },
+        title: { display: true, color: th.text, font: { size: 12, weight: "normal" },
+          text: `${lbl} · ${country} — total repos: ${srows.length.toLocaleString()}, agentic: ${srows.filter(r => r._adopted).length.toLocaleString()}` },
+        tooltip: { callbacks: { label: ctx => {
+          const n = ctx.dataset._n[ctx.dataIndex];
+          const v = ctx.parsed.y;
+          return v == null ? "insufficient data" : `${v.toFixed(1)}%  (n=${n})`;
+        } } },
+      },
+      scales: {
+        x: { ticks: { color: th.text, maxTicksLimit: 12 }, grid: { color: th.grid }, title: { display: true, text: "Repo creation month", color: th.text } },
+        y: { min: 0, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Adoption rate (3-mo rolling)", color: th.text } },
+      },
+    }));
+  }, { tall: true, label: "Stack · Country" });
+}
+
+function renderCountryMonthSparks(slotId, geo, lbl) {
+  const host = document.getElementById(slotId);
+  if (!host) return;
+  const th = getTheme();
+  const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
+  if (!rows.length) { host.innerHTML = '<p class="muted">No month data for this stack.</p>'; return; }
+  const topN = filters.heatmapN;
+  const ctryFreq = {};
+  rows.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
+  const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+  const months = [...new Set(rows.map(r => r._month))].sort();
+  if (!topCtries.length || !months.length) { host.innerHTML = '<p class="muted">Not enough data.</p>'; return; }
+
+  // Per country: monthly {n, k}; then 3-month rolling adoption rate
+  const WINDOW = 3;
+  const grid = document.createElement("div");
+  grid.className = "compare-spark-grid";
+  topCtries.forEach((country, idx) => {
+    const cells = months.map(m => {
+      const g = rows.filter(r => r._country === country && r._month === m);
+      return { n: g.length, k: g.filter(r => r._adopted).length };
+    });
+    const series = cells.map((_, i) => {
+      let n = 0, k = 0;
+      for (let j = Math.max(0, i - (WINDOW - 1)); j <= i; j++) { n += cells[j].n; k += cells[j].k; }
+      return n >= 5 ? k / n * 100 : null;
+    });
+    const latest = [...series].reverse().find(v => v != null);
+    const latestLabel = latest == null ? "—" : latest.toFixed(0) + "%";
+    const overallN = cells.reduce((s, c) => s + c.n, 0);
+    const overallK = cells.reduce((s, c) => s + c.k, 0);
+    const overallRate = overallN ? overallK / overallN * 100 : null;
+
+    const card = document.createElement("div");
+    card.className = "compare-spark-card";
+    const canvasId = `${slotId}-spark-${idx}`;
+    card.innerHTML = `
+      <div class="compare-spark-header">
+        <span class="compare-spark-country">${country}</span>
+        <span class="compare-spark-latest" style="color:${stackColorForLabel(lbl)}">${latestLabel}</span>
+      </div>
+      <div class="compare-spark-canvas-wrap"><canvas id="${canvasId}"></canvas></div>
+      <div class="compare-spark-sub">
+        <span>n=${overallN.toLocaleString()}</span>
+        <span>overall ${overallRate == null ? "—" : overallRate.toFixed(0) + "%"}</span>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    // Chart.js sparkline
+    requestAnimationFrame(() => {
+      mkChart(canvasId, "line", {
+        labels: months,
+        datasets: [{
+          label: country,
+          data: series,
+          _n: cells.map(c => c.n),
+          borderColor: stackColorForLabel(lbl),
+          backgroundColor: stackColorForLabel(lbl) + "22",
+          pointRadius: 0,
+          borderWidth: 2,
+          tension: 0.35,
+          fill: true,
+          spanGaps: true,
+        }],
+      }, commonOpts({
+        plugins: {
+          legend: { display: false },
+          tooltip: { mode: "index", intersect: false, callbacks: {
+            label: ctx => {
+              const n = ctx.dataset._n[ctx.dataIndex] || 0;
+              const v = ctx.parsed.y;
+              return v == null ? `${months[ctx.dataIndex]} · insufficient` : `${months[ctx.dataIndex]} · ${v.toFixed(0)}% (n=${n})`;
+            },
+            title: () => "",
+          } },
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false, min: 0, max: 100 },
+        },
+      }));
+    });
+  });
+  host.innerHTML = "";
+  host.appendChild(grid);
+}
+
 function renderCountryAgentMatrix(geo, stackLabels) {
+  const th = getTheme();
   buildCompareSlots("compare-country-agent-matrix", stackLabels, (id, lbl) => {
-    const host = document.getElementById(id);
-    if (!host) return;
     const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._primary_agent);
-    if (!rows.length) { host.innerHTML = '<p class="muted">No primary_agent data.</p>'; return; }
+    if (!rows.length) { destroyChart(id); return; }
     const ctryCounts = {};
     rows.forEach(r => { ctryCounts[r._country] = (ctryCounts[r._country] || 0) + 1; });
     const topCtries = Object.entries(ctryCounts)
       .filter(([, n]) => n >= Math.max(3, filters.minCountry))
       .sort((a, b) => b[1] - a[1]).slice(0, 12).map(([c]) => c);
-    if (!topCtries.length) { host.innerHTML = '<p class="muted">Not enough per-country data at current min-repos threshold.</p>'; return; }
+    if (!topCtries.length) { destroyChart(id); return; }
     const agentCounts = {};
     rows.forEach(r => { if (topCtries.includes(r._country)) agentCounts[r._primary_agent] = (agentCounts[r._primary_agent] || 0) + 1; });
     const topAgents = Object.entries(agentCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([a]) => a);
-    buildHeatmapTable(id, topCtries, topAgents, (country, agent) => {
-      const g = rows.filter(r => r._country === country);
-      if (!g.length) return { val: null, label: "—" };
-      const share = g.filter(r => r._primary_agent === agent).length / g.length * 100;
-      return { val: share, label: share >= 1 ? share.toFixed(0) + "%" : "—" };
-    }, "Country ↓ / Agent →", "");
-  }, { html: true, tall: true });
+    // Per country: count per agent, plus "Other" bucket for any agent outside top set.
+    const perCtry = {};
+    topCtries.forEach(c => {
+      const bucket = {};
+      topAgents.forEach(a => bucket[a] = 0);
+      bucket._other = 0;
+      perCtry[c] = { bucket, n: 0 };
+    });
+    rows.forEach(r => {
+      if (!perCtry[r._country]) return;
+      const b = perCtry[r._country];
+      b.n++;
+      if (topAgents.includes(r._primary_agent)) b.bucket[r._primary_agent]++;
+      else b.bucket._other++;
+    });
+    // Rank countries by their leader share (so dominant leaders bubble to the top).
+    topCtries.sort((a, b) => {
+      const aLead = Math.max(...topAgents.map(ag => perCtry[a].bucket[ag])) / perCtry[a].n;
+      const bLead = Math.max(...topAgents.map(ag => perCtry[b].bucket[ag])) / perCtry[b].n;
+      return bLead - aLead;
+    });
+    const series = [...topAgents, "_other"];
+    const seriesLabels = [...topAgents, "Other"];
+    const datasets = series.map((ag, i) => ({
+      label: seriesLabels[i],
+      data: topCtries.map(c => {
+        const b = perCtry[c];
+        return b.n ? b.bucket[ag] / b.n * 100 : 0;
+      }),
+      _raw: topCtries.map(c => perCtry[c].bucket[ag]),
+      _n: topCtries.map(c => perCtry[c].n),
+      backgroundColor: (ag === "_other" ? "#9E9E9E" : PALETTE[i % PALETTE.length]) + "cc",
+      borderWidth: 0, borderRadius: 2,
+    }));
+    mkChart(id, "bar", { labels: topCtries, datasets }, commonOpts({
+      indexAxis: "y",
+      plugins: {
+        legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+        tooltip: { mode: "index", intersect: false, callbacks: {
+          label: ctx => {
+            const raw = ctx.dataset._raw[ctx.dataIndex] || 0;
+            const n = ctx.dataset._n[ctx.dataIndex] || 0;
+            const pct = ctx.parsed.x;
+            return `${ctx.dataset.label}: ${raw.toLocaleString()} / ${n.toLocaleString()} (${pct.toFixed(1)}%)`;
+          },
+        } },
+      },
+      scales: {
+        x: { stacked: true, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Share of country's primary-agent mix", color: th.text } },
+        y: { stacked: true, ticks: { color: th.text }, grid: { display: false } },
+      },
+    }));
+  }, { tall: true });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1943,7 +2351,7 @@ function renderTimeSeries() {
   });
 
   renderAgentEmergenceChart(all);
-  renderRecencyDepthChart(all);
+  renderRecencyDepthChart(all, stackLabels);
   renderMonthlyNewAdoptersChart(all, stackLabels);
   renderCumulativeAdoptersChart(all, stackLabels);
   renderRetrofitVsGreenfieldChart(all, stackLabels);
@@ -2218,7 +2626,7 @@ function renderAuthoredDepthChart(all, stackLabels) {
 function renderAgentEmergenceChart(all) {
   const id = "chart-agent-emergence";
   const th = getTheme();
-  const rows = all.filter(r => r._month && r._primary_agent);
+  const rows = all.filter(r => r._lbl === "agentic" && r._month && r._primary_agent);
   if (!rows.length) { destroyChart(id); return; }
   const months = [...new Set(rows.map(r => r._month))].sort();
   const counts = {};
@@ -2258,22 +2666,43 @@ function renderAgentEmergenceChart(all) {
   markNormalizable(id);
 }
 
-function renderRecencyDepthChart(all) {
+function renderRecencyDepthChart(all, stackLabels) {
   const th = getTheme();
-  const rows = all.filter(r => r._first_signal_days_ago != null);
-  if (!rows.length) { destroyChart("chart-recency-depth"); return; }
-  const datasets = ADOPTION_DEPTH_ORDER.filter(l => l !== "none").map(lvl => ({
-    label: lvl,
-    data: RECENCY_ORDER.map(b => rows.filter(r => recencyBucket(r._first_signal_days_ago) === b && r._level === lvl).length),
-    backgroundColor: ADOPTION_DEPTH_COLORS[lvl] + "cc",
-    borderRadius: 2,
-  }));
-  mkChart("chart-recency-depth", "bar", { labels: RECENCY_ORDER, datasets }, commonOpts({
-    scales: {
-      x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Days since first signal", color: th.text } },
-      y: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Repos", color: th.text } },
-    },
-  }));
+  const DEPTHS = ADOPTION_DEPTH_ORDER.filter(l => l !== "none");
+  buildCompareSlots("compare-recency-depth-stacks", stackLabels, (id, lbl) => {
+    const rows = all.filter(r => (r._stack || r.stack) === lbl && r._first_signal_days_ago != null);
+    if (!rows.length) return;
+    const rawPerDepth = DEPTHS.map(lvl =>
+      RECENCY_ORDER.map(b => rows.filter(r => recencyBucket(r._first_signal_days_ago) === b && r._level === lvl).length)
+    );
+    const totals = RECENCY_ORDER.map((_, i) => rawPerDepth.reduce((acc, row) => acc + row[i], 0));
+    const norm = isNormalized(id);
+    const datasets = DEPTHS.map((lvl, i) => ({
+      label: lvl,
+      data: rawPerDepth[i].map((v, j) => norm ? (totals[j] ? v / totals[j] * 100 : 0) : v),
+      _raw: rawPerDepth[i],
+      backgroundColor: ADOPTION_DEPTH_COLORS[lvl] + "cc",
+      borderRadius: 2,
+    }));
+    mkChart(id, "bar", { labels: RECENCY_ORDER, datasets }, commonOpts({
+      plugins: {
+        legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+        tooltip: { mode: "index", intersect: false, callbacks: {
+          label: ctx => {
+            const raw = ctx.dataset._raw ? ctx.dataset._raw[ctx.dataIndex] : ctx.parsed.y;
+            const total = totals[ctx.dataIndex] || 0;
+            const pct = total ? (raw / total * 100) : 0;
+            return `${ctx.dataset.label}: ${raw.toLocaleString()} (${pct.toFixed(1)}%)`;
+          },
+        } },
+      },
+      scales: {
+        x: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid }, title: { display: true, text: "Days since first signal", color: th.text } },
+        y: { stacked: true, max: norm ? 100 : undefined, ticks: { color: th.text, callback: v => norm ? v + "%" : v }, grid: { color: th.grid }, title: { display: true, text: norm ? "% of bucket" : "Repos", color: th.text } },
+      },
+    }));
+    markNormalizable(id);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2502,6 +2931,96 @@ function renderDepth() {
       return { val, label: val.toFixed(0) + "%" };
     }, "Agent ↓ / Agent →", "");
   }
+
+  // JS/TS-only composition section (seed-phase lockfile / language / stratum).
+  renderJstsComposition(all);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// JS/TS STACK COMPOSITION (seed-phase ecosystem / language / size stratum)
+// ══════════════════════════════════════════════════════════════════════════════
+function renderJstsComposition(all) {
+  const rows = all.filter(r => (r._stack || r.stack) && /js|ts|javascript|typescript/i.test(r._stack || r.stack));
+  const host = document.getElementById("compare-jsts-composition");
+  if (!host) return;
+  const hasData = rows.some(r => r._ecosystem_type || r._primary_language_detected || r._size_stratum);
+  host.hidden = !hasData;
+  if (!hasData) return;
+
+  renderJstsBar(rows, "chart-jsts-ecosystem", r => r._ecosystem_type,
+    ["npm","pnpm","npm_no_lock","vanilla","yarn","deno","bun","unknown"]);
+  renderJstsBar(rows, "chart-jsts-language", r => r._primary_language_detected,
+    ["TypeScript","JavaScript"]);
+  renderJstsBar(rows, "chart-jsts-size-stratum", r => r._size_stratum,
+    ["small","medium","large"]);
+  renderJstsLangEcoHeatmap(rows);
+}
+
+function renderJstsBar(rows, canvasId, keyFn, order) {
+  const th = getTheme();
+  const map = {};
+  rows.forEach(r => {
+    const k = keyFn(r);
+    if (!k) return;
+    if (!map[k]) map[k] = { n: 0, adopted: 0 };
+    map[k].n++;
+    if (r._adopted) map[k].adopted++;
+  });
+  let stats = Object.entries(map).map(([k, v]) => ({ k, n: v.n, adopted: v.adopted, rate: v.n ? v.adopted / v.n * 100 : 0 }));
+  if (order && order.length) {
+    const pos = Object.fromEntries(order.map((o, i) => [o.toLowerCase(), i]));
+    stats = stats.filter(s => pos[s.k.toLowerCase()] != null)
+                 .concat(stats.filter(s => pos[s.k.toLowerCase()] == null))
+                 .sort((a, b) => {
+                   const pa = pos[a.k.toLowerCase()]; const pb = pos[b.k.toLowerCase()];
+                   if (pa != null && pb != null) return pa - pb;
+                   if (pa != null) return -1; if (pb != null) return 1;
+                   return b.n - a.n;
+                 });
+  } else {
+    stats.sort((a, b) => b.n - a.n);
+  }
+  if (!stats.length) { destroyChart(canvasId); return; }
+  const color = stackColorForLabel("JS/TS") || PALETTE[1];
+  mkChart(canvasId, "bar", {
+    labels: stats.map(s => `${s.k} (n=${s.n.toLocaleString()})`),
+    datasets: [{ label: "Adoption Rate", data: stats.map(s => s.rate),
+      backgroundColor: stats.map(s => s.n < 30 ? color + "66" : color + "cc"),
+      borderColor: color, borderWidth: 1, borderRadius: 4 }],
+  }, commonOpts({
+    indexAxis: "y",
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => {
+      const s = stats[ctx.dataIndex];
+      const flag = s.n < 30 ? "  ⚠ small sample" : "";
+      return `${s.rate.toFixed(1)}%  (${s.adopted.toLocaleString()}/${s.n.toLocaleString()})${flag}`;
+    } } } },
+    scales: {
+      x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid },
+           title: { display: true, text: "Adoption rate", color: th.text } },
+      y: { ticks: { color: th.text, font: { size: 11 } }, grid: { display: false } },
+    },
+  }));
+}
+
+function renderJstsLangEcoHeatmap(rows) {
+  const langs = ["TypeScript","JavaScript"];
+  const ecos  = ["npm","pnpm","npm_no_lock","vanilla","yarn","deno","bun"];
+  const cell = {};
+  langs.forEach(l => { cell[l] = {}; ecos.forEach(e => { cell[l][e] = { n: 0, adopted: 0 }; }); });
+  rows.forEach(r => {
+    const l = r._primary_language_detected;
+    const e = r._ecosystem_type;
+    if (!langs.includes(l) || !ecos.includes(e)) return;
+    cell[l][e].n++;
+    if (r._adopted) cell[l][e].adopted++;
+  });
+  buildHeatmapTable("compare-jsts-lang-eco-heatmap", langs, ecos, (l, e) => {
+    const c = cell[l][e];
+    if (!c || !c.n) return { val: null, label: "—" };
+    if (c.n < 30) return { val: null, label: `<span class="muted">${(c.adopted/c.n*100).toFixed(0)}%<br><small>n=${c.n}</small></span>` };
+    const val = c.adopted / c.n * 100;
+    return { val, label: `${val.toFixed(1)}%<br><small>n=${c.n.toLocaleString()}</small>` };
+  }, "Language ↓ / Ecosystem →", "");
 }
 
 function renderSemanticsCoverageChart(all, stackLabels) {

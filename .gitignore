@@ -27,6 +27,8 @@ runs/
 clones/
 geo-benchmarks/
 stacks_data/
+docs/thesis/
+temp/
 
 # Local corpus exports (operator data, never committed)
 repos_rust.csv

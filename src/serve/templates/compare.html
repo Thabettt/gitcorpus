@@ -135,6 +135,11 @@
         <!-- ── Tab 3: Geography ──────────────────────────────────────────── -->
         <div id="tab-geography" class="compare-tab-panel" hidden>
           <div class="compare-chart-card compare-chart-full">
+            <h3>Country Resolution — per Stack <span class="muted" style="font-weight:400;font-size:.8rem">(how many owner locations we could parse, and at what confidence)</span></h3>
+            <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Reads <code>geo_confidence</code>. "Unresolved" = the owner's location field was missing or unparseable. Vocabularies differ by stack (Go: high/medium/low · JS/TS: name/region/weak).</p>
+            <div id="compare-country-resolution-stacks"></div>
+          </div>
+          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Adoption Rate by World Region</h3>
             <div class="compare-chart-wrap"><canvas id="chart-world-regions"></canvas></div>
           </div>
@@ -149,10 +154,6 @@
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Adoption Rate &amp; Tool Pricing by Income Group — per Stack</h3>
             <div id="compare-pricing-income-stacks"></div>
-          </div>
-          <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
-            <h3>MENA vs Non-MENA Adoption by Stack</h3>
-            <div class="compare-chart-wrap"><canvas id="chart-mena-vs-rest"></canvas></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>MENA Countries — Adoption Rate Detail <span class="muted" style="font-weight:400;font-size:.8rem">(per stack)</span></h3>
@@ -194,7 +195,7 @@
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Recency × Adoption Depth</h3>
             <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Repos bucketed by days since first signal, split by adoption level. Reveals whether deep adoption needs time or shows up fast.</p>
-            <div class="compare-chart-wrap"><canvas id="chart-recency-depth"></canvas></div>
+            <div id="compare-recency-depth-stacks"></div>
           </div>
           <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
             <h3>Monthly New Repos by Adoption Label (Stacked) — per Stack</h3>
@@ -298,6 +299,31 @@
             <h3>Tool Co-occurrence Heatmap</h3>
             <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">% of repos with the row agent that also have the column agent.</p>
             <div id="compare-cooccurrence-table"></div>
+          </div>
+
+          <!-- JS/TS-only composition (seed-phase lockfile / language / size stratum) -->
+          <div id="compare-jsts-composition" style="margin-top:2rem" hidden>
+            <h2 style="margin:1.5rem 0 .25rem;font-size:1.05rem">JS/TS Stack Composition <span class="muted" style="font-weight:400;font-size:.8rem">(seed-phase metadata; applies to the JS/TS stack only)</span></h2>
+            <p class="muted" style="margin:.1rem 0 1rem;font-size:.85rem">Reads <code>ecosystem_type</code>, <code>primary_language_detected</code>, and <code>size_stratum</code>, joined from the seed corpus. Bars with n&lt;30 are rendered faded; heatmap cells with n&lt;30 show the rate greyed out.</p>
+            <div class="compare-chart-grid">
+              <div class="compare-chart-card">
+                <h3>Adoption Rate by Package Manager <span class="muted" style="font-weight:400;font-size:.8rem">(lockfile detected at seed)</span></h3>
+                <div class="compare-chart-wrap"><canvas id="chart-jsts-ecosystem"></canvas></div>
+              </div>
+              <div class="compare-chart-card">
+                <h3>Adoption Rate by Primary Language <span class="muted" style="font-weight:400;font-size:.8rem">(TypeScript · JavaScript)</span></h3>
+                <div class="compare-chart-wrap"><canvas id="chart-jsts-language"></canvas></div>
+              </div>
+            </div>
+            <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+              <h3>Adoption Rate by Seed Size Stratum <span class="muted" style="font-weight:400;font-size:.8rem">(small · medium · large)</span></h3>
+              <div class="compare-chart-wrap"><canvas id="chart-jsts-size-stratum"></canvas></div>
+            </div>
+            <div class="compare-chart-card compare-chart-full" style="margin-top:1.5rem">
+              <h3>Language × Package Manager <span class="muted" style="font-weight:400;font-size:.8rem">(adoption rate per cell)</span></h3>
+              <p class="muted" style="margin:.25rem 0 .75rem;font-size:.85rem">Cells with n&lt;30 are shown greyed out.</p>
+              <div id="compare-jsts-lang-eco-heatmap"></div>
+            </div>
           </div>
         </div>
 
@@ -667,6 +693,47 @@
 .compare-slot .compare-chart-wrap { height: 300px; }
 .compare-slot-tall .compare-chart-wrap { height: 420px; }
 .compare-slot-html { overflow-x: auto; }
+
+/* Sparkline small-multiples grid (country × month, country × agent trend, etc.) */
+.compare-spark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: .75rem;
+  padding: .25rem;
+}
+.compare-spark-card {
+  background: var(--gc-bg, #fdfcf7);
+  border: 1px solid var(--gc-border, #e2dbc6);
+  border-radius: 6px;
+  padding: .5rem .6rem;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+.compare-spark-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .8rem;
+}
+.compare-spark-country {
+  font-weight: 600;
+  color: var(--gc-text, #1d3557);
+}
+.compare-spark-latest {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.compare-spark-sub {
+  font-size: .72rem;
+  color: var(--gc-muted, #6c757d);
+  display: flex;
+  justify-content: space-between;
+}
+.compare-spark-canvas-wrap {
+  position: relative;
+  height: 60px;
+}
 
 /* ── Stack table ──────────────────────────────────────────────────────────── */
 .compare-stacks        { margin-bottom: 1.5rem; }
