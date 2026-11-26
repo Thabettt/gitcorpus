@@ -27,6 +27,7 @@ from lib.deadlines import DeadlineExceededError, request_deadline_seconds
 from lib.gh_client import API_VERSION, PartialResultsError, RequestFailed, ThrottledError
 from serve import errors, pages
 from serve.analysis import register_analysis
+from serve.compare import register_compare
 from serve.corpora import register_corpora
 from serve.diff import diff_runs
 from serve.executor import (
@@ -982,18 +983,21 @@ def create_app(
         return RedirectResponse(f"/runs/{run_id}?save_error={error}", status_code=303)
 
     @application.get("/runs/{run_id}/export")
-    def export_run_route(run_id: int, format: str = "json"):
-        if format not in ("json", "csv", "detections", "detections-json"):
+    def export_run_route(run_id: int, format: str = "json", stack: str = ""):
+        if format not in ("json", "csv", "detections", "detections-json", "comparison"):
             return JSONResponse(
                 status_code=400,
                 content={
                     "error": "invalid_param",
                     "param": "format",
-                    "hint": "format must be one of: json, csv, detections, detections-json",
+                    "hint": (
+                        "format must be one of: json, csv, detections, "
+                        "detections-json, comparison"
+                    ),
                 },
             )
         try:
-            return export_run(engine_for(), run_id, format=format, runs_root=runs_root)
+            return export_run(engine_for(), run_id, format=format, stack=stack, runs_root=runs_root)
         except RunNotReadyError as exc:
             return JSONResponse(
                 status_code=409,
@@ -1130,6 +1134,7 @@ def create_app(
 
     register_corpora(application, engine_factory=engine_for)
     register_analysis(application, engine_factory=engine_for)
+    register_compare(application)
 
     from serve.detect import register_detect
 
