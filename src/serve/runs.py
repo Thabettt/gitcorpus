@@ -568,18 +568,20 @@ def _comparison_chunks(
                 adoption_level = document.get("adoption_level") or "none"
                 adoption_label = _ADOPTION_LABEL.get(adoption_level, "none")
                 language = _csv_cell(row[5])
-                writer.writerow([
-                    _csv_cell(_resolved_repo_id(row[0], row[1], resolved)),
-                    _csv_cell(stack or language),
-                    _csv_cell(row[2]),
-                    _csv_cell(language),
-                    _csv_cell(country_name(row[7])),
-                    _csv_cell(adoption_label),
-                    _csv_cell("|".join(str(a) for a in agents)),
-                    _csv_cell(_iso(document.get("first_signal_at"))),
-                    _csv_cell(document.get("commit_ratio")),
-                    _csv_cell(row[8]),
-                ])
+                writer.writerow(
+                    [
+                        _csv_cell(_resolved_repo_id(row[0], row[1], resolved)),
+                        _csv_cell(stack or language),
+                        _csv_cell(row[2]),
+                        _csv_cell(language),
+                        _csv_cell(country_name(row[7])),
+                        _csv_cell(adoption_label),
+                        _csv_cell("|".join(str(a) for a in agents)),
+                        _csv_cell(_iso(document.get("first_signal_at"))),
+                        _csv_cell(document.get("commit_ratio")),
+                        _csv_cell(row[8]),
+                    ]
+                )
             yield buffer.getvalue().encode("utf-8")
 
 
@@ -649,9 +651,7 @@ def export_run(
     detect = run_row["kind"] == "detect"
     regenerated = detect or format not in _BUNDLE_FILES
     if not regenerated:
-        regenerated = not bundle_file(
-            runs_root, run_row["filter_hash"], run_id, format
-        ).is_file()
+        regenerated = not bundle_file(runs_root, run_row["filter_hash"], run_id, format).is_file()
     chunks, media_type = export_bundle(
         engine, run_id, format=format, stack=stack, runs_root=runs_root
     )
