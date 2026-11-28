@@ -40,7 +40,20 @@
       "Bash(tee /tmp/server.log)",
       "Bash(node -e ' *)",
       "Bash(kill %1)",
-      "Bash(xargs -I{} sh -c 'head -1 \"{}\" 2>/dev/null | grep -l primary_language >/dev/null && echo \"{}\"')"
+      "Bash(xargs -I{} sh -c 'head -1 \"{}\" 2>/dev/null | grep -l primary_language >/dev/null && echo \"{}\"')",
+      "Bash(pip install *)",
+      "Bash(node *)",
+      "Bash(command -v pytest)",
+      "Read(//opt/homebrew/**)",
+      "Bash(python3.12 -m pytest --version)",
+      "Bash(.venv/bin/pytest tests/serve/test_runs.py -x --no-header -q)",
+      "Bash(.venv/bin/pytest tests/contract/test_runs_export.py -x --no-header -q)",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(git stash *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(docker exec *)",
+      "Bash(export DATABASE_URL=postgresql+psycopg://gitcorpus:gitcorpus@localhost:5433/gitcorpus)",
+      "Bash(./.venv/bin/python3 *)"
     ]
   }
 }

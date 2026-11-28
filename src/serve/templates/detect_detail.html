@@ -185,18 +185,68 @@
           </div>
         </details>
       </form>
-      <form method="get" action="/runs/{{ run.id }}/export" class="export-group">
+      <form method="get" action="/runs/{{ run.id }}/export" class="export-group" id="detection-cross-stack-form">
         <input type="hidden" name="format" value="comparison">
-        <input class="field-input" type="text" name="stack" placeholder="Stack name (e.g. Python)" aria-label="Stack name for comparison export">
+        <input class="field-input" type="text" name="stack" id="detection-cross-stack-input" placeholder="Stack name (e.g. Python)" aria-label="Stack name for cross-stack dataset">
         <button class="button" type="submit" id="detection-export-comparison">Export for Cross Stack</button>
+        <button class="button" type="button" id="detection-open-comparison">Open in Cross Stack</button>
+        <span class="muted" id="detection-open-comparison-status" aria-live="polite"></span>
         <details class="info-pop">
           <summary aria-label="What the cross-stack export contains">i</summary>
           <div class="info-pop-body">
-            <p>One row per scanned repo in the canonical cross-stack format: full_name, stack, stars, primary_language, country, adoption_label, agents_found, created_at, commit_ratio.</p>
-            <p>Upload this CSV directly to the <a href="/compare">Cross Stack Comparison</a> tab to compare adoption across language stacks. Enter a stack name to label this run's data (e.g. "Python", "Java").</p>
+            <p>Produces the full integrated dataset (56 columns, same schema as <code>/integrated_datasets/</code>). Either download the CSV, or click <b>Open in Cross Stack</b> to send it straight into the Cross Stack dashboard without re-uploading.</p>
+            <p>The Cross Stack dashboard remembers datasets in this browser, so you can return to it any time without re-opening.</p>
           </div>
         </details>
       </form>
+      <script>
+      (function() {
+        const btn = document.getElementById("detection-open-comparison");
+        if (!btn) return;
+        const status = document.getElementById("detection-open-comparison-status");
+        const input = document.getElementById("detection-cross-stack-input");
+        const runId = {{ run.id }};
+        function idbOpen() {
+          return new Promise((resolve, reject) => {
+            const req = indexedDB.open("e2e_compare", 1);
+            req.onupgradeneeded = () => { req.result.createObjectStore("stacks"); };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+          });
+        }
+        async function idbPut(key, value) {
+          const db = await idbOpen();
+          await new Promise((res, rej) => {
+            const tx = db.transaction("stacks", "readwrite");
+            tx.objectStore("stacks").put(value, key);
+            tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+          });
+          db.close();
+        }
+        btn.addEventListener("click", async () => {
+          const stack = (input.value || "").trim();
+          if (!stack) { input.focus(); status.textContent = "Enter a stack name first."; return; }
+          btn.disabled = true;
+          status.textContent = "Fetching dataset...";
+          try {
+            const url = `/runs/${runId}/export?format=comparison&stack=${encodeURIComponent(stack)}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const csvText = await resp.text();
+            await idbPut("pending", {
+              filename: `run-${runId}-${stack.replace(/[^a-zA-Z0-9._-]+/g, "-")}.csv`,
+              label: stack,
+              csvText,
+            });
+            status.textContent = "Loaded. Redirecting...";
+            window.location.href = "/compare";
+          } catch (err) {
+            status.textContent = `Failed: ${err.message || err}`;
+            btn.disabled = false;
+          }
+        });
+      })();
+      </script>
       {% endif %}
     </div>
   </div>

@@ -30,7 +30,7 @@ from enrich.cloner import (
     free_disk_mb,
 )
 from lib.deadlines import clone_timeout_seconds
-from serve.countries import country_name
+from serve.countries import country_name, income_group
 from serve.executor import _CSV_HEADER, EVIDENCE_CSV_HEADER, _csv_cell, evidence_csv_row
 from store.models import Owner, Repo, RunItem, Runs
 
@@ -43,26 +43,94 @@ _MEDIA_TYPES = {
 }
 _BUNDLE_FILES = {"json": "bundle.json", "csv": "corpus.csv", "detections": "detections.csv"}
 
-COMPARE_CSV_HEADER = [
+INTEGRATED_CSV_HEADER = [
     "full_name",
+    "owner_login",
     "stack",
-    "stars",
     "primary_language",
-    "country",
-    "adoption_label",
-    "agents_found",
-    "created_at",
+    "stars",
+    "commits",
+    "authored_commits",
     "commit_ratio",
+    "country",
+    "country_iso",
     "geo_confidence",
+    "income_group",
+    "agentic_present",
+    "commit_adoption",
+    "adoption_level",
+    "agents_found",
+    "current_agents",
+    "configured_agents",
+    "primary_agent",
+    "agent_count",
+    "current_agent_count",
+    "configured_agent_count",
+    "channels_count",
+    "channels_fired",
+    "evidence_count",
+    "evidence_semantics",
+    "has_file_evidence",
+    "has_commit_trailer_evidence",
+    "has_pr_metadata_evidence",
+    "has_author_evidence",
+    "has_branch_evidence",
+    "has_agents_md",
+    "review_participation_count",
+    "orchestration_only_count",
+    "legacy_markers_count",
+    "recovery_checkpoint_count",
+    "ambiguous_lineage_count",
+    "historical_only_count",
+    "authored_commits_by_agent",
+    "first_signal_at",
+    "created_at",
+    "oldest_scanned_commit_at",
+    "last_signal_at",
+    "repo_created_at",
+    "pushed_at",
+    "first_signal_month",
+    "first_signal_days_ago",
+    "repo_age_days",
+    "age_at_adoption_days",
+    "days_since_push",
+    "is_active_last_90d",
+    "history_coverage",
+    "history_complete",
+    "is_archived",
+    "license_spdx",
 ]
 
-_ADOPTION_LABEL = {
-    "none": "none",
-    "experimental": "agentic",
-    "limited": "agentic",
-    "consistent": "agentic",
-    "pervasive": "agentic",
-}
+_AGENTIC_LEVELS = {"experimental", "limited", "consistent", "pervasive"}
+
+
+def _days_between(a_iso: str | None, b: datetime | str | None) -> str | int:
+    def parse(x):
+        if not x:
+            return None
+        if isinstance(x, datetime):
+            return x
+        try:
+            return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
+    da = parse(a_iso)
+    db = parse(b)
+    if not da or not db:
+        return ""
+    if da.tzinfo is None:
+        da = da.replace(tzinfo=UTC)
+    if db.tzinfo is None:
+        db = db.replace(tzinfo=UTC)
+    return int((db - da).total_seconds() // 86400)
+
+
+def _pipe_join(values) -> str:
+    if not values:
+        return ""
+    return "|".join(sorted({str(v) for v in values if v}))
+
 
 DETECT_REPO_CSV_HEADER = [
     "repo_id",
@@ -380,6 +448,75 @@ _DETECT_REPO_STREAM_SQL = text(
 )
 
 
+_INTEGRATED_REPO_STREAM_SQL = text(
+    "SELECT i.repo_id, i.full_name, i.stargazers,"
+    " COALESCE(i.repo_created_at, r.created_at),"
+    " i.commit_count,"
+    " COALESCE(i.pushed_at, r.pushed_at),"
+    " COALESCE(i.archived, r.archived),"
+    " COALESCE(i.language, r.language),"
+    " COALESCE(i.license_spdx, r.license_spdx),"
+    " COALESCE(i.country_iso, o.country_iso),"
+    " COALESCE(i.geo_confidence, o.geo_confidence),"
+    " i.detection,"
+    " COALESCE(c.total_rows, 0),"
+    " COALESCE(c.file_rows, 0),"
+    " COALESCE(c.author_rows, 0),"
+    " COALESCE(c.branch_rows, 0),"
+    " COALESCE(c.label_rows, 0),"
+    " COALESCE(c.commit_trailer_rows, 0),"
+    " COALESCE(c.pr_metadata_rows, 0),"
+    " COALESCE(c.issue_rows, 0),"
+    " COALESCE(c.bot_rows, 0),"
+    " c.semantics,"
+    " COALESCE(c.has_agents_md, false),"
+    " pa.primary_agent,"
+    " aba.authored_by_agent"
+    " FROM run_items i"
+    " LEFT JOIN repos r ON r.id = i.repo_id"
+    " LEFT JOIN owners o ON o.id = r.owner_id"
+    " LEFT JOIN ("
+    "   SELECT repo_id,"
+    "     count(*) AS total_rows,"
+    "     count(*) FILTER (WHERE channel = 'file') AS file_rows,"
+    "     count(*) FILTER (WHERE channel = 'author') AS author_rows,"
+    "     count(*) FILTER (WHERE channel = 'branch') AS branch_rows,"
+    "     count(*) FILTER (WHERE channel = 'label') AS label_rows,"
+    "     count(*) FILTER (WHERE channel = 'commit_trailer') AS commit_trailer_rows,"
+    "     count(*) FILTER (WHERE channel = 'pr_metadata') AS pr_metadata_rows,"
+    "     count(*) FILTER (WHERE channel = 'issue') AS issue_rows,"
+    "     count(*) FILTER (WHERE channel = 'bot') AS bot_rows,"
+    "     string_agg(DISTINCT NULLIF(evidence_semantics, ''), '|') AS semantics,"
+    "     bool_or(channel = 'file' AND COALESCE(evidence->>'path','')"
+    "       LIKE '%%AGENTS.md') AS has_agents_md"
+    "   FROM detection_evidence WHERE run_id = :run GROUP BY repo_id"
+    " ) c ON c.repo_id = i.repo_id"
+    " LEFT JOIN ("
+    "   SELECT DISTINCT ON (repo_id) repo_id, family_name AS primary_agent"
+    "   FROM ("
+    "     SELECT repo_id, family_name, count(*) AS cnt"
+    "     FROM detection_evidence"
+    "     WHERE run_id = :run"
+    "       AND COALESCE(family_name,'') NOT IN ('', 'Generic', 'Rejected/noise')"
+    "     GROUP BY repo_id, family_name"
+    "   ) z"
+    "   ORDER BY repo_id, cnt DESC, family_name"
+    " ) pa ON pa.repo_id = i.repo_id"
+    " LEFT JOIN ("
+    "   SELECT repo_id, jsonb_object_agg(family_name, cnt) AS authored_by_agent"
+    "   FROM ("
+    "     SELECT repo_id, family_name, count(*) AS cnt"
+    "     FROM detection_evidence"
+    "     WHERE run_id = :run AND channel = 'commit_trailer'"
+    "       AND COALESCE(family_name,'') NOT IN ('', 'Generic')"
+    "     GROUP BY repo_id, family_name"
+    "   ) z GROUP BY repo_id"
+    " ) aba ON aba.repo_id = i.repo_id"
+    " WHERE i.run_id = :run"
+    " ORDER BY i.stargazers DESC NULLS LAST, i.repo_id"
+)
+
+
 def _detections_chunks(
     engine: Engine, run_id: int, *, batch_rows: int = EVIDENCE_BATCH_ROWS
 ) -> Iterator[bytes]:
@@ -551,38 +688,155 @@ def _comparison_chunks(
 ) -> Iterator[bytes]:
     buffer = io.StringIO()
     buffer.write("\ufeff")
-    csv.writer(buffer).writerow(COMPARE_CSV_HEADER)
+    csv.writer(buffer).writerow(INTEGRATED_CSV_HEADER)
     yield buffer.getvalue().encode("utf-8")
-    resolved = _resolved_negative_ids(engine, run_id)
+    now = datetime.now(UTC)
+    stack_label = (stack or "").strip()
     with engine.connect() as connection:
         result = connection.execution_options(stream_results=True).execute(
-            _DETECT_REPO_STREAM_SQL, {"run": run_id}
+            _INTEGRATED_REPO_STREAM_SQL, {"run": run_id}
         )
         for partition in result.partitions(max(1, batch_rows)):
             buffer.seek(0)
             buffer.truncate(0)
             writer = csv.writer(buffer)
             for row in partition:
-                document = row[9] if isinstance(row[9], dict) else {}
-                agents = document.get("agents") or []
-                adoption_level = document.get("adoption_level") or "none"
-                adoption_label = _ADOPTION_LABEL.get(adoption_level, "none")
-                language = _csv_cell(row[5])
-                writer.writerow(
-                    [
-                        _csv_cell(_resolved_repo_id(row[0], row[1], resolved)),
-                        _csv_cell(stack or language),
-                        _csv_cell(row[2]),
-                        _csv_cell(language),
-                        _csv_cell(country_name(row[7])),
-                        _csv_cell(adoption_label),
-                        _csv_cell("|".join(str(a) for a in agents)),
-                        _csv_cell(_iso(document.get("first_signal_at"))),
-                        _csv_cell(document.get("commit_ratio")),
-                        _csv_cell(row[8]),
-                    ]
-                )
+                writer.writerow(_integrated_row_cells(row, stack_label, now))
             yield buffer.getvalue().encode("utf-8")
+
+
+def _integrated_row_cells(row, stack_label: str, now: datetime) -> list:
+    full_name = str(row[1] or "").strip()
+    stargazers = row[2]
+    repo_created_at = _iso(row[3])
+    pushed_at = _iso(row[5])
+    archived = bool(row[6]) if row[6] is not None else False
+    language = row[7]
+    license_spdx = row[8]
+    country_iso = (row[9] or "").strip().upper()
+    geo_conf = (row[10] or "").strip()
+    document = row[11] if isinstance(row[11], dict) else {}
+
+    total_rows = int(row[12] or 0)
+    file_rows = int(row[13] or 0)
+    author_rows = int(row[14] or 0)
+    branch_rows = int(row[15] or 0)
+    label_rows = int(row[16] or 0)
+    commit_trailer_rows = int(row[17] or 0)
+    pr_metadata_rows = int(row[18] or 0)
+    issue_rows = int(row[19] or 0)
+    bot_rows = int(row[20] or 0)
+    semantics_raw = row[21] or ""
+    has_agents_md = bool(row[22])
+    primary_agent = row[23] or ""
+    authored_by_agent = row[24] if isinstance(row[24], dict) else {}
+
+    adoption_level = (document.get("adoption_level") or "none").strip().lower() or "none"
+    commit_adoption = "agentic" if adoption_level in _AGENTIC_LEVELS else "none"
+    agentic_present = "true" if bool(document.get("agents") or []) else "false"
+
+    ever_observed = list(document.get("agents") or [])
+    currently_configured = list(document.get("currently_configured") or [])
+    current_activity = list(document.get("current_activity") or [])
+    historical_activity = list(document.get("historical_activity") or [])
+
+    review_cnt = len(document.get("review_participation") or [])
+    orches_cnt = len(document.get("orchestration_only") or [])
+    legacy_cnt = len(document.get("legacy_markers") or [])
+    recov_cnt = len(document.get("recovery_checkpoint") or [])
+    amb_cnt = len(document.get("ambiguous_lineage") or [])
+    cur_set = set(current_activity)
+    hist_only = sum(1 for a in historical_activity if a not in cur_set)
+
+    country = country_name(country_iso) if country_iso else ""
+    inc_grp = income_group(country_iso) if country_iso else ""
+
+    channels = {
+        "file": file_rows,
+        "author": author_rows,
+        "branch": branch_rows,
+        "label": label_rows,
+        "commit_trailer": commit_trailer_rows,
+        "pr_metadata": pr_metadata_rows,
+        "issue": issue_rows,
+        "bot": bot_rows,
+    }
+    channels_fired = [k for k, v in channels.items() if v > 0]
+
+    first_signal = _iso(document.get("first_signal_at")) or ""
+    history_coverage = document.get("history_coverage")
+    history_complete = document.get("history_complete")
+    commit_ratio = document.get("commit_ratio")
+    authored_commits = document.get("authored_commits")
+    commits = row[4] if row[4] is not None else document.get("total_commits")
+
+    age_days = _days_between(repo_created_at, now) if repo_created_at else ""
+    age_at_adoption_days = (
+        _days_between(repo_created_at, first_signal) if (repo_created_at and first_signal) else ""
+    )
+    days_since_push = _days_between(pushed_at, now) if pushed_at else ""
+    is_active_last_90d = "1" if isinstance(days_since_push, int) and days_since_push <= 90 else "0"
+
+    owner_login = full_name.split("/", 1)[0].lower() if "/" in full_name else full_name.lower()
+    aba_json = json.dumps(authored_by_agent, separators=(",", ":")) if authored_by_agent else ""
+
+    return [
+        _csv_cell(full_name),
+        _csv_cell(owner_login),
+        _csv_cell(stack_label or language),
+        _csv_cell(language),
+        _csv_cell(stargazers),
+        _csv_cell(commits),
+        _csv_cell(authored_commits),
+        _csv_cell(commit_ratio),
+        _csv_cell(country),
+        _csv_cell(country_iso),
+        _csv_cell(geo_conf),
+        _csv_cell(inc_grp),
+        _csv_cell(agentic_present),
+        _csv_cell(commit_adoption),
+        _csv_cell(adoption_level),
+        _csv_cell(_pipe_join(ever_observed)),
+        _csv_cell(_pipe_join(current_activity)),
+        _csv_cell(_pipe_join(currently_configured)),
+        _csv_cell(primary_agent),
+        _csv_cell(len(ever_observed)),
+        _csv_cell(len(current_activity)),
+        _csv_cell(len(currently_configured)),
+        _csv_cell(len(channels_fired)),
+        _csv_cell(_pipe_join(channels_fired)),
+        _csv_cell(total_rows),
+        _csv_cell(semantics_raw),
+        _csv_cell("true" if file_rows > 0 else "false"),
+        _csv_cell("true" if commit_trailer_rows > 0 else "false"),
+        _csv_cell("true" if pr_metadata_rows > 0 else "false"),
+        _csv_cell("true" if author_rows > 0 else "false"),
+        _csv_cell("true" if branch_rows > 0 else "false"),
+        _csv_cell("true" if has_agents_md else "false"),
+        _csv_cell(review_cnt),
+        _csv_cell(orches_cnt),
+        _csv_cell(legacy_cnt),
+        _csv_cell(recov_cnt),
+        _csv_cell(amb_cnt),
+        _csv_cell(hist_only),
+        _csv_cell(aba_json),
+        _csv_cell(first_signal),
+        _csv_cell(first_signal),
+        _csv_cell(""),
+        _csv_cell(""),
+        _csv_cell(repo_created_at or ""),
+        _csv_cell(pushed_at or ""),
+        _csv_cell(first_signal[:7] if first_signal else ""),
+        _csv_cell(_days_between(first_signal, now) if first_signal else ""),
+        _csv_cell(age_days),
+        _csv_cell(age_at_adoption_days),
+        _csv_cell(days_since_push),
+        _csv_cell(is_active_last_90d),
+        _csv_cell(history_coverage if history_coverage is not None else ""),
+        _csv_cell("true" if history_complete else "false"),
+        _csv_cell("true" if archived else "false"),
+        _csv_cell(license_spdx or ""),
+    ]
 
 
 def export_bundle(

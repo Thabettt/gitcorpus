@@ -34,95 +34,13 @@ from serve.countries import country_name, income_group  # noqa: E402
 
 AGENTIC_LEVELS = {"experimental", "limited", "consistent", "pervasive"}
 
-STACK_TO_ECOSYSTEM = {
-    "JS/TS": "npm", "TypeScript/JavaScript": "npm",
-    "Python": "PyPI", "Java": "Maven", "Rust": "Cargo",
-    "Go": "Go Modules", "Ruby": "RubyGems", "PHP": "Packagist",
-    "C#": "NuGet", "C++": "Conan/vcpkg", "Swift": "Swift PM",
-}
-
-# --- Framework hint rules (kept in sync with build_integrated_csv.py) -------
-FRAMEWORK_RULES_JSTS: list[tuple[str, re.Pattern]] = [
-    ("React",     re.compile(r"\b(react|redux|nextjs?|gatsby|remix|preact|refine)\b", re.I)),
-    ("Vue",       re.compile(r"\b(vue|vuejs|nuxt|quasar|vite(?:press|-vue)?)\b", re.I)),
-    ("Angular",   re.compile(r"\b(angular|ngrx|ionic)\b", re.I)),
-    ("Svelte",    re.compile(r"\b(svelte|sveltekit)\b", re.I)),
-    ("Astro",     re.compile(r"\bastro\b", re.I)),
-    ("Solid",     re.compile(r"\bsolid(js|-router|-start)?\b", re.I)),
-    ("Node/Server", re.compile(r"\b(express|fastify|koa|nestjs?|hono|hapi|adonis)\b", re.I)),
-    ("Electron/Desktop", re.compile(r"\b(electron|tauri|neutralino)\b", re.I)),
-    ("React Native/Mobile", re.compile(r"\b(react-native|expo)\b", re.I)),
-    ("Testing",   re.compile(r"\b(jest|vitest|playwright|cypress|mocha)\b", re.I)),
-    ("Build/Tooling", re.compile(r"\b(webpack|rollup|parcel|esbuild|vite|turborepo|nx)\b", re.I)),
-    ("UI/Components", re.compile(r"\b(mui|chakra|radix|shadcn|antd|mantine|tailwind)\b", re.I)),
-    ("Data/State",    re.compile(r"\b(tanstack|react-query|swr|zustand|jotai|xstate|apollo|trpc)\b", re.I)),
-    ("ML/AI",      re.compile(r"\b(langchain|langgraph|llm|openai|anthropic|rag)\b", re.I)),
-    ("Blockchain", re.compile(r"\b(web3|ethers|hardhat|solidity|near)\b", re.I)),
-]
-FRAMEWORK_RULES_PY: list[tuple[str, re.Pattern]] = [
-    ("Django",     re.compile(r"\bdjango\b", re.I)),
-    ("Flask",      re.compile(r"\bflask\b", re.I)),
-    ("FastAPI",    re.compile(r"\bfastapi\b", re.I)),
-    ("ML/AI",      re.compile(r"\b(pytorch|torch|tensorflow|keras|langchain|huggingface|transformers)\b", re.I)),
-    ("Data",       re.compile(r"\b(pandas|numpy|polars|duckdb|dask)\b", re.I)),
-    ("Testing",    re.compile(r"\b(pytest|unittest|tox)\b", re.I)),
-]
-FRAMEWORK_RULES_GO: list[tuple[str, re.Pattern]] = [
-    ("Web/HTTP",   re.compile(r"\b(gin|echo|fiber|chi|mux|gorilla|beego|iris|revel|buffalo)\b", re.I)),
-    ("gRPC/RPC",   re.compile(r"\b(grpc|protobuf|twirp|connect)\b", re.I)),
-    ("CLI/Tooling",   re.compile(r"\b(cobra|cli|urfave|cmd|tool|go-tool)\b", re.I)),
-    ("Kubernetes/Cloud", re.compile(r"\b(k8s|kubernetes|kube|operator|controller|helm|terraform|crossplane|argo|istio|envoy)\b", re.I)),
-    ("DevOps/Infra",  re.compile(r"\b(docker|container|ansible|packer|vault|consul|nomad|prometheus|grafana|loki|tempo)\b", re.I)),
-    ("DB/Storage",    re.compile(r"\b(gorm|sqlx|ent|bun|xorm|postgres|mysql|sqlite|redis|mongo|etcd|cockroach|tidb|dgraph)\b", re.I)),
-    ("Messaging",     re.compile(r"\b(nats|kafka|rabbitmq|pulsar|nsq)\b", re.I)),
-    ("Testing",       re.compile(r"\b(testify|ginkgo|gomega|mockery|ghz)\b", re.I)),
-    ("Blockchain",    re.compile(r"\b(geth|ethereum|solana|cosmos|tendermint|ipfs|libp2p|chain|web3)\b", re.I)),
-    ("ML/AI",         re.compile(r"\b(langchain|llm|openai|anthropic|rag|ollama)\b", re.I)),
-]
-FRAMEWORK_RULES_JAVA: list[tuple[str, re.Pattern]] = [
-    ("Spring",   re.compile(r"\b(spring|springboot|boot)\b", re.I)),
-    ("Android",  re.compile(r"\b(android|compose|jetpack)\b", re.I)),
-    ("Kotlin",   re.compile(r"\b(kotlin|ktor|exposed)\b", re.I)),
-    ("Build",    re.compile(r"\b(gradle|maven)\b", re.I)),
-    ("Testing",  re.compile(r"\b(junit|mockito|testng|spock)\b", re.I)),
-]
-FRAMEWORK_RULES_RUST: list[tuple[str, re.Pattern]] = [
-    ("Web/HTTP",         re.compile(r"\b(actix|axum|rocket|warp|poem|tide|hyper|salvo|leptos|yew|dioxus)\b", re.I)),
-    ("Async/Runtime",    re.compile(r"\b(tokio|async[-_ ]?std|smol|mio)\b", re.I)),
-    ("CLI/Tooling",      re.compile(r"\b(clap|structopt|cargo[-_]|cli|tui|ratatui)\b", re.I)),
-    ("Blockchain",       re.compile(r"\b(solana|substrate|polkadot|near|cosmos|ethereum|foundry|revm|anchor|move)\b", re.I)),
-    ("WebAssembly",      re.compile(r"\b(wasm|wasm[-_]?bindgen|wasmer|wasmtime|wasi|yew|leptos|dioxus|trunk)\b", re.I)),
-    ("Game/Graphics",    re.compile(r"\b(bevy|amethyst|macroquad|ggez|fyrox|rend3|wgpu|vulkan|opengl)\b", re.I)),
-    ("Embedded/Systems", re.compile(r"\b(embedded|rtic|embassy|nrf|stm32|no[-_]?std|esp(32|idf)?|rp2040|microcontroller)\b", re.I)),
-    ("Data",             re.compile(r"\b(polars|datafusion|arrow|duckdb|parquet|delta)\b", re.I)),
-    ("ML/AI",            re.compile(r"\b(candle|burn|huggingface|llm|llama|langchain|openai|anthropic|rag|ollama)\b", re.I)),
-    ("DB/Storage",       re.compile(r"\b(diesel|sqlx|sea[-_]?orm|rusqlite|postgres|mysql|redis|mongo|surreal|tikv)\b", re.I)),
-    ("Build/Macros",     re.compile(r"\b(proc[-_]?macro|derive|serde|build[-_]?script|cargo)\b", re.I)),
-    ("Testing",          re.compile(r"\b(criterion|proptest|quickcheck|mockall|rstest|insta)\b", re.I)),
-]
-
-def framework_hints_for(stack: str, full_name: str) -> list[str]:
-    stack_u = (stack or "").strip()
-    if stack_u in ("JS/TS", "TypeScript/JavaScript"): rules = FRAMEWORK_RULES_JSTS
-    elif stack_u == "Python":                         rules = FRAMEWORK_RULES_PY
-    elif stack_u == "Go":                             rules = FRAMEWORK_RULES_GO
-    elif stack_u == "Java":                           rules = FRAMEWORK_RULES_JAVA
-    elif stack_u == "Rust":                           rules = FRAMEWORK_RULES_RUST
-    else:                                             rules = []
-    if not rules:
-        return []
-    hits: set[str] = set()
-    for name, pat in rules:
-        if pat.search(full_name):
-            hits.add(name)
-    return sorted(hits)
-
 
 COLUMNS = [
-    "full_name", "owner_login", "stack", "primary_language", "ecosystem",
-    "framework_hints", "stars", "commits", "authored_commits", "commit_ratio",
+    "full_name", "owner_login", "stack", "primary_language",
+    "stars", "commits", "authored_commits", "commit_ratio",
     "country", "country_iso", "geo_confidence", "income_group",
-    "adoption_label", "adoption_level",
+    "agentic_present", "commit_adoption", "adoption_level",
+    "agents_md_marker", "agents_md_only",
     "agents_found", "current_agents", "configured_agents", "primary_agent",
     "agent_count", "current_agent_count", "configured_agent_count",
     "channels_count", "channels_fired",
@@ -201,6 +119,7 @@ def aggregate_evidence(evidence_csv: Path):
     authored_by_agent: dict[str, Counter] = defaultdict(Counter)
     evidence_totals: Counter = Counter()
     has_agents_md:  set[str] = set()
+    has_generic_marker: set[str] = set()
 
     csv.field_size_limit(1 << 30)
     with evidence_csv.open("r", encoding="utf-8-sig", newline="") as fh:
@@ -211,9 +130,13 @@ def aggregate_evidence(evidence_csv: Path):
             if not full_name:
                 continue
             family = (row.get("family_name") or "").strip()
+            agent = (row.get("agent") or "").strip()
             channel = (row.get("channel") or "").strip()
             semantics = (row.get("evidence_semantics") or "").strip()
             path = (row.get("path") or "").strip()
+
+            if agent == "Generic":
+                has_generic_marker.add(full_name)
 
             if family and family not in ("Rejected/noise", "Generic"):
                 family_counts[full_name][family] += 1
@@ -236,7 +159,8 @@ def aggregate_evidence(evidence_csv: Path):
         file=sys.stderr,
     )
     return (family_counts, channel_sets, semantic_sets,
-            evidence_totals, has_agents_md, authored_by_agent)
+            evidence_totals, has_agents_md, authored_by_agent,
+            has_generic_marker)
 
 
 def main() -> int:
@@ -277,7 +201,8 @@ def main() -> int:
 
     print("Aggregating evidence CSV ...", file=sys.stderr)
     (family_counts, channel_sets, semantic_sets,
-     evidence_totals, has_agents_md, authored_by_agent) = aggregate_evidence(evidence_csv)
+     evidence_totals, has_agents_md, authored_by_agent,
+     has_generic_marker) = aggregate_evidence(evidence_csv)
 
     n_total = 0
     n_agentic = 0
@@ -296,9 +221,14 @@ def main() -> int:
                 continue
 
             adoption_level = (row.get("adoption_level") or "none").strip().lower() or "none"
-            label = "agentic" if adoption_level in AGENTIC_LEVELS else "none"
-            if label == "agentic":
+            commit_adoption = "agentic" if adoption_level in AGENTIC_LEVELS else "none"
+            if commit_adoption == "agentic":
                 n_agentic += 1
+            has_named_agent = _truthy(row.get("has_signal"))
+            agentic_present = "true" if has_named_agent else "false"
+            has_generic = full_name in has_generic_marker
+            agents_md_marker = "true" if has_generic else "false"
+            agents_md_only = "true" if (has_generic and not has_named_agent) else "false"
 
             ever_observed      = parse_pipe(row.get("ever_observed"))
             currently_configured = parse_pipe(row.get("currently_configured"))
@@ -372,8 +302,6 @@ def main() -> int:
                 "owner_login": owner_login_from(full_name),
                 "stack": stack,
                 "primary_language": (row.get("language") or "").strip(),
-                "ecosystem": STACK_TO_ECOSYSTEM.get(stack, ""),
-                "framework_hints": pipe_join(framework_hints_for(stack, full_name)),
                 "stars": _to_int(row.get("stargazers")),
                 "commits": commits,
                 "authored_commits": authored_commits,
@@ -382,8 +310,11 @@ def main() -> int:
                 "country_iso": iso,
                 "geo_confidence": geo_conf,
                 "income_group": inc_grp,
-                "adoption_label": label,
+                "agentic_present": agentic_present,
+                "commit_adoption": commit_adoption,
                 "adoption_level": adoption_level,
+                "agents_md_marker": agents_md_marker,
+                "agents_md_only": agents_md_only,
                 "agents_found": pipe_join(ever_observed),
                 "current_agents": pipe_join(current_activity),
                 "configured_agents": pipe_join(currently_configured),

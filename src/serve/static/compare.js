@@ -244,14 +244,107 @@ const AGENT_CATEGORY = {
 const MIN_INCOME_SAMPLE = 30;
 
 // ── State ──────────────────────────────────────────────────────────────────────
-const stacks  = [];   // [{label, filename, rows}]
+const stacks  = [];   // [{label, filename, rows, enriched}]
 const charts  = {};   // keyed by canvas id
+
+// ── Persistence (IndexedDB) ────────────────────────────────────────────────────
+const IDB_NAME = "e2e_compare";
+const IDB_STORE = "stacks";
+const IDB_KEY = "current";
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbPut(value) {
+  try {
+    const db = await idbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { console.warn("idb put failed", e); }
+}
+async function idbGet() {
+  try {
+    const db = await idbOpen();
+    const value = await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const r = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    db.close();
+    return value;
+  } catch (e) { console.warn("idb get failed", e); return null; }
+}
+function persistStacks() {
+  const payload = stacks.map(s => ({ filename: s.filename, label: s.label, rows: s.rows }));
+  idbPut(payload);
+}
+async function hydrateStacks() {
+  const payload = await idbGet();
+  if (Array.isArray(payload)) {
+    for (const s of payload) {
+      if (!s || !Array.isArray(s.rows) || !s.rows.length) continue;
+      stacks.push({ filename: s.filename, label: s.label, rows: s.rows, enriched: s.rows.map(enrichRow) });
+    }
+  }
+  // Consume a one-shot "pending" upload (from Open in Cross-Stack)
+  const pending = await idbGetKey("pending");
+  if (pending && pending.csvText) {
+    const rows = await new Promise((res) => {
+      Papa.parse(pending.csvText, { header: true, skipEmptyLines: true, complete: r => res(r.data) });
+    });
+    if (rows && rows.length) {
+      const label = pending.label || inferLabel(rows, pending.filename || "pending.csv");
+      stacks.push({
+        filename: pending.filename || "pending.csv",
+        label,
+        rows,
+        enriched: rows.map(enrichRow),
+      });
+      await idbDelKey("pending");
+      persistStacks();
+    }
+  }
+  return stacks.length > 0;
+}
+
+async function idbGetKey(key) {
+  try {
+    const db = await idbOpen();
+    const value = await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const r = tx.objectStore(IDB_STORE).get(key);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    db.close();
+    return value;
+  } catch (e) { console.warn("idb getKey failed", e); return null; }
+}
+async function idbDelKey(key) {
+  try {
+    const db = await idbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { console.warn("idb delKey failed", e); }
+}
 let   filters = {
   selectedStacks: null,   // null = all; Set of labels when filtered
   perStackSub:   {},      // { stackLabel: { framework: Set<string>, ecosystem: Set<string> } }
   dateFrom: null,
   dateTo:   null,
-  scope:    "all",        // "all" | "agentic"
   minCountry: 10,
   eco:      {},           // col → [allowed vals]
   adoptionLevels: null,   // null = all; Set of levels when filtered
@@ -288,15 +381,11 @@ function stackColorForLabel(label) {
 }
 
 function getAdoptionLabel(row) {
-  const lbl = (row.adoption_label || "").trim().toLowerCase();
+  const lbl = (row.commit_adoption || row.adoption_label || "").trim().toLowerCase();
   if (lbl) return lbl;
   const lvl = (row.adoption_level || "").trim().toLowerCase();
   if (!lvl || lvl === "none") return "none";
   return "agentic";
-}
-function isAdopted(label) {
-  if (filters.scope === "agentic") return label === "agentic";
-  return label === "agentic" || label === "ai_assisted";
 }
 function parseAgents(row) {
   const raw = (row.agents_found || row.agents || "").trim();
@@ -410,9 +499,20 @@ function enrichRow(row) {
   const lbl = getAdoptionLabel(row);
   const country = getCountry(row);
   const lvl = (row.adoption_level || "").trim().toLowerCase();
+  const aiPresent = String(row.agentic_present || "").trim().toLowerCase() === "true";
+  // Headline "adoption" = any AI signal detected (agentic_present / has_signal).
+  // The commit-ratio-based `commit_adoption` is retained in `_commit_adoption`
+  // as an intensity axis (captured per-level in `_level`).
+  const adopted = aiPresent;
   return Object.assign({}, row, {
-    _lbl:     lbl,
-    _adopted: isAdopted(lbl),
+    _lbl:          adopted ? "agentic" : "none",
+    _adopted:      adopted,
+    _lbl_orig:     adopted ? "agentic" : "none",
+    _adopted_orig: adopted,
+    _commit_adoption: lbl,
+    _ai_present:   aiPresent,
+    _agents_md_marker: String(row.agents_md_marker || "").trim().toLowerCase() === "true",
+    _agents_md_only:   String(row.agents_md_only   || "").trim().toLowerCase() === "true",
     _country: country,
     _geo_confidence: (row.geo_confidence || "").trim().toLowerCase(),
     _geo_tier:       geoTier(row.geo_confidence),
@@ -432,8 +532,13 @@ function enrichRow(row) {
     _first_signal_days_ago: toInt(row.first_signal_days_ago, null),
     _history_coverage: toFloat(row.history_coverage),
     _semantics: parsePipeList(row.evidence_semantics),
-    _frameworks:  parsePipeList(row.framework_hints),
-    _ecosystem:   (row.ecosystem || "").trim(),
+    _frameworks:  parsePipeList(row.frameworks).flatMap(x => x.split(";").map(s => s.trim()).filter(Boolean)),
+    _categories:  parsePipeList(row.categories).flatMap(x => x.split(";").map(s => s.trim()).filter(Boolean)),
+    _typescript:  (row.typescript || "").trim().toLowerCase(),
+    _language:    ((row.typescript || "").trim().toLowerCase() === "yes" ? "TypeScript"
+                 : (row.typescript || "").trim().toLowerCase() === "no"  ? "JavaScript" : ""),
+    _monorepo:    (row.monorepo || "").trim(),
+    _package_json_count: toInt(row.package_json_count, null),
     _has_agents_md: String(row.has_agents_md || "").toLowerCase() === "true",
     _is_archived:   String(row.is_archived   || "").toLowerCase() === "true",
     _is_active_90d: String(row.is_active_last_90d || "").toLowerCase() === "true",
@@ -454,28 +559,42 @@ function enrichRow(row) {
 // ── Filtered rows ──────────────────────────────────────────────────────────────
 function getFilteredRows(onlyStacks) {
   const rows = [];
+  // The "Adoption depth" sidebar filter redefines which repos count as adopted
+  // for this render pass (so rate-of-adoption charts show the rate of the picked
+  // depth across each bucket). It does NOT exclude rows — excluding non-matching
+  // rows would make every rate chart show 100% because numerator and denominator
+  // shrink together.
+  const depthLevels = filters.adoptionLevels && filters.adoptionLevels.size
+    ? filters.adoptionLevels : null;
   for (const s of stacks) {
     if (filters.selectedStacks && !filters.selectedStacks.has(s.label)) continue;
     if (onlyStacks && !onlyStacks.includes(s.label)) continue;
     const sub = filters.perStackSub[s.label] || {};
-    const fwFilter  = sub.framework  && sub.framework.size  ? sub.framework  : null;
-    const ecoFilter = sub.ecosystem && sub.ecosystem.size ? sub.ecosystem : null;
-    for (const r of s.rows) {
-      const er = enrichRow(r);
+    const fwFilter   = sub.framework  && sub.framework.size  ? sub.framework  : null;
+    const catFilter  = sub.category   && sub.category.size   ? sub.category   : null;
+    const langFilter = sub.language   && sub.language.size   ? sub.language   : null;
+    const ecoFilter  = sub.ecosystem  && sub.ecosystem.size  ? sub.ecosystem  : null;
+    if (!s.enriched) s.enriched = s.rows.map(enrichRow);
+    for (const er of s.enriched) {
       er._stack = s.label;
       if (filters.dateFrom && er._month && er._month < filters.dateFrom) continue;
       if (filters.dateTo   && er._month && er._month > filters.dateTo)   continue;
-      // Per-stack sub-filters (framework/ecosystem)
+      // Per-stack sub-filters (framework/category/language/ecosystem — JS/TS only, real data)
       if (fwFilter) {
         if (!er._frameworks.length) continue;
         if (!er._frameworks.some(f => fwFilter.has(f))) continue;
       }
+      if (catFilter) {
+        if (!er._categories.length) continue;
+        if (!er._categories.some(c => catFilter.has(c))) continue;
+      }
+      if (langFilter) {
+        if (!er._language || !langFilter.has(er._language)) continue;
+      }
       if (ecoFilter) {
-        if (!er._ecosystem || !ecoFilter.has(er._ecosystem)) continue;
+        if (!er._ecosystem_type || !ecoFilter.has(er._ecosystem_type)) continue;
       }
       // Top-level enrichment filters
-      if (filters.adoptionLevels && filters.adoptionLevels.size &&
-          !filters.adoptionLevels.has(er._level)) continue;
       if (filters.primaryAgents && filters.primaryAgents.size &&
           !filters.primaryAgents.has(er._primary_agent)) continue;
       if (filters.archived === "only"    && !er._is_archived) continue;
@@ -490,6 +609,16 @@ function getFilteredRows(onlyStacks) {
         if (v != null && v !== "" && !vals.includes(String(v))) { pass = false; break; }
       }
       if (!pass) continue;
+      // Reset or redefine adoption semantics per the depth filter. These fields
+      // are mutated per render pass; always reset so a prior render's state
+      // doesn't leak into this one.
+      if (depthLevels) {
+        er._adopted = depthLevels.has(er._level);
+        er._lbl = er._adopted ? "agentic" : "none";
+      } else {
+        er._adopted = er._adopted_orig;
+        er._lbl = er._lbl_orig;
+      }
       rows.push(er);
     }
   }
@@ -517,7 +646,6 @@ function destroyPrefix(prefix) {
   Object.keys(charts).filter(k => k.startsWith(prefix)).forEach(k => { charts[k].destroy(); delete charts[k]; });
 }
 function mkChart(id, type, data, options) {
-  destroyChart(id);
   const el = document.getElementById(id);
   if (!el) return null;
   // Clear any prior empty-state note and restore visibility.
@@ -526,6 +654,14 @@ function mkChart(id, type, data, options) {
     if (note) note.remove();
   }
   el.style.display = "";
+  const existing = charts[id];
+  if (existing && existing.config && existing.config.type === type) {
+    existing.data = data;
+    existing.options = options;
+    existing.update("none");
+    return existing;
+  }
+  if (existing) { existing.destroy(); delete charts[id]; }
   const c = new Chart(el.getContext("2d"), { type, data, options });
   charts[id] = c;
   return c;
@@ -1195,16 +1331,18 @@ function renderOverview() {
   const th = getTheme();
 
   // Compute per-stack summary
+  // `adopted` = headline AI-signal rate (agentic_present / has_signal, ~70%)
+  // `commitAg` = narrower commit-ratio-based rate (commit_adoption, ~43%)
   const summary = stackLabels.map(lbl => {
     const rows = all.filter(r => (r._stack || r.stack) === lbl);
     const n    = rows.length;
-    const ag   = rows.filter(r => r._lbl === "agentic").length;
+    const commitAg   = rows.filter(r => r._commit_adoption === "agentic" || r._commit_adoption === "ai_assisted").length;
     const pervasive  = rows.filter(r => r._level === "pervasive").length;
     const consistent = rows.filter(r => r._level === "consistent").length;
     const limited    = rows.filter(r => r._level === "limited").length;
     const adopted = rows.filter(r => r._adopted).length;
     const ci   = wilsonCI(adopted, n);
-    return { lbl, n, ag, pervasive, consistent, limited, adopted, ci };
+    return { lbl, n, ag: commitAg, pervasive, consistent, limited, adopted, ci };
   });
 
   // Adoption bars
@@ -1243,7 +1381,7 @@ function renderOverview() {
       { label: "Pervasive",  data: summary.map(s => s.n > 0 ? s.pervasive  / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.pervasive  + "cc", borderRadius: 2 },
       { label: "Consistent", data: summary.map(s => s.n > 0 ? s.consistent / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.consistent + "cc", borderRadius: 2 },
       { label: "Limited",    data: summary.map(s => s.n > 0 ? s.limited    / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.limited    + "cc", borderRadius: 2 },
-      { label: "No AI",      data: summary.map(s => s.n > 0 ? (s.n - s.ag) / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.none       + "cc", borderRadius: 2 },
+      { label: "No AI",      data: summary.map(s => s.n > 0 ? (s.n - s.adopted) / s.n * 100 : 0), backgroundColor: ADOPTION_DEPTH_COLORS.none       + "cc", borderRadius: 2 },
     ],
   }, commonOpts({
     scales: {
@@ -1270,6 +1408,92 @@ function renderOverview() {
   renderKpiGrid(all);
   renderAdoptionDepthChart(all, stackLabels);
   renderChannelBreadthChart(all);
+  renderAgentsMdExclusionChart(all, stackLabels);
+}
+
+function renderAgentsMdExclusionChart(all, stackLabels) {
+  const th = getTheme();
+  const canvas = document.getElementById("chart-agents-md-exclusion");
+  const tableHost = document.getElementById("chart-agents-md-exclusion-table");
+  if (!canvas) return;
+  // Only render if at least one stack has the agents_md_only column populated.
+  const haveSignal = all.some(r => r._agents_md_only || r._agents_md_marker);
+  if (!haveSignal) {
+    destroyChart("chart-agents-md-exclusion");
+    if (tableHost) tableHost.innerHTML = `<p class="muted" style="margin:0">Load a CSV that includes the <code>agents_md_only</code> column to see this chart.</p>`;
+    return;
+  }
+  const rows = stackLabels.map(lbl => {
+    const sub = all.filter(r => (r._stack || r.stack) === lbl);
+    const n     = sub.length;
+    const named = sub.filter(r => r._ai_present).length;
+    const onlyMd = sub.filter(r => r._agents_md_only).length;
+    return {
+      lbl, n, named, onlyMd,
+      namedPct:    n ? named  / n * 100 : 0,
+      onlyMdPct:   n ? onlyMd / n * 100 : 0,
+      includedPct: n ? (named + onlyMd) / n * 100 : 0,
+    };
+  });
+  mkChart("chart-agents-md-exclusion", "bar", {
+    labels: rows.map(r => r.lbl),
+    datasets: [
+      {
+        label: "Named-agent rate (current agentic_present)",
+        data: rows.map(r => r.namedPct),
+        backgroundColor: rows.map(r => stackColorForLabel(r.lbl) + "cc"),
+        borderColor:     rows.map(r => stackColorForLabel(r.lbl)),
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+      {
+        label: "AGENTS.md-only addition (excluded)",
+        data: rows.map(r => r.onlyMdPct),
+        backgroundColor: rows.map(r => stackColorForLabel(r.lbl) + "55"),
+        borderColor:     rows.map(r => stackColorForLabel(r.lbl)),
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+    ],
+  }, commonOpts({
+    indexAxis: "y",
+    plugins: {
+      legend: { position: "bottom", labels: { color: th.text } },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const r = rows[ctx.dataIndex];
+            if (ctx.datasetIndex === 0) return `Named agents: ${r.named.toLocaleString()} / ${r.n.toLocaleString()}  (${pct(r.namedPct/100)})`;
+            return `AGENTS.md-only: +${r.onlyMd.toLocaleString()}  (${pct(r.onlyMdPct/100)}) → included total ${pct(r.includedPct/100)}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: { stacked: true, min: 0, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } },
+      y: { stacked: true, ticks: { color: th.text }, grid: { color: th.grid } },
+    },
+  }));
+  if (tableHost) {
+    tableHost.innerHTML = `
+      <table class="data-table" style="width:100%;font-size:.85rem">
+        <thead><tr>
+          <th>Stack</th><th>Repos</th>
+          <th>Named-agent (current)</th>
+          <th>AGENTS.md-only excluded</th>
+          <th>Included total</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr>
+            <td><span class="compare-stack-dot" style="background:${stackColorForLabel(r.lbl)}"></span>${r.lbl}</td>
+            <td>${r.n.toLocaleString()}</td>
+            <td>${r.named.toLocaleString()} (${pct(r.namedPct/100)})</td>
+            <td>+${r.onlyMd.toLocaleString()} (${pct(r.onlyMdPct/100)})</td>
+            <td><strong>${(r.named + r.onlyMd).toLocaleString()} (${pct(r.includedPct/100)})</strong></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+  }
 }
 
 // ── Overview extras ───────────────────────────────────────────────────────────
@@ -1278,20 +1502,26 @@ function renderKpiGrid(all) {
   if (!host) return;
   const n = all.length;
   if (!n) { host.innerHTML = ""; return; }
-  const agentic = all.filter(r => r._lbl === "agentic").length;
+  const aiPresent = all.filter(r => r._ai_present).length;
+  const commitAgentic = all.filter(r => r._commit_adoption === "agentic" || r._commit_adoption === "ai_assisted").length;
   const multiAgent = all.filter(r => r._agent_count > 1).length;
   const authored = all.filter(r => toFloat(r.commit_ratio) > 0).length;
   const withCountry = all.filter(r => r._country).length;
   const avgChannels = all.reduce((s, r) => s + (r._channels_count || 0), 0) / n;
   const distinctPrimary = new Set(all.filter(r => r._primary_agent).map(r => r._primary_agent)).size;
+  const depthActive = !!(filters.adoptionLevels && filters.adoptionLevels.size);
+  const depthFlag = depthActive
+    ? ` <span class="muted" title="This KPI uses the commit_adoption column, which is not re-labeled by the sidebar Adoption-depth filter. The AI-signal present KPI above is.">⚠ ignores depth filter</span>`
+    : "";
   const kpis = [
-    { label: "Repos",            value: n.toLocaleString(),              sub: "in dataset" },
-    { label: "Agentic",          value: pct(agentic / n),                sub: `${agentic.toLocaleString()} repos` },
-    { label: "Multi-agent",      value: pct(multiAgent / n),             sub: `${multiAgent.toLocaleString()} repos ≥2 agents` },
-    { label: "Authored commits", value: pct(authored / n),               sub: `${authored.toLocaleString()} repos with commit_ratio>0` },
-    { label: "Country-tagged",   value: pct(withCountry / n),            sub: `${withCountry.toLocaleString()} repos` },
-    { label: "Avg channels fired", value: avgChannels.toFixed(1),        sub: "out of 8" },
-    { label: "Agent families",   value: String(distinctPrimary),         sub: "distinct primaries" },
+    { label: "Repos",             value: n.toLocaleString(),              sub: "in dataset" },
+    { label: "AI-signal present", value: pct(aiPresent / n),              sub: `${aiPresent.toLocaleString()} repos (agentic_present)` },
+    { label: "Commit-level agentic", value: pct(commitAgentic / n),       sub: `${commitAgentic.toLocaleString()} repos (commit_adoption)${depthFlag}` },
+    { label: "Multi-agent",       value: pct(multiAgent / n),             sub: `${multiAgent.toLocaleString()} repos ≥2 agents` },
+    { label: "Authored commits",  value: pct(authored / n),               sub: `${authored.toLocaleString()} repos with commit_ratio>0` },
+    { label: "Country-tagged",    value: pct(withCountry / n),            sub: `${withCountry.toLocaleString()} repos` },
+    { label: "Avg channels fired", value: avgChannels.toFixed(1),         sub: "out of 8" },
+    { label: "Agent families",    value: String(distinctPrimary),         sub: "distinct primaries" },
   ];
   host.innerHTML = kpis.map(k => `
     <div class="compare-kpi">
@@ -1779,6 +2009,90 @@ function renderCountryResolutionChart(all, stackLabels) {
   });
 }
 
+function renderCountryTransparencyChart(all) {
+  const th = getTheme();
+  const canvasId = "chart-country-transparency";
+  const geo = all.filter(r => r._country);
+  if (!geo.length) { destroyChart(canvasId); return; }
+
+  // Per-country tier split (strong / medium / weak). Ignore `unresolved`:
+  // those rows have no country, so they're already excluded by `_country` above.
+  const MIN_N = 30;
+  const TOP_N = 25;
+  const byCountry = new Map();
+  for (const r of geo) {
+    const c = r._country;
+    let row = byCountry.get(c);
+    if (!row) { row = { country: c, strong: 0, medium: 0, weak: 0, n: 0 }; byCountry.set(c, row); }
+    const tier = r._geo_tier || "weak";
+    if (tier === "strong" || tier === "medium" || tier === "weak") row[tier] += 1;
+    row.n += 1;
+  }
+  const countries = [...byCountry.values()]
+    .filter(c => c.n >= MIN_N)
+    .map(c => ({
+      ...c,
+      strongPct: c.n ? c.strong / c.n * 100 : 0,
+      mediumPct: c.n ? c.medium / c.n * 100 : 0,
+      weakPct:   c.n ? c.weak   / c.n * 100 : 0,
+    }))
+    .sort((a, b) => b.strongPct - a.strongPct)
+    .slice(0, TOP_N);
+
+  if (!countries.length) { destroyChart(canvasId); return; }
+
+  mkChart(canvasId, "bar", {
+    labels: countries.map(c => c.country),
+    datasets: [
+      {
+        label: "Strong (openly declared)",
+        data: countries.map(c => c.strongPct),
+        backgroundColor: GEO_CONF_COLORS.strong + "cc",
+        borderColor:     GEO_CONF_COLORS.strong,
+        borderWidth: 1,
+      },
+      {
+        label: "Medium (region only)",
+        data: countries.map(c => c.mediumPct),
+        backgroundColor: GEO_CONF_COLORS.medium + "cc",
+        borderColor:     GEO_CONF_COLORS.medium,
+        borderWidth: 1,
+      },
+      {
+        label: "Weak (inferred — no profile location)",
+        data: countries.map(c => c.weakPct),
+        backgroundColor: GEO_CONF_COLORS.weak + "cc",
+        borderColor:     GEO_CONF_COLORS.weak,
+        borderWidth: 1,
+      },
+    ],
+  }, commonOpts({
+    indexAxis: "y",
+    plugins: {
+      legend: { position: "bottom", labels: { color: th.text, font: { size: 11 }, boxWidth: 10 } },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const c = countries[ctx.dataIndex];
+            const dsKey = ctx.datasetIndex === 0 ? "strong" : ctx.datasetIndex === 1 ? "medium" : "weak";
+            const n = c[dsKey];
+            const pctV = c[dsKey + "Pct"];
+            return `${ctx.dataset.label.split(" (")[0]}: ${n.toLocaleString()} / ${c.n.toLocaleString()}  (${pctV.toFixed(1)}%)`;
+          },
+          title: items => {
+            const c = countries[items[0].dataIndex];
+            return `${c.country} · ${c.n.toLocaleString()} resolved owners`;
+          },
+        },
+      },
+    },
+    scales: {
+      x: { stacked: true, min: 0, max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid }, title: { display: true, text: "Share of resolved owners", color: th.text } },
+      y: { stacked: true, ticks: { color: th.text }, grid: { display: false } },
+    },
+  }));
+}
+
 function renderGeography() {
   const all = getFilteredRows();
   const stackLabels = [...new Set(all.map(r => r._stack || r.stack))];
@@ -1787,6 +2101,9 @@ function renderGeography() {
 
   // Country resolution (data-quality panel) — how many owner locations parsed, at what confidence
   renderCountryResolutionChart(all, stackLabels);
+
+  // Country location transparency — per country, share of owners resolved via strong evidence
+  renderCountryTransparencyChart(all);
 
   // World regions — horizontal grouped bars, ranked by combined adoption rate
   const candidateRegions = REGION_ORDER.filter(r => geo.some(row => row._region === r));
@@ -1853,14 +2170,15 @@ function renderGeography() {
       scales: { x: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } }, y: { ticks: { color: th.text }, grid: { display: false } } } }));
   });
 
-  // Income group — adoption-rate bar always rendered; tooltip flags small samples
+  // Income group — bar suppressed when bucket sample < MIN_INCOME_SAMPLE
   const incomeDatasets = stackLabels.map(lbl => {
     const rows = geo.filter(r => (r._stack || r.stack) === lbl && r._income);
-    const data = INCOME_ORDER.map(ig => {
+    const ns = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig).length);
+    const data = INCOME_ORDER.map((ig, i) => {
+      if (ns[i] < MIN_INCOME_SAMPLE) return null;
       const g = rows.filter(r => r._income === ig);
       return g.length ? g.filter(r => r._adopted).length / g.length * 100 : null;
     });
-    const ns = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig).length);
     return {
       label: lbl,
       data,
@@ -1877,9 +2195,11 @@ function renderGeography() {
           tooltip: { callbacks: { label: ctx => {
             const n = ctx.dataset._n[ctx.dataIndex] || 0;
             const v = ctx.parsed.y;
-            if (v == null) return `${ctx.dataset.label}: no repos in this bucket`;
-            const flag = n < MIN_INCOME_SAMPLE ? ` ⚠ small sample (floor ${MIN_INCOME_SAMPLE})` : "";
-            return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})${flag}`;
+            if (v == null) {
+              if (n === 0) return `${ctx.dataset.label}: no repos in this bucket`;
+              return `${ctx.dataset.label}: hidden — n=${n} below floor of ${MIN_INCOME_SAMPLE}`;
+            }
+            return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})`;
           } } },
         },
         scales: { x: { ticks: { color: th.text }, grid: { color: th.grid } }, y: { max: 100, ticks: { color: th.text, callback: v => v + "%" }, grid: { color: th.grid } } },
@@ -1894,6 +2214,7 @@ function renderGeography() {
     const totalNs    = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig).length);
     const agenticNs  = INCOME_ORDER.map(ig => rows.filter(r => r._income === ig && r._lbl === "agentic").length);
     const adoptRates = INCOME_ORDER.map((ig, i) => {
+      if (totalNs[i] < MIN_INCOME_SAMPLE) return null;
       const g = rows.filter(r => r._income === ig);
       return g.length ? g.filter(r => r._adopted).length / g.length * 100 : null;
     });
@@ -1921,11 +2242,11 @@ function renderGeography() {
           const n = ctx.dataset._n[ctx.dataIndex] || 0;
           const v = ctx.parsed.y;
           if (v == null) {
-            if (ctx.dataset.label === "Adoption Rate") return `${ctx.dataset.label}: no repos in this bucket`;
+            if (n === 0) return `${ctx.dataset.label}: no repos in this bucket`;
+            if (ctx.dataset.label === "Adoption Rate") return `${ctx.dataset.label}: hidden — n=${n} below floor of ${MIN_INCOME_SAMPLE}`;
             return `${ctx.dataset.label}: insufficient agentic sample (n=${n}, floor ${MIN_INCOME_SAMPLE})`;
           }
-          const flag = (ctx.dataset.label === "Adoption Rate" && n < MIN_INCOME_SAMPLE) ? ` ⚠ small sample` : "";
-          return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})${flag}`;
+          return `${ctx.dataset.label}: ${v.toFixed(1)}%  (n=${n.toLocaleString()})`;
         } } },
       },
       scales: {
@@ -1975,7 +2296,9 @@ function renderGeography() {
     const agentic = geoWithDate.filter(r => r._lbl === "agentic");
     const ctryFreq = {};
     agentic.forEach(r => { ctryFreq[r._country] = (ctryFreq[r._country] || 0) + 1; });
-    const topCtries = Object.entries(ctryFreq).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+    const topCtries = Object.entries(ctryFreq)
+      .filter(([, n]) => n >= filters.minCountry)
+      .sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
     const months = [...new Set(agentic.map(r => r._month))].sort();
     const cumDatasets = topCtries.map((c, i) => {
       let cum = 0;
@@ -2003,7 +2326,9 @@ function renderCountryTrendSlots(geo, stackLabels) {
     const srows = geo.filter(r => (r._stack || r.stack) === lbl && r._month);
     const freq = {};
     srows.forEach(r => { freq[r._country] = (freq[r._country] || 0) + 1; });
-    perStackTop[lbl] = Object.entries(freq).sort((a, b) => b[1] - a[1])
+    perStackTop[lbl] = Object.entries(freq)
+      .filter(([, n]) => n >= filters.minCountry)
+      .sort((a, b) => b[1] - a[1])
       .slice(0, filters.bumpN).map(([c]) => c);
   });
   const combos = [];
@@ -2370,7 +2695,9 @@ function renderTopCountriesTimelineChart(all) {
   const topN = filters.topCountries || 10;
   const totals = {};
   rows.forEach(r => { totals[r._country] = (totals[r._country] || 0) + 1; });
-  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+  const top = Object.entries(totals)
+    .filter(([, n]) => n >= filters.minCountry)
+    .sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
   if (!top.length) { destroyChart(id); return; }
   const months = [...new Set(rows.map(r => r._month))].sort();
   const rawPer = top.map(country => {
@@ -2413,7 +2740,9 @@ function renderTopCountriesMonthlyChart(all) {
   const topN = filters.topCountries || 10;
   const totals = {};
   rows.forEach(r => { totals[r._country] = (totals[r._country] || 0) + 1; });
-  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
+  const top = Object.entries(totals)
+    .filter(([, n]) => n >= filters.minCountry)
+    .sort((a, b) => b[1] - a[1]).slice(0, topN).map(([c]) => c);
   if (!top.length) { destroyChart(id); return; }
   const months = [...new Set(rows.map(r => r._month))].sort();
   const rawPer = top.map(country => months.map(m => rows.filter(r => r._country === country && r._month === m).length));
@@ -2839,7 +3168,7 @@ function renderDepth() {
   renderSemanticsCoverageChart(all, stackLabels);
   renderHistoryCoverageChart(all, stackLabels);
 
-  // Framework-hint adoption rate per stack (uses framework_hints from the integrated CSV).
+  // Framework adoption rate per stack (real data from package.json scans; JS/TS only).
   const haveFrameworks = all.some(r => r._frameworks && r._frameworks.length);
   if (haveFrameworks) {
     buildCompareSlots("compare-ecosystem-stacks", stackLabels, (id, lbl) => {
@@ -2871,7 +3200,7 @@ function renderDepth() {
     }, { tall: true });
   } else {
     const host = document.getElementById("compare-ecosystem-stacks");
-    if (host) host.innerHTML = '<p class="muted">No <code>framework_hints</code> column — regenerate the CSV with the latest build_integrated_csv.py to populate.</p>';
+    if (host) host.innerHTML = '<p class="muted">No framework data in the uploaded CSVs. Framework columns are populated for JS/TS only (from package.json scans). Upload a JS/TS integrated CSV with the <code>frameworks</code> column to see this chart.</p>';
   }
 
   // Agent market share over time (already percent-based)
@@ -2940,10 +3269,15 @@ function renderDepth() {
 // JS/TS STACK COMPOSITION (seed-phase ecosystem / language / size stratum)
 // ══════════════════════════════════════════════════════════════════════════════
 function renderJstsComposition(all) {
-  const rows = all.filter(r => (r._stack || r.stack) && /js|ts|javascript|typescript/i.test(r._stack || r.stack));
   const host = document.getElementById("compare-jsts-composition");
   if (!host) return;
-  const hasData = rows.some(r => r._ecosystem_type || r._primary_language_detected || r._size_stratum);
+  const stacksWithJstsCols = new Set(
+    all.filter(r => r._ecosystem_type || r._primary_language_detected || r._size_stratum)
+       .map(r => r._stack || r.stack)
+       .filter(Boolean)
+  );
+  const rows = all.filter(r => stacksWithJstsCols.has(r._stack || r.stack));
+  const hasData = rows.length > 0;
   host.hidden = !hasData;
   if (!hasData) return;
 
@@ -3084,17 +3418,34 @@ function buildSidebar() {
   if (!sidebar) return;
   const allStacks = stacks.map(s => s.label);
 
-  // Pre-compute per-stack framework + ecosystem values (from raw rows, no filters applied).
+  // Pre-compute per-stack facets from REAL JS/TS columns (Go/Rust leave these empty,
+  // so their "narrow by" details element won't render).
   const stackFacets = {};
   stacks.forEach(s => {
-    const fw = new Set(); const eco = new Set();
+    const fwCount = new Map(); const cat = new Set();
+    const lang = new Set(); const eco = new Set();
     s.rows.forEach(r => {
-      const list = (r.framework_hints || r.frameworks || "").trim();
-      if (list) list.split("|").map(x => x.trim()).filter(Boolean).forEach(f => fw.add(f));
-      const e = (r.ecosystem || "").trim(); if (e) eco.add(e);
+      const fwList = (r.frameworks || "").trim();
+      if (fwList) {
+        fwList.split("|").flatMap(x => x.split(";")).map(x => x.trim()).filter(Boolean)
+          .forEach(f => fwCount.set(f, (fwCount.get(f) || 0) + 1));
+      }
+      const catList = (r.categories || "").trim();
+      if (catList) {
+        catList.split("|").flatMap(x => x.split(";")).map(x => x.trim()).filter(Boolean)
+          .forEach(c => cat.add(c));
+      }
+      const ts = (r.typescript || "").trim().toLowerCase();
+      if (ts === "yes") lang.add("TypeScript");
+      else if (ts === "no") lang.add("JavaScript");
+      const e = (r.ecosystem_type || "").trim().toLowerCase();
+      if (e) eco.add(e);
     });
+    const topFw = [...fwCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
     stackFacets[s.label] = {
-      frameworks: [...fw].sort(),
+      frameworks: topFw,                           // [[name, count], ...] top 10
+      categories: [...cat].sort(),
+      languages:  [...lang].sort(),
       ecosystems: [...eco].sort(),
     };
   });
@@ -3115,11 +3466,19 @@ function buildSidebar() {
   allStacks.forEach(lbl => {
     const checked = !filters.selectedStacks || filters.selectedStacks.has(lbl);
     const col = stackColorForLabel(lbl);
-    const facets = stackFacets[lbl] || { frameworks: [], ecosystems: [] };
+    const facets = stackFacets[lbl] || { frameworks: [], categories: [], languages: [], ecosystems: [] };
     const sub = filters.perStackSub[lbl] || {};
     html += `<label class="compare-filter-row"><input type="checkbox" class="sf-stack" value="${escHtml(lbl)}"${checked ? " checked" : ""}><span class="compare-stack-dot" style="background:${col}"></span>${escHtml(lbl)}</label>`;
-    if (facets.ecosystems.length || facets.frameworks.length) {
-      html += `<details class="compare-nested-group"><summary>↳ narrow by ecosystem/framework</summary>`;
+    const hasAny = facets.categories.length || facets.frameworks.length || facets.languages.length || facets.ecosystems.length;
+    if (hasAny) {
+      html += `<details class="compare-nested-group"><summary>↳ narrow by framework/category/language/ecosystem</summary>`;
+      if (facets.languages.length) {
+        html += `<div class="compare-nested-label">Language</div>`;
+        facets.languages.forEach(l => {
+          const isSel = sub.language && sub.language.has(l);
+          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="language" value="${escHtml(l)}"${isSel ? " checked" : ""}> ${escHtml(l)}</label>`;
+        });
+      }
       if (facets.ecosystems.length) {
         html += `<div class="compare-nested-label">Ecosystem</div>`;
         facets.ecosystems.forEach(e => {
@@ -3127,11 +3486,18 @@ function buildSidebar() {
           html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="ecosystem" value="${escHtml(e)}"${isSel ? " checked" : ""}> ${escHtml(e)}</label>`;
         });
       }
+      if (facets.categories.length) {
+        html += `<div class="compare-nested-label">Category</div>`;
+        facets.categories.forEach(c => {
+          const isSel = sub.category && sub.category.has(c);
+          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="category" value="${escHtml(c)}"${isSel ? " checked" : ""}> ${escHtml(c)}</label>`;
+        });
+      }
       if (facets.frameworks.length) {
-        html += `<div class="compare-nested-label">Framework</div>`;
-        facets.frameworks.forEach(f => {
+        html += `<div class="compare-nested-label">Framework <span class="muted">(top 10)</span></div>`;
+        facets.frameworks.forEach(([f, n]) => {
           const isSel = sub.framework && sub.framework.has(f);
-          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="framework" value="${escHtml(f)}"${isSel ? " checked" : ""}> ${escHtml(f)}</label>`;
+          html += `<label class="compare-filter-row compare-nested-row"><input type="checkbox" class="sf-substack" data-stack="${escHtml(lbl)}" data-kind="framework" value="${escHtml(f)}"${isSel ? " checked" : ""}> ${escHtml(f)} <span class="muted">(${n.toLocaleString()})</span></label>`;
         });
       }
       html += "</details>";
@@ -3212,7 +3578,7 @@ function buildSidebar() {
   sidebar.querySelectorAll(".sf-stack").forEach(cb => cb.addEventListener("change", () => {
     const checked = [...sidebar.querySelectorAll(".sf-stack:checked")].map(c => c.value);
     filters.selectedStacks = checked.length === allStacks.length ? null : new Set(checked);
-    renderActiveTab();
+    scheduleRender();
   }));
   sidebar.querySelectorAll(".sf-substack").forEach(cb => cb.addEventListener("change", () => {
     const stack = cb.dataset.stack, kind = cb.dataset.kind;
@@ -3220,35 +3586,35 @@ function buildSidebar() {
     sub[kind] = sub[kind] || new Set();
     if (cb.checked) sub[kind].add(cb.value); else sub[kind].delete(cb.value);
     if (sub[kind].size === 0) delete sub[kind];
-    renderActiveTab();
+    scheduleRender();
   }));
   sidebar.querySelectorAll(".sf-date").forEach(sel => sel.addEventListener("change", () => {
     const from = document.getElementById("sf-date-from"); const to = document.getElementById("sf-date-to");
     filters.dateFrom = from ? from.value : null;
     filters.dateTo   = to   ? to.value   : null;
-    renderActiveTab();
+    scheduleRender();
   }));
   sidebar.querySelectorAll(".sf-level").forEach(cb => cb.addEventListener("change", () => {
     const checked = [...sidebar.querySelectorAll(".sf-level:checked")].map(c => c.value);
     filters.adoptionLevels = checked.length ? new Set(checked) : null;
-    renderActiveTab();
+    scheduleRender();
   }));
   sidebar.querySelectorAll(".sf-primary").forEach(cb => cb.addEventListener("change", () => {
     const checked = [...sidebar.querySelectorAll(".sf-primary:checked")].map(c => c.value);
     filters.primaryAgents = checked.length ? new Set(checked) : null;
-    renderActiveTab();
+    scheduleRender();
   }));
   const archEl = document.getElementById("sf-archived");
-  if (archEl) archEl.addEventListener("change", () => { filters.archived = archEl.value; renderActiveTab(); });
+  if (archEl) archEl.addEventListener("change", () => { filters.archived = archEl.value; scheduleRender(); });
   const actEl = document.getElementById("sf-active90");
-  if (actEl) actEl.addEventListener("change", () => { filters.active90 = actEl.value; renderActiveTab(); });
+  if (actEl) actEl.addEventListener("change", () => { filters.active90 = actEl.value; scheduleRender(); });
   const mcSlider = document.getElementById("sf-mincountry");
   if (mcSlider) mcSlider.addEventListener("input", () => {
-    filters.minCountry = parseInt(mcSlider.value); document.getElementById("sf-mincountry-val").textContent = filters.minCountry; renderActiveTab();
+    filters.minCountry = parseInt(mcSlider.value); document.getElementById("sf-mincountry-val").textContent = filters.minCountry; scheduleRender();
   });
   [["sf-top-agents","topAgents"],["sf-top-countries","topCountries"],["sf-heatmap-n","heatmapN"],["sf-bump-n","bumpN"],["sf-cumul-n","cumulN"],["sf-mena-min","menaMin"]].forEach(([id, key]) => {
     const el = document.getElementById(id); if (!el) return;
-    el.addEventListener("input", () => { filters[key] = parseInt(el.value); document.getElementById(id + "-val").textContent = filters[key]; renderActiveTab(); });
+    el.addEventListener("input", () => { filters[key] = parseInt(el.value); document.getElementById(id + "-val").textContent = filters[key]; scheduleRender(); });
   });
 }
 
@@ -3266,6 +3632,11 @@ function renderActiveTab() {
   // Attach per-chart PNG download + normalize + info toggles (idempotent).
   requestAnimationFrame(() => { attachDownloadButtons(); attachNormalizeButtons(); attachInfoButtons(); closeInfoPop(); });
 }
+let _renderTimer = null;
+function scheduleRender() {
+  if (_renderTimer) clearTimeout(_renderTimer);
+  _renderTimer = setTimeout(() => { _renderTimer = null; renderActiveTab(); }, 200);
+}
 
 function renderAll() {
   document.getElementById("compare-dashboard").hidden = false;
@@ -3280,7 +3651,7 @@ function renderAll() {
 function buildStackRow(idx) {
   const s = stacks[idx];
   const total = s.rows.length;
-  const agentic = s.rows.filter(r => { const lbl = getAdoptionLabel(r); return lbl === "agentic" || lbl === "ai_assisted"; }).length;
+  const agentic = s.rows.filter(r => String(r.agentic_present || "").trim().toLowerCase() === "true").length;
   const ci = wilsonCI(agentic, total);
   const tr = document.createElement("tr");
   tr.dataset.idx = idx;
@@ -3321,11 +3692,23 @@ async function addFiles(files) {
     const rows = await parseCSV(file);
     if (!rows.length) continue;
     const label = inferLabel(rows, file.name);
-    stacks.push({ filename: file.name, label, rows });
+    const enriched = rows.map(enrichRow);
+    stacks.push({ filename: file.name, label, rows, enriched });
   }
   refreshStackTable();
+  persistStacks();
 }
-function removeStack(idx) { stacks.splice(idx, 1); refreshStackTable(); }
+function removeStack(idx) { stacks.splice(idx, 1); refreshStackTable(); persistStacks(); }
+function clearAllStacks() {
+  if (!stacks.length) return;
+  if (!confirm("Remove all uploaded datasets?")) return;
+  stacks.splice(0, stacks.length);
+  Object.keys(charts).forEach(k => { try { charts[k].destroy(); } catch (_) {} delete charts[k]; });
+  document.getElementById("compare-dashboard").hidden = true;
+  document.getElementById("compare-empty").hidden = false;
+  refreshStackTable();
+  persistStacks();
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // EXPORT
@@ -3350,7 +3733,7 @@ function summaryTableHTML() {
   return `<table class="export-table"><thead><tr><th>Stack</th><th>Repos</th><th>Adopted</th><th>Rate</th><th>95% CI Low</th><th>95% CI High</th></tr></thead><tbody>` +
     labels.map(lbl => {
       const rows = all.filter(r => (r._stack || r.stack) === lbl);
-      const n = rows.length; const ad = rows.filter(r => { const l = getAdoptionLabel(r); return l === "agentic" || l === "ai_assisted"; }).length;
+      const n = rows.length; const ad = rows.filter(r => r._adopted).length;
       const ci = wilsonCI(ad, n);
       return `<tr><td>${lbl}</td><td>${n}</td><td>${ad}</td><td>${pct(ci.mid)}</td><td>${pct(ci.lo)}</td><td>${pct(ci.hi)}</td></tr>`;
     }).join("") + "</tbody></table>";
@@ -3418,7 +3801,32 @@ document.getElementById("compare-stacks-tbody")?.addEventListener("change", e =>
   const inp = e.target.closest(".compare-label-input"); if (!inp) return;
   stacks[parseInt(inp.dataset.idx, 10)].label = inp.value.trim() || stacks[parseInt(inp.dataset.idx, 10)].filename;
   renderAll();
+  persistStacks();
 });
+document.getElementById("compare-clear-all")?.addEventListener("click", clearAllStacks);
+
+hydrateStacks().then(ok => { if (ok) refreshStackTable(); });
+
+// ── Sidebar collapse/pin ─────────────────────────────────────────────────────
+(function() {
+  const sidebar = document.getElementById("compare-sidebar");
+  const edge = document.getElementById("compare-sidebar-edge");
+  if (!sidebar || !edge) return;
+  const PIN_KEY = "compare_sidebar_pinned";
+  let closeTimer = null;
+  const open  = () => { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } sidebar.classList.add("is-open"); };
+  const close = () => { closeTimer = setTimeout(() => sidebar.classList.remove("is-open"), 180); };
+  edge.addEventListener("mouseenter", open);
+  edge.addEventListener("mouseleave", close);
+  sidebar.addEventListener("mouseenter", open);
+  sidebar.addEventListener("mouseleave", close);
+  edge.addEventListener("click", () => {
+    const pinned = sidebar.classList.toggle("is-pinned");
+    try { localStorage.setItem(PIN_KEY, pinned ? "1" : "0"); } catch (_) {}
+    edge.setAttribute("aria-pressed", pinned ? "true" : "false");
+  });
+  try { if (localStorage.getItem(PIN_KEY) === "1") sidebar.classList.add("is-pinned"); } catch (_) {}
+})();
 
 document.getElementById("btn-export-html")?.addEventListener("click", exportHTML);
 document.getElementById("btn-export-pdf")?.addEventListener("click",  exportPDF);

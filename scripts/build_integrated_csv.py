@@ -4,12 +4,10 @@ Streams the detect run's ``bundle.json`` (one record per repo with the full
 detection JSON) and joins country data from ``owners`` by ``owner_login``.
 Also streams ``detections.csv`` from the same bundle directory to compute
 per-repo primary agent, channels fired, evidence semantics, and
-"has AGENTS.md" / framework hints.
+"has AGENTS.md".
 
 The stack label is taken from ``--stack`` (default: "JS/TS") because the
-detect bundle does not carry ``language``.  Ecosystem is derived from the
-stack; framework_hints is inferred from the owner_login and repo name
-against a curated keyword list.
+detect bundle does not carry ``language``.
 
 Writes to ``integrated_datasets/corpus_integrated_run<id>_<ts>.csv``.
 
@@ -45,64 +43,18 @@ LANG_TO_STACK = {
     "rust": "Rust", "c#": "C#", "c++": "C++", "c": "C++",
     "go": "Go", "ruby": "Ruby", "php": "PHP", "swift": "Swift",
 }
-STACK_TO_ECOSYSTEM = {
-    "JS/TS": "npm", "TypeScript/JavaScript": "npm",
-    "Python": "PyPI", "Java": "Maven", "Rust": "Cargo",
-    "Go": "Go Modules", "Ruby": "RubyGems", "PHP": "Packagist",
-    "C#": "NuGet", "C++": "Conan/vcpkg", "Swift": "Swift PM",
-}
-
 AGENTIC_LEVELS = {"experimental", "limited", "consistent", "pervasive"}
-
-# --- Framework hint rules ---------------------------------------------------
-# Lightweight heuristic: owner_login + repo name tokens → framework/library.
-# Used because repos.topics / description are empty in the current DB.
-FRAMEWORK_RULES_JSTS: list[tuple[str, re.Pattern]] = [
-    ("React",     re.compile(r"\b(react|redux|nextjs?|gatsby|remix|preact|refine)\b", re.I)),
-    ("Vue",       re.compile(r"\b(vue|vuejs|nuxt|quasar|vite(?:press|-vue)?)\b", re.I)),
-    ("Angular",   re.compile(r"\b(angular|ngrx|ionic)\b", re.I)),
-    ("Svelte",    re.compile(r"\b(svelte|sveltekit)\b", re.I)),
-    ("Astro",     re.compile(r"\bastro\b", re.I)),
-    ("Solid",     re.compile(r"\bsolid(js|-router|-start)?\b", re.I)),
-    ("Node/Server", re.compile(r"\b(express|fastify|koa|nestjs?|hono|hapi|adonis)\b", re.I)),
-    ("Electron/Desktop", re.compile(r"\b(electron|tauri|neutralino)\b", re.I)),
-    ("React Native/Mobile", re.compile(r"\b(react-native|expo)\b", re.I)),
-    ("Testing",   re.compile(r"\b(jest|vitest|playwright|cypress|mocha)\b", re.I)),
-    ("Build/Tooling", re.compile(r"\b(webpack|rollup|parcel|esbuild|vite|turborepo|nx)\b", re.I)),
-    ("UI/Components", re.compile(r"\b(mui|chakra|radix|shadcn|antd|mantine|tailwind)\b", re.I)),
-    ("Data/State",    re.compile(r"\b(tanstack|react-query|swr|zustand|jotai|xstate|apollo|trpc)\b", re.I)),
-    ("ML/AI",      re.compile(r"\b(langchain|langgraph|llm|openai|anthropic|rag)\b", re.I)),
-    ("Blockchain", re.compile(r"\b(web3|ethers|hardhat|solidity|near)\b", re.I)),
-]
-FRAMEWORK_RULES_PY: list[tuple[str, re.Pattern]] = [
-    ("Django",     re.compile(r"\bdjango\b", re.I)),
-    ("Flask",      re.compile(r"\bflask\b", re.I)),
-    ("FastAPI",    re.compile(r"\bfastapi\b", re.I)),
-    ("ML/AI",      re.compile(r"\b(pytorch|torch|tensorflow|keras|langchain|huggingface|transformers)\b", re.I)),
-    ("Data",       re.compile(r"\b(pandas|numpy|polars|duckdb|dask)\b", re.I)),
-    ("Testing",    re.compile(r"\b(pytest|unittest|tox)\b", re.I)),
-]
-
-def framework_hints_for(stack: str, full_name: str) -> list[str]:
-    rules = FRAMEWORK_RULES_JSTS if stack in ("JS/TS", "TypeScript/JavaScript") else (
-            FRAMEWORK_RULES_PY if stack == "Python" else [])
-    if not rules:
-        return []
-    hits: set[str] = set()
-    for name, pat in rules:
-        if pat.search(full_name):
-            hits.add(name)
-    return sorted(hits)
 
 
 COLUMNS = [
     # identity + stack
-    "full_name", "owner_login", "stack", "primary_language", "ecosystem",
-    "framework_hints", "stars", "commits", "authored_commits", "commit_ratio",
+    "full_name", "owner_login", "stack", "primary_language",
+    "stars", "commits", "authored_commits", "commit_ratio",
     # geography (expanded by compare.js)
     "country", "country_iso", "geo_confidence", "income_group",
     # adoption state
-    "adoption_label", "adoption_level",
+    "agentic_present", "commit_adoption", "adoption_level",
+    "agents_md_marker", "agents_md_only",
     "agents_found", "current_agents", "configured_agents", "primary_agent",
     "agent_count", "current_agent_count", "configured_agent_count",
     # evidence shape
@@ -338,9 +290,14 @@ def main() -> int:
             license_spdx = (item.get("license_spdx") or "") or ""
 
             adoption_level = (det.get("adoption_level") or "none").lower()
-            label = "agentic" if adoption_level in AGENTIC_LEVELS else "none"
-            if label == "agentic":
+            commit_adoption = "agentic" if adoption_level in AGENTIC_LEVELS else "none"
+            if commit_adoption == "agentic":
                 agentic += 1
+            has_named_agent = bool(det.get("agents"))
+            agentic_present = "true" if has_named_agent else "false"
+            has_generic_marker = bool(det.get("generic_markers"))
+            agents_md_marker = "true" if has_generic_marker else "false"
+            agents_md_only = "true" if (has_generic_marker and not has_named_agent) else "false"
 
             ever       = det.get("ever_observed") or []
             current    = det.get("current_activity") or []
@@ -388,8 +345,6 @@ def main() -> int:
                 "owner_login": owner_lc,
                 "stack": stack,
                 "primary_language": item.get("language") or "",
-                "ecosystem": STACK_TO_ECOSYSTEM.get(stack, ""),
-                "framework_hints": pipe_join(framework_hints_for(stack, full_name)),
                 "stars": item.get("stargazers") or 0,
                 "commits": det.get("total_commits") or 0,
                 "authored_commits": det.get("authored_commits") or 0,
@@ -398,8 +353,11 @@ def main() -> int:
                 "country_iso": geo.get("country_iso", ""),
                 "geo_confidence": geo.get("geo_confidence", ""),
                 "income_group": geo.get("income_group", ""),
-                "adoption_label": label,
+                "agentic_present": agentic_present,
+                "commit_adoption": commit_adoption,
                 "adoption_level": adoption_level,
+                "agents_md_marker": agents_md_marker,
+                "agents_md_only": agents_md_only,
                 "agents_found": pipe_join(ever),
                 "current_agents": pipe_join(current),
                 "configured_agents": pipe_join(configured),
